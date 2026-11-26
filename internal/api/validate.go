@@ -277,8 +277,22 @@ func validMethod(m string) bool {
 	return cleanRelativePath(m)
 }
 
-// triggerKinds are the trigger kinds a run record may name.
-var triggerKinds = []string{"issueLabeled", "issueCommented", "pullRequestOpened", "pullRequestMerged", "checkFailed", "schedule"}
+// Trigger reference kinds besides the task trigger kinds.
+const (
+	// TriggerFactory is a run the factory started itself after another run:
+	// acceptance, review, onboard or a rebuild.
+	TriggerFactory = "factory"
+	// TriggerPerson is a run a person started: take the wheel, or an action
+	// in the web app.
+	TriggerPerson = "person"
+)
+
+// triggerKinds are the kinds a run's trigger reference may name: the six task
+// trigger kinds, factory and person.
+var triggerKinds = []string{
+	"issueLabeled", "issueCommented", "pullRequestOpened", "pullRequestMerged", "checkFailed", "schedule",
+	TriggerFactory, TriggerPerson,
+}
 
 func validTriggerKind(k string) bool {
 	for _, t := range triggerKinds {

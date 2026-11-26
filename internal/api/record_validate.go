@@ -110,7 +110,11 @@ func (e *Evidence) Validate() error {
 		}
 	}
 	checkPathList(&p, "protectedPaths.touched", e.ProtectedPaths.Touched)
-	if e.ProtectedPaths.OK != (len(e.ProtectedPaths.Touched) == 0) {
+	// A run that made no change has an empty diff and a zero report. That is
+	// valid. With a diff, ok is true exactly when nothing was touched.
+	noDiff := e.Diff.Files == 0 && e.Diff.Added == 0 && e.Diff.Removed == 0 && len(e.Diff.Paths) == 0
+	zeroReport := !e.ProtectedPaths.OK && len(e.ProtectedPaths.Touched) == 0
+	if !(noDiff && zeroReport) && e.ProtectedPaths.OK != (len(e.ProtectedPaths.Touched) == 0) {
 		p.add("protectedPaths.ok", "must be true exactly when no protected path was touched")
 	}
 	checkPathList(&p, "testFilesChanged", e.TestFilesChanged)

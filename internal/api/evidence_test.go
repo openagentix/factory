@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,10 @@ func TestEvidenceValidate(t *testing.T) {
 		{"ruling without why", func(e *Evidence) { e.Rulings[0].Why = "" }, "rulings[0].why: "},
 		{"denial without reason", func(e *Evidence) { e.Denials[0].Reason = "" }, "denials[0].reason: "},
 		{"denial without request", func(e *Evidence) { e.Denials[0].Request = "" }, "denials[0].request: "},
+		{"ok false with nothing touched and a diff", func(e *Evidence) { e.ProtectedPaths.OK = false }, "protectedPaths.ok: "},
+		{"trigger factory", func(e *Evidence) { e.Trigger = TriggerRef{Kind: TriggerFactory, Ref: "r_01H7"} }, ""},
+		{"trigger person", func(e *Evidence) { e.Trigger = TriggerRef{Kind: TriggerPerson, Ref: "web"} }, ""},
+		{"trigger schedule", func(e *Evidence) { e.Trigger.Kind = "schedule" }, ""},
 		{"touched but ok", func(e *Evidence) { e.ProtectedPaths.Touched = []string{".github/x.yml"} }, "protectedPaths.ok: "},
 		{"touched not ok", func(e *Evidence) {
 			e.ProtectedPaths = ProtectedPathsReport{Touched: []string{".github/x.yml"}, OK: false}
@@ -222,5 +227,58 @@ func TestRunValidate(t *testing.T) {
 				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// A run that made no change has an empty diff, no checks, no risk and a zero
+// protected-paths report. That must be valid, whatever the task.
+func TestEvidenceValidate_NoChangeRuns(t *testing.T) {
+	for _, task := range []string{TaskImplement, TaskReview, TaskBrainstorm, TaskDecompose, TaskAcceptance, TaskOnboard} {
+		t.Run(task, func(t *testing.T) {
+			e := Evidence{
+				SchemaVersion: 1, Run: "r_1", Task: task, Attempt: 1, Mode: ModeUnattended,
+				Method: MethodBuiltin, MethodUsed: MethodBuiltin,
+				Trigger: TriggerRef{Kind: TriggerFactory, Ref: "r_0"},
+				Worker:  HarnessInfo{Name: "claude-code"},
+				Usage:   Usage{Billing: BillingPlan},
+			}
+			if err := e.Validate(); err != nil {
+				t.Fatalf("no-change evidence: %v", err)
+			}
+			out, err := json.Marshal(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ParseEvidence(out); err != nil {
+				t.Fatalf("round trip: %v", err)
+			}
+		})
+	}
+	// With a diff, ok must still match what was touched.
+	e := validEvidence()
+	e.ProtectedPaths = ProtectedPathsReport{}
+	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "protectedPaths.ok") {
+		t.Errorf("a run with a diff and a zero report must fail, got %v", err)
+	}
+}
+
+func TestTriggerKinds(t *testing.T) {
+	if TriggerFactory != "factory" || TriggerPerson != "person" {
+		t.Error("values")
+	}
+	for _, k := range []string{"issueLabeled", "issueCommented", "pullRequestOpened", "pullRequestMerged", "checkFailed", "schedule", "factory", "person"} {
+		if !validTriggerKind(k) {
+			t.Errorf("%s must be valid", k)
+		}
+	}
+	for _, k := range []string{"", "issue", "Factory", "web"} {
+		if validTriggerKind(k) {
+			t.Errorf("%q must be invalid", k)
+		}
+	}
+	r := validRun()
+	r.Trigger = TriggerRef{Kind: TriggerPerson, Ref: "web"}
+	if err := r.Validate(); err != nil {
+		t.Errorf("run started by a person: %v", err)
 	}
 }

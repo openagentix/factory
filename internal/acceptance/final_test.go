@@ -3,6 +3,8 @@ package acceptance
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,25 +63,33 @@ func TestReportKind(t *testing.T) {
 	}
 }
 
-// Item 2: whose fault is a check that could not run.
+// Item 2: whose fault is a check that could not run. The commands give the
+// same exit codes on every platform: a missing program by name (127), a file
+// without the executable bit run directly (126), a process that kills itself
+// (a signal), and a script that exits 127 by itself.
 func brokenSetup(t *testing.T) (*testRepo, string) {
 	tr := newTestRepo(t)
-	tr.write("lib/helper.sh", "exit 0\n")
+	tr.write("lib/helper", "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(tr.wt, "lib/helper"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	tr.write("lib/tool.sh", "exit 0\n")
+	tr.write("lib/plain", "#!/bin/sh\nexit 0\n") // no executable bit
 	tr.writeManifest(40,
-		crit(1, "helper deleted", "sh lib/helper.sh"),
+		crit(1, "helper deleted", "./lib/helper"),
 		crit(2, "tool fails with 127", "sh lib/tool.sh"),
 		crit(3, "broken everywhere", "no-such-tool-xyz"),
 		crit(4, "killed everywhere", "kill -9 $$"),
-		crit(5, "helper still there", "sh lib/helper.sh && test -f lib/tool.sh"),
+		crit(5, "helper still there", "./lib/helper && test -f lib/tool.sh"),
 		crit(6, "plain fail at both", "exit 1"),
+		crit(7, "not executable at both", "./lib/plain"),
 	)
 	return tr, tr.commit("reviewed checks")
 }
 
 func TestRun_AChangeThatStopsACheckIsNotWorkingYet(t *testing.T) {
 	tr, source := brokenSetup(t)
-	tr.remove("lib/helper.sh")
+	tr.remove("lib/helper")
 	tr.write("lib/tool.sh", "exit 127\n")
 	judged := tr.commit("builder change")
 	rep, err := Run(context.Background(), tr.open(), Request{Judged: judged, Source: source, Goal: 40}, testOptions())
@@ -88,18 +98,18 @@ func TestRun_AChangeThatStopsACheckIsNotWorkingYet(t *testing.T) {
 	}
 	for _, id := range []int{1, 2, 5} {
 		r := stateOf(t, rep, id)
-		if r.State != api.StateNotWorking || r.Note != NoteChangeStoppedCheck || r.Cause != CauseChange || r.ExitCode == 0 {
+		if r.State != api.StateNotWorking || r.Note != NoteChangeStoppedCheck || r.Cause != CauseChange || r.ExitCode != 127 {
 			t.Errorf("criterion %d = %+v", id, r)
 		}
 	}
-	if r := stateOf(t, rep, 1); r.ExitCode != 127 {
-		t.Errorf("the exit code of the judged run is kept: %d", r.ExitCode)
-	}
-	for _, id := range []int{3, 4} {
+	for _, id := range []int{3, 4, 7} {
 		r := stateOf(t, rep, id)
 		if r.State != api.StateCouldNotConfirm || r.Note != NoteCouldNotRun || r.Cause != CauseCheckBroken {
 			t.Errorf("criterion %d = %+v", id, r)
 		}
+	}
+	if r := stateOf(t, rep, 7); r.ExitCode != 126 {
+		t.Errorf("exit code = %d, want 126", r.ExitCode)
 	}
 	if r := stateOf(t, rep, 6); r.State != api.StateNotWorking || r.Cause != CauseNone || r.Note != "" {
 		t.Errorf("criterion 6 = %+v", r)
@@ -110,6 +120,25 @@ func TestRun_AChangeThatStopsACheckIsNotWorkingYet(t *testing.T) {
 	txt := RenderText(rep.Results)
 	if !strings.Contains(txt, "This change stopped its check from running.") {
 		t.Errorf("render:\n%s", txt)
+	}
+}
+
+// A script deleted under "sh file" gives whatever code the shell gives (127 or
+// 2). Either way it is never working, and an ordinary non-zero code is not
+// working yet.
+func TestRun_ADeletedScriptUnderShIsNeverWorking(t *testing.T) {
+	tr := newTestRepo(t)
+	tr.write("lib/helper.sh", "exit 0\n")
+	tr.writeManifest(40, crit(1, "uses a script", "sh lib/helper.sh"))
+	source := tr.commit("checks")
+	tr.remove("lib/helper.sh")
+	judged := tr.commit("builder change")
+	rep, err := Run(context.Background(), tr.open(), Request{Judged: judged, Source: source, Goal: 40}, testOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := stateOf(t, rep, 1); r.State != api.StateNotWorking || r.ExitCode == 0 {
+		t.Errorf("result = %+v", r)
 	}
 }
 

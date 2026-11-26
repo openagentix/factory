@@ -61,7 +61,13 @@ func buildOverlay(ctx context.Context, r *repo.Repo, judged, source, acceptanceP
 		return nil
 	})
 	commit, _, err := r.Import(ctx, a, judged, "acceptance checks laid over the change under test", overlayAuthor, repo.ImportOptions{Limits: lim})
-	return commit, left, err
+	if err != nil {
+		if ctx.Err() == nil && collides(err) {
+			err = &NameCollisionError{Err: err}
+		}
+		return "", 0, err
+	}
+	return commit, left, nil
 }
 
 // AcceptanceNameError says that a file or directory under the acceptance path
@@ -91,7 +97,10 @@ func collides(err error) bool {
 	if errors.Is(err, fs.ErrExist) {
 		return true
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "file exists")
+	msg := strings.ToLower(err.Error())
+	// "file exists" comes from a file system that unifies the names. The
+	// other comes from package repo on a file system that keeps them apart.
+	return strings.Contains(msg, "file exists") || strings.Contains(msg, "differ only by letter case")
 }
 
 func lstat(p string) (fs.FileInfo, error) { return os.Lstat(p) }

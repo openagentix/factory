@@ -183,18 +183,22 @@ func TestRun_CollidingNamesAreATypedError(t *testing.T) {
 	tr := newTestRepo(t)
 	tr.writeManifest(40, crit(1, "a", "test -f feature.txt"))
 	source := tr.commit("checks")
-	tr.write("Acceptance/40/x", "x")
-	tr.write("ACCEPTANCE/40/y", "y")
-	tr.write("Dup/a", "1")
-	tr.write("DUP/a", "2")
-	judged := tr.commit("change")
+	// Write the colliding entries into the index directly, so that a file
+	// system that unifies the names cannot merge them before git sees them.
+	tr.write("blob.txt", "x")
+	blob := tr.git("hash-object", "-w", "blob.txt")
+	tr.remove("blob.txt")
+	for _, p := range []string{"Acceptance/40/x", "ACCEPTANCE/40/y", "Dup/a", "DUP/a"} {
+		tr.git("update-index", "--add", "--cacheinfo", "100644,"+blob+","+p)
+	}
+	tr.git("commit", "-q", "-m", "change")
+	judged := tr.git("rev-parse", "HEAD")
 	rep, err := Run(context.Background(), tr.open(), Request{Judged: judged, Source: source, Goal: 40}, testOptions())
 	if err == nil {
-		t.Log("this file system keeps both names apart")
-		if rep.Results[0].State == api.StateWorking {
-			t.Error("must not be working")
-		}
-		return
+		// Both routes end in the typed error: the file system that unifies
+		// the names fails at the export, one that keeps them apart fails at
+		// the import. Reaching here means neither refused.
+		t.Fatalf("a colliding change must be refused, got %+v", rep.Results)
 	}
 	var ce *NameCollisionError
 	if !errors.As(err, &ce) {
@@ -206,7 +210,7 @@ func TestRun_CollidingNamesAreATypedError(t *testing.T) {
 }
 
 func TestCollides(t *testing.T) {
-	if !collides(errors.New("write x: file exists")) || !collides(fmt.Errorf("w: %w", fs.ErrExist)) {
+	if !collides(errors.New("write x: file exists")) || !collides(errors.New(`"Dup/a" and "DUP/a" differ only by letter case`)) || !collides(fmt.Errorf("w: %w", fs.ErrExist)) {
 		t.Error("a name clash must be found")
 	}
 	if collides(errors.New("the tree has more than 5 entries")) {

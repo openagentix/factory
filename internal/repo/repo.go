@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 )
 
 // Repo is a handle on a trusted bare repository. Every method runs the guard
@@ -135,4 +137,47 @@ func prepareDest(dest string) error {
 	default:
 		return err
 	}
+}
+
+var (
+	locksMu sync.Mutex
+	locks   = map[string]chan struct{}{}
+)
+
+// lockRepo takes the lock of the repository directory, or gives up when ctx
+// ends. A handle that is not open gets no lock, and the guard then fails it.
+func lockRepo(ctx context.Context, r *Repo) (func(), error) {
+	if r == nil || r.dir == "" {
+		return func() {}, nil
+	}
+	locksMu.Lock()
+	ch, ok := locks[r.dir]
+	if !ok {
+		ch = make(chan struct{}, 1)
+		locks[r.dir] = ch
+	}
+	locksMu.Unlock()
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// MinPruneAge is the shortest expiry Prune accepts, so that an import that is
+// still running is not pruned.
+const MinPruneAge = time.Hour
+
+// Prune removes unreferenced objects older than olderThan, with
+// `git prune --expire`. It refuses an expiry shorter than MinPruneAge.
+func (r *Repo) Prune(ctx context.Context, olderThan time.Duration) error {
+	if err := r.check(ctx); err != nil {
+		return err
+	}
+	if olderThan < MinPruneAge {
+		return fmt.Errorf("the prune expiry %v is shorter than %v", olderThan, MinPruneAge)
+	}
+	_, err := runGit(ctx, r.dir, "prune", fmt.Sprintf("--expire=%d.seconds.ago", int64(olderThan.Seconds())))
+	return err
 }

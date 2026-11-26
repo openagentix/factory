@@ -73,6 +73,11 @@ func isFullID(s string) bool {
 // updateRef is a compare-and-swap: git changes the ref only if it still has
 // the old value, and takes its own lock for that.
 func (r *Repo) updateRef(ctx context.Context, ref, commit, old string) error {
+	unlock, err := lockRepo(ctx, r)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if !isFullID(old) {
 		return fmt.Errorf("the old value of a ref must be a full lower case id or ZeroID, not %q", Visible(old, 50))
 	}

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // allMethods calls every exported method of Repo that uses git, on a handle
@@ -26,6 +27,7 @@ func allMethods(t *testing.T, tr *trapRepo) map[string]error {
 	_, _, out["Import"] = r.Import(ctx, t.TempDir(), tr.head, "m", testAuthor, ImportOptions{})
 	out["SetRef"] = r.SetRef(ctx, "refs/heads/factory/run1", tr.head, ZeroID)
 	out["SetDefaultMirror"] = r.SetDefaultMirror(ctx, tr.head, ZeroID)
+	out["Prune"] = r.Prune(ctx, 2*time.Hour)
 	_, out["Open"] = Open(tr.dir)
 	return out
 }

@@ -15,13 +15,18 @@ package repo
 //     another object format.
 //
 // Objects are written through an os.Root on the repository directory, so a
-// link planted in it cannot send a write elsewhere. A temporary file is made in
-// objects/info (the guard allows files there) and renamed into objects/xx/,
-// mode 0444, as git does. After a failed import the objects it created are
-// removed. Only those: an object that was already there is never removed.
-// After a successful import the new objects are not removed, they wait for
-// SetRef to make them reachable, and a later prune removes them if nobody
-// does.
+// link planted in it cannot send a write elsewhere. The content goes to a
+// temporary file in objects/info (the guard allows files there), with a
+// random name made with O_EXCL, so two imports never share one. The final name
+// objects/xx/yyyy is made with a hard link from the temporary file, which
+// fails if the name exists: an object file, once present, is never replaced
+// or written again, and "already exists" counts as success. The temporary
+// file is removed on every path.
+//
+// Nothing is deleted after a failed import. An object is named by its
+// content, so another import may be using the very same file, and an
+// unreferenced object does no harm. Unreferenced objects are left for Prune,
+// which the orchestrator calls on its own schedule.
 
 import (
 	"bytes"
@@ -40,8 +45,7 @@ import (
 )
 
 type objWriter struct {
-	root    *os.Root
-	created []string // paths relative to the repository, of objects made by this writer
+	root *os.Root
 }
 
 func openObjWriter(repoDir string) (*objWriter, error) {
@@ -53,14 +57,6 @@ func openObjWriter(repoDir string) (*objWriter, error) {
 }
 
 func (w *objWriter) close() { _ = w.root.Close() }
-
-// removeCreated removes the objects this writer made.
-func (w *objWriter) removeCreated() {
-	for _, p := range w.created {
-		_ = w.root.Remove(p)
-	}
-	w.created = nil
-}
 
 // ctxReader stops reading when the context ends.
 type ctxReader struct {
@@ -90,12 +86,9 @@ func (w *objWriter) write(ctx context.Context, typ string, size int64, content i
 	if err != nil {
 		return "", err
 	}
-	done := false
 	defer func() {
-		if !done {
-			_ = f.Close()
-			_ = w.root.Remove(tmp)
-		}
+		_ = f.Close()
+		_ = w.root.Remove(tmp)
 	}()
 	h := sha1.New()
 	zw := zlib.NewWriter(f)
@@ -121,23 +114,14 @@ func (w *objWriter) write(ctx context.Context, typ string, size int64, content i
 	if err := f.Close(); err != nil {
 		return "", err
 	}
-	done = true // the file is closed, and is removed or renamed below
 	oid := hex.EncodeToString(h.Sum(nil))
-	dir, name := "objects/"+oid[:2], oid[2:]
-	final := dir + "/" + name
-	if _, err := w.root.Lstat(final); err == nil {
-		_ = w.root.Remove(tmp)
-		return oid, nil // already stored
-	}
+	dir := "objects/" + oid[:2]
 	if err := w.root.Mkdir(dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-		_ = w.root.Remove(tmp)
 		return "", err
 	}
-	if err := w.root.Rename(tmp, final); err != nil {
-		_ = w.root.Remove(tmp)
+	if err := w.root.Link(tmp, dir+"/"+oid[2:]); err != nil && !errors.Is(err, fs.ErrExist) {
 		return "", err
 	}
-	w.created = append(w.created, final)
 	return oid, nil
 }
 

@@ -103,7 +103,8 @@ func TestZeroValueRepoFailsEveryMethodAndRunsNothing(t *testing.T) {
 		_, _, err5 := r.Import(ctx, t.TempDir(), "", "m", testAuthor, ImportOptions{})
 		err6 := r.SetRef(ctx, "refs/heads/factory/x", ZeroID, ZeroID)
 		err7 := r.SetDefaultMirror(ctx, ZeroID, ZeroID)
-		for i, err := range []error{err1, err2, err3, err4, err5, err6, err7} {
+		err8 := r.Prune(ctx, 2*time.Hour)
+		for i, err := range []error{err1, err2, err3, err4, err5, err6, err7, err8} {
 			if err == nil || !strings.Contains(err.Error(), "not open") {
 				t.Errorf("%s: method %d: %v", name, i, err)
 			}
@@ -126,7 +127,7 @@ func objectFiles(t *testing.T, dir string) map[string]bool {
 	return out
 }
 
-func TestImport_AFailedImportRemovesTheObjectsItWrote(t *testing.T) {
+func TestImport_AFailedImportDeletesNothing(t *testing.T) {
 	im := newImporter(t)
 	ws := newWorkspace(t)
 	for i := 0; i < 20; i++ {
@@ -142,12 +143,14 @@ func TestImport_AFailedImportRemovesTheObjectsItWrote(t *testing.T) {
 	before := objectFiles(t, im.dir)
 	im.refusedWith(ws, im.head, ImportOptions{}, "zz.txt", "changed")
 	after := objectFiles(t, im.dir)
-	if len(after) != len(before) {
-		t.Errorf("a failed import left %d objects", len(after)-len(before))
-	}
 	for p := range before {
 		if !after[p] {
-			t.Errorf("an object that was already there was removed: %s", p)
+			t.Errorf("an object was removed: %s", p)
+		}
+	}
+	for p := range after {
+		if strings.Contains(p, "oxf-tmp") {
+			t.Errorf("a temporary file was left: %s", p)
 		}
 	}
 	if err := checkTrusted(context.Background(), im.dir); err != nil {
@@ -232,8 +235,10 @@ func TestImport_StopsAtTheTimeLimitWithATypedError(t *testing.T) {
 	if !errors.As(err, &te) || te.Op != "import" {
 		t.Fatalf("err = %v (%T)", err, err)
 	}
-	if len(objectFiles(t, im.dir)) != len(before) {
-		t.Error("objects were left behind")
+	for p := range objectFiles(t, im.dir) {
+		if strings.Contains(p, "oxf-tmp") && !before[p] {
+			t.Errorf("a temporary file was left: %s", p)
+		}
 	}
 	// A caller's own cancel is not reported as a time limit.
 	ctx, cancel := context.WithCancel(context.Background())

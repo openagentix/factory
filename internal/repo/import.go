@@ -97,8 +97,10 @@ type entry struct {
 // Blobs, trees and nothing else are written by this package as loose
 // objects, with no process for each file (see objects.go for why). The commit
 // is made by one `git commit-tree`, with the author and time passed through
-// the allowlisted environment and signing off. After a failed import, the
-// objects it wrote are removed. Import stops after Limits.MaxDuration with a
+// the allowlisted environment and signing off. After a failed import the
+// objects it wrote stay: they are named by content, another import may be
+// using them, and Prune removes unreferenced ones later. Imports into one
+// repository from one process run one after the other. Import stops after Limits.MaxDuration with a
 // *TimeoutError.
 func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, author Author, opts ImportOptions) (commit string, changed bool, err error) {
 	lim := opts.Limits.WithDefaults()
@@ -111,6 +113,11 @@ func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, autho
 			err = timeoutOr(parentCtx, ctx, "import", lim.MaxDuration, err)
 		}
 	}()
+	unlock, err := lockRepo(ctx, r)
+	if err != nil {
+		return "", false, err
+	}
+	defer unlock()
 	if err := r.check(ctx); err != nil {
 		return "", false, err
 	}
@@ -145,12 +152,6 @@ func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, autho
 		return "", false, err
 	}
 	defer ow.close()
-	// Objects made for an import that fails are removed again.
-	defer func() {
-		if err != nil {
-			ow.removeCreated()
-		}
-	}()
 
 	s := &scanner{root: root, lim: lim, excl: excl}
 	topInfo, err := root.Lstat(".")

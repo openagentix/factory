@@ -335,6 +335,54 @@ A worker writes a ruling when its method would have asked a person and the choic
 
 **Take the wheel.** The Model Context Protocol tools of Decision 11 stay, under that name. Claiming a ticket by hand is an action on a ticket, not a dial level. The run record keeps `mode` with the values `unattended` and `wheel`.
 
+## Decision 13: the review gate is a decision, not a button
+
+Added on 2026-11-26.
+
+**What happened.** The first pull request in this repository changed 17 files, a contract on paper and the threat model. It was merged 85 seconds after it was opened, with green checks and no reading. Moving the "yes" from a prompt to a merge button solves nothing. Green checks show that the code builds. They do not show that the change is right.
+
+**The decision card.** For every pull request the factory opens, the orchestrator writes a card at the top of the pull request and in the web app. The orchestrator writes it from the evidence bundle. The agent does not.
+
+| Part | Content | Source |
+|---|---|---|
+| You are approving | The few things a person is really deciding: contract changes, new dependencies, test or CI changes, security-relevant paths, behaviour named in the acceptance criteria | Rules over the diff and the ticket |
+| Decided for you | The agent's rulings, each with an overturn action | The result file |
+| Not verified | What no check covered: acceptance criteria with no check, files changed that the summary does not mention, anything the policy denied | Claim against diff, criteria against checks |
+| Independent review | The verdict of the review run and only the points where it disagrees with the builder | The `review` task, on the other harness when two are present |
+| Risk | Low, medium or high, with the reasons | Rules, see below |
+
+**Risk sets the effort.**
+
+| Risk | When | The gate asks for |
+|---|---|---|
+| Low | No contract, dependency, test, CI or protected-area change. Checks pass. The review agrees. Nothing unverified | One action |
+| Medium | Anything between | Opening the card |
+| High | A public contract, a security-relevant path, tests or CI changed, the reviews disagree, or acceptance criteria are unverified | A separate confirmation for each item under "You are approving". There is no single button in the web app |
+
+Risk is rule based in v0.1. No model sets the risk level. The factory cannot stop a person from pressing merge on GitHub itself. It records that they did.
+
+**A class of change** is the unit for trust: task, risk level and kind of paths touched (for example: `implement`, low, documents only).
+
+**What counts as trust.** The ledger records three things per class and keeps them apart:
+
+| Record | Meaning | Counts toward a higher dial level |
+|---|---|---|
+| Merged without engagement | Merged with the card unopened, or faster than a floor set by the size of the diff | No |
+| Engaged review | The card was opened and, for high risk, each item confirmed | Yes |
+| Outcome | After a set number of days: not reverted, no fix that names it, the default branch stayed green | Yes, and it weighs most |
+
+A merge without engagement never raises trust. Without this rule, thoughtless merges would talk the factory into merging by itself.
+
+**The road to automatic merge.** Dial level 3 is opened per class, not for a whole task.
+
+- A class becomes eligible when it has enough outcomes on record with none bad, and the independent review agreed each time. The numbers are settings. The first defaults will be chosen from real runs, not guessed here.
+- When a class is eligible, the factory proposes it, with the record shown. A person switches it on. The factory never switches it on.
+- If a person keeps merging one class without engagement and its outcomes stay good, the factory says so plainly and proposes removing that gate. A gate that adds nothing is a cost.
+- One bad outcome closes the class again and the factory says why.
+- In v0.1 the ledger computes eligibility and shows it. The merge itself stays with a person. Automatic merge needs a credential that the local product does not hold.
+
+**Limits.** The rules catch omissions, not subtle wrongness. Two models can share a blind spot. Outcomes need time, so a new repository has no basis for automatic merge, and the factory must say so. Engagement can be faked by clicking through. Outcomes cannot.
+
 ## Name
 
 The first working name, "AgentFleet", is used by other projects in the same field, so it was dropped.

@@ -59,6 +59,7 @@ In v0.1 the work stage is a process on the person's own machine, started with th
 
 | L8 | With no prompts, the agent runs a harmful command that a person would have refused | A permission policy per run: an allowlist of tools and commands, writes limited to the worktree. Outside the policy is denied and recorded | The policy is only as good as its list, and depends on each harness honouring it. Not verified by a run |
 | L9 | The agent makes a wrong choice where it used to ask | Rulings are recorded and shown at the gate. The verify stage is outside the agent | A wrong ruling that passes the checks reaches the reviewer |
+| L10 | A person merges without reading, and the factory counts that as trust | A merge without engagement is recorded as such and never raises trust. Trust comes from engaged reviews and, most of all, from outcomes after merge. High-risk changes need a confirmation per item in the web app | A person can still press merge on the git host. Engagement can be faked. Outcomes take time |
 
 Never start a harness with a flag that skips all permission checks on a person's own machine. No prompts must come from a policy, not from switching checks off.
 

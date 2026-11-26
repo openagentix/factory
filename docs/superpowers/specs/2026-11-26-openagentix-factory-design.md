@@ -1,6 +1,6 @@
 # OpenAgentix Software Factory: design
 
-Date: 2026-11-26. Revision 3: a local-first product with an autonomy dial, and gates in place of prompts. Status: working draft, published for comment. Nothing here is proven by a run.
+Date: 2026-11-26. Revision 4: a local-first product with an autonomy dial, gates in place of prompts, and a review gate that is a decision. Status: working draft, published for comment. Nothing here is proven by a run.
 
 Lines marked **(owner)** were decided by the owner. Lines marked **(call)** are the assistant's choices and can be changed.
 
@@ -126,7 +126,7 @@ The rule: **people decide at gates, never at prompts.**
 | 0 | Off | The task does not run |
 | 1 | Guided | Every phase gate: the spec, the plan, and every pull request |
 | 2 | Autopilot | The pull request only |
-| 3 | Autopilot with merge | Nothing, for low-risk changes. **Locked in v0.1** |
+| 3 | Autopilot with merge | Nothing, for a class of change that has earned it. **Shown, not active, in v0.1** |
 
 Defaults **(call)**: every task at 1 for a new repository. A person turns a task up when its record supports it.
 
@@ -136,6 +136,21 @@ Rules for the dial:
 - In the web app a person moves the dial at or below the ceiling. It takes effect at once and the change is logged.
 - The trust ledger sits beside the dial. In v0.1 it informs. It does not move the dial.
 - On OpenAgentix the platform policy sets the ceiling and enforces it. Policy can only tighten. Same dial, stronger hand.
+
+**The review gate is a decision, not a button.** A gate that a person passes without reading is one more "yes". So the factory writes a **decision card** for every pull request: what you are approving, what was decided for you, what was not verified, and where an independent review by the other model disagrees. Risk sets the effort: one action for low risk, a confirmation per item for high risk. Detail in decision record 0001, Decision 13.
+
+```
+YOU ARE APPROVING                                risk: MEDIUM
+ 1. Public contract changes: the result file gains "rulings"
+ 2. Two new risks accepted in the threat model
+DECIDED FOR YOU (3 rulings)                      [overturn]
+NOT VERIFIED
+ - nothing in this change has been run
+ - the summary does not mention 2 changed files
+INDEPENDENT REVIEW (other model): agrees, 1 concern
+```
+
+**Trust comes from outcomes, not from merges.** A merge without engagement never raises trust. The ledger counts engaged reviews and, above all, what happened after the merge: not reverted, no follow-up fix, the default branch stayed green. Automatic merge opens per **class of change**, when that class has a clean record, proposed by the factory and switched on by a person. One bad outcome closes it again.
 
 **The attention record.** The trust ledger counts what a person feels: touches per merged pull request, questions asked, rulings made, rulings a person overturned. Many overturned rulings say turn the dial down. Few say it can go up.
 
@@ -255,6 +270,7 @@ Screens in v0.1:
 | Home | Each goal as a pipeline strip. The inbox. Live runs | New goal. Answer. Open |
 | Goal | Phases, the spec, tickets with state, runs, usage | Answer questions. Open the spec pull request |
 | Run | Live transcript, stage, evidence bundle with rulings and denials, usage, limits | Cancel. Take the wheel |
+| Review | The decision card for one pull request: approving, decided for you, not verified, independent review, risk | Confirm items. Overturn a ruling. Open on GitHub |
 | Inbox | Everything that waits at a gate, batched: questions, specs and plans to approve, pull requests to review, runs that need a person, held tickets with the reason | Answer. Open on GitHub |
 | Autonomy | A dial per task with its ceiling, the trust ledger and the attention record beside each | Move a dial. Pause all |
 | Tasks | Each task as a card: trigger, reads and writes, next step, where a person re-enters, what stops double work, method | View the file |

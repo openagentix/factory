@@ -6,8 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,13 +67,25 @@ func loadMigrations() []migration {
 
 // Store is a SQLite backed store.Store.
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db *sql.DB
+	// keep is one connection held open for the life of the store. While it
+	// is open the -wal and -shm files stay, so their modes stay as set.
+	keep *sql.Conn
+	now  func() time.Time
 }
 
 // Open opens the database file, makes it if needed, and upgrades the schema.
 // A database made by a newer program fails with store.ErrNewerSchema.
 func Open(ctx context.Context, path string) (*Store, error) {
+	// The store holds run history, so only the owner may read it.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("store: make directory for %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("store: create %s: %w", path, err)
+	}
+	f.Close()
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(10000)")
 	q.Add("_pragma", "foreign_keys(1)")
@@ -80,15 +96,31 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	s := &Store{db: db, now: func() time.Time { return time.Now().UTC() }}
-	if err := s.migrate(ctx); err != nil {
+	if s.keep, err = db.Conn(ctx); err != nil {
 		db.Close()
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	if err := s.migrate(ctx); err != nil {
+		s.Close()
 		return nil, err
+	}
+	// The driver makes the side files with the default mode. Narrow them.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Chmod(path+suffix, 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.Close()
+			return nil, fmt.Errorf("store: protect %s: %w", path+suffix, err)
+		}
 	}
 	return s, nil
 }
 
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.keep != nil {
+		s.keep.Close()
+	}
+	return s.db.Close()
+}
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)

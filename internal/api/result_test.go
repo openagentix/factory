@@ -40,7 +40,7 @@ func TestParseResult_Valid(t *testing.T) {
 }
 
 func TestParseResult_BillingDefaultsToUnknown(t *testing.T) {
-	r, err := ParseResult([]byte(`{"schemaVersion":1,"status":"no_change","summary":"nothing to do"}`))
+	r, err := ParseResult([]byte(`{"schemaVersion":1,"status":"no_change","summary":"nothing to do","harness":{"name":"stub"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestParseResult_BillingDefaultsToUnknown(t *testing.T) {
 }
 
 func TestParseResult_MeteredCost(t *testing.T) {
-	in := `{"schemaVersion":1,"status":"failed","summary":"x","usage":{"billing":"metered","costUSD":0.42}}`
+	in := `{"schemaVersion":1,"status":"failed","summary":"x","harness":{"name":"stub"},"usage":{"billing":"metered","costUSD":0.42}}`
 	r, err := ParseResult([]byte(in))
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestParseResult_MeteredCost(t *testing.T) {
 }
 
 func TestParseResult_WorkerCannotSetSourceOrEnforced(t *testing.T) {
-	in := `{"schemaVersion":1,"status":"failed","summary":"x","usage":{"billing":"plan","source":"me","enforced":true}}`
+	in := `{"schemaVersion":1,"status":"failed","summary":"x","harness":{"name":"stub"},"usage":{"billing":"plan","source":"me","enforced":true}}`
 	r, err := ParseResult([]byte(in))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestParseResult_WorkerCannotSetSourceOrEnforced(t *testing.T) {
 }
 
 func TestParseResult_Invalid(t *testing.T) {
-	const head = `{"schemaVersion":1,"status":"failed","summary":"x"`
+	const head = `{"schemaVersion":1,"status":"failed","summary":"x","harness":{"name":"stub"}`
 	tests := []struct {
 		name, input, wantErr string
 	}{
@@ -80,12 +80,17 @@ func TestParseResult_Invalid(t *testing.T) {
 		{"not json", "{", "result"},
 		{"unknown field", head + `,"bogus":1}`, `unknown field "bogus"`},
 		{"trailing data", head + `} {}`, "trailing"},
-		{"missing schema version", `{"status":"failed","summary":"x"}`, "schemaVersion"},
-		{"wrong schema version", `{"schemaVersion":2,"status":"failed","summary":"x"}`, "schemaVersion"},
-		{"missing status", `{"schemaVersion":1,"summary":"x"}`, "status"},
-		{"bad status", `{"schemaVersion":1,"status":"done","summary":"x"}`, "status"},
+		{"missing schema version", `{"status":"failed","summary":"x","harness":{"name":"stub"}}`, "schemaVersion"},
+		{"wrong schema version", `{"schemaVersion":2,"status":"failed","summary":"x","harness":{"name":"stub"}}`, "schemaVersion"},
+		{"missing status", `{"schemaVersion":1,"summary":"x","harness":{"name":"stub"}}`, "status"},
+		{"bad status", `{"schemaVersion":1,"status":"done","summary":"x","harness":{"name":"stub"}}`, "status"},
 		{"missing summary", `{"schemaVersion":1,"status":"failed"}`, "summary"},
 		{"blank summary", `{"schemaVersion":1,"status":"failed","summary":"  "}`, "summary"},
+		{"no harness name", `{"schemaVersion":1,"status":"failed","summary":"x","harness":{"version":"1"}}`, "harness.name"},
+		{"missing harness", `{"schemaVersion":1,"status":"failed","summary":"x"}`, "harness.name"},
+		{"needs_human without question", `{"schemaVersion":1,"status":"needs_human","summary":"x","harness":{"name":"stub"}}`, "questions: needs_human requires"},
+		{"succeeded with question", `{"schemaVersion":1,"status":"succeeded","summary":"x","harness":{"name":"stub"},"questions":["q"]}`, "questions: status succeeded must have none"},
+		{"no_change with question", `{"schemaVersion":1,"status":"no_change","summary":"x","harness":{"name":"stub"},"questions":["q"]}`, "questions: status no_change must have none"},
 		{"claims as strings", head + `,"claims":["a"]}`, "claims"},
 		{"claim without text", head + `,"claims":[{"files":["a"]}]}`, "claims[0].text"},
 		{"claim empty file", head + `,"claims":[{"text":"a","files":[""]}]}`, "claims[0].files[0]"},
@@ -130,7 +135,11 @@ func TestParseResult_ReportsAllProblems(t *testing.T) {
 
 func TestParseResult_AllStatuses(t *testing.T) {
 	for _, s := range []string{StatusSucceeded, StatusFailed, StatusNeedsHuman, StatusNoChange} {
-		in := `{"schemaVersion":1,"status":"` + s + `","summary":"x"}`
+		in := `{"schemaVersion":1,"status":"` + s + `","summary":"x","harness":{"name":"stub"}`
+		if s == StatusNeedsHuman {
+			in += `,"questions":["Which day?"]`
+		}
+		in += `}`
 		if _, err := ParseResult([]byte(in)); err != nil {
 			t.Errorf("status %s: %v", s, err)
 		}

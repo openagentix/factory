@@ -66,6 +66,19 @@ func ParseResult(data []byte) (*Result, error) {
 	if err := decodeJSONStrict(data, &r); err != nil {
 		return nil, fmt.Errorf("result: %w", err)
 	}
+	// The orchestrator writes these two. Whatever the worker wrote is dropped.
+	r.Usage.Source, r.Usage.Enforced = "", false
+	if r.Usage.Billing == "" {
+		r.Usage.Billing = BillingUnknown
+	}
+	if err := r.Validate(); err != nil {
+		return nil, fmt.Errorf("result: %w", err)
+	}
+	return &r, nil
+}
+
+// Validate checks the result and reports every problem, with field paths.
+func (r *Result) Validate() error {
 	var p problems
 	if r.SchemaVersion != SchemaVersion {
 		p.add("schemaVersion", "must be %d", SchemaVersion)
@@ -86,20 +99,23 @@ func ParseResult(data []byte) (*Result, error) {
 			p.add(fmt.Sprintf("questions[%d]", i), "must not be empty")
 		}
 	}
-	// The orchestrator writes these two. Whatever the worker wrote is dropped.
-	r.Usage.Source, r.Usage.Enforced = "", false
-	checkUsage(&p, "usage", &r.Usage)
-	if err := p.err(); err != nil {
-		return nil, fmt.Errorf("result: %w", err)
+	switch {
+	case r.Status == StatusNeedsHuman && len(r.Questions) == 0:
+		p.add("questions", "needs_human requires at least one question")
+	case (r.Status == StatusSucceeded || r.Status == StatusNoChange) && len(r.Questions) > 0:
+		p.add("questions", "status %s must have none", r.Status)
 	}
-	return &r, nil
+	checkUsage(&p, "usage", r.Usage)
+	if blank(r.Harness.Name) {
+		p.add("harness.name", "must be set")
+	}
+	return p.err()
 }
 
-func checkUsage(p *problems, field string, u *Usage) {
+// checkUsage checks usage. An empty billing counts as unknown.
+func checkUsage(p *problems, field string, u Usage) {
 	switch u.Billing {
-	case "":
-		u.Billing = BillingUnknown
-	case BillingMetered, BillingPlan, BillingUnknown:
+	case "", BillingMetered, BillingPlan, BillingUnknown:
 	default:
 		p.add(field+".billing", "must be one of %s, %s, %s", BillingMetered, BillingPlan, BillingUnknown)
 	}

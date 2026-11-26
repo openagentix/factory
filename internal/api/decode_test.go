@@ -14,13 +14,13 @@ func TestJSONKeysAreCaseSensitive(t *testing.T) {
 		want  string
 	}{
 		{"result top level", func(b []byte) error { _, err := ParseResult(b); return err },
-			`{"schemaVersion":1,"Status":"failed","summary":"x"}`, `unknown field "Status"`},
+			`{"schemaVersion":1,"Status":"failed","summary":"x","harness":{"name":"stub"}}`, `unknown field "Status"`},
 		{"result all caps", func(b []byte) error { _, err := ParseResult(b); return err },
-			`{"SCHEMAVERSION":1,"status":"failed","summary":"x"}`, `unknown field "SCHEMAVERSION"`},
+			`{"SCHEMAVERSION":1,"status":"failed","summary":"x","harness":{"name":"stub"}}`, `unknown field "SCHEMAVERSION"`},
 		{"result nested in a slice", func(b []byte) error { _, err := ParseResult(b); return err },
-			`{"schemaVersion":1,"status":"failed","summary":"x","claims":[{"Text":"a"}]}`, `unknown field "Text"`},
+			`{"schemaVersion":1,"status":"failed","summary":"x","harness":{"name":"stub"},"claims":[{"Text":"a"}]}`, `unknown field "Text"`},
 		{"result nested in a struct", func(b []byte) error { _, err := ParseResult(b); return err },
-			`{"schemaVersion":1,"status":"failed","summary":"x","usage":{"Billing":"plan"}}`, `unknown field "Billing"`},
+			`{"schemaVersion":1,"status":"failed","summary":"x","harness":{"name":"stub"},"usage":{"Billing":"plan"}}`, `unknown field "Billing"`},
 		{"issues", func(b []byte) error { _, err := ParseIssues(b); return err },
 			`{"schemaVersion":1,"Issues":[{"title":"t"}]}`, `unknown field "Issues"`},
 		{"issues nested", func(b []byte) error { _, err := ParseIssues(b); return err },
@@ -46,10 +46,10 @@ func TestJSONKeysAreCaseSensitive(t *testing.T) {
 
 func TestJSONExactKeysStillParse(t *testing.T) {
 	// A null object and an unknown-typed value are left to the normal decoder.
-	if _, err := ParseResult([]byte(`{"schemaVersion":1,"status":"failed","summary":"x","claims":null,"usage":null}`)); err != nil {
+	if _, err := ParseResult([]byte(`{"schemaVersion":1,"status":"failed","summary":"x","harness":{"name":"stub"},"claims":null,"usage":null}`)); err != nil {
 		t.Errorf("null values: %v", err)
 	}
-	if _, err := ParseResult([]byte(`{"schemaVersion":1,"status":"failed","summary":"x","usage":5}`)); err == nil {
+	if _, err := ParseResult([]byte(`{"schemaVersion":1,"status":"failed","summary":"x","harness":{"name":"stub"},"usage":5}`)); err == nil {
 		t.Error("a number for an object must fail")
 	}
 }

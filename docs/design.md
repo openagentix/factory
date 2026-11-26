@@ -367,33 +367,19 @@ Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 
 ## 12. Releases
 
-| Release | Content |
-|---|---|
-| v0.1 | Local runner with existing logins. Interactive planning in the quick and standard lanes. Unattended runs after the plan. Acceptance checks, the machine gate, staging, Accept and Undo, trajectory. The dial, trust ledger and attention record. Take the wheel. Outcome and engineering views. Demo mode |
-| v0.2 | Holdout scenarios. A deep lane, only if a trial with a plugin supports it. Learning loop. Container runner with an API key. Starter template |
-| v0.3 | Ship phase. `oxf run --once`. Kubernetes Job runner |
-| v0.4 | Observe phase. OpenAgentix governance provider, as far as the platform allows then |
-
-Build order inside v0.1 **(call)**:
-
-1. Unattended slice: a quick-lane goal, its acceptance checks, the local `claude` or `codex` in a worktree under a permission policy, verify, review, the machine gate, staging.
-2. The web app on top: the outcome view with Accept and Undo, then the engineering view, live run, evidence, the dial.
-3. The front half: the standard lane, with interactive planning to a spec and tickets, and trajectory.
-4. Take the wheel: the endpoint and the plugin.
-
-There is a useful product after step 2 if later steps slip.
+Release content and the build order live in one place: [ROADMAP.md](../ROADMAP.md). In short, v0.1 is the quick and standard lanes on one machine, built in this order: the quick lane unattended, the web app, the standard lane, take the wheel. The deep lane, container and Kubernetes runners, deploying and automatic Accept come later.
 
 ## 13. Limits and risks, stated plainly
 
 - Whether subscription terms allow unattended runs is not checked. See section 4.
 - Local mode has no container. The agent runs as the same user as `oxf` and can read that user's files. See section 8.
 - Try it runs code no person has read on the person's machine, in the checks' sandbox.
-- Running an installed plugin inside a run is designed, not tried.
+- Loading an installed plugin for one run and calling its skill by name worked once in a trial. Driving a whole method that way is not tried.
 - Subscription rate limits cap how much the factory can do. For a small team that also acts as a brake.
 - Building features with agents is the least proven use in the research. Maintenance work is where factories succeed today. Expect rework. The trust ledger exists to show it.
 - No research in hand covers teams of two to twenty. That audience is a bet.
 - Hosted app builders already serve founders who want a prototype. We serve people who want to own and trust the result.
-- Headless Claude Code and Codex are confirmed by flag, not by run. So is running them under a permission policy with no prompts.
+- Unattended starts of Claude Code and Codex were tried by hand, four runs on tiny tasks. See `docs/trials/2026-11-26-unattended-runs.md`. That shows the mechanism works. It says nothing about how often a real job succeeds.
 - An agent can make a wrong ruling. Rulings are shown, and verify and review are outside the agent, but a bad choice that passes the gate reaches staging.
 - The whole weight is on the factory's own checking. "Working" is only as strong as the acceptance check behind it. Where the factory could not confirm something it says so and never ticks the line.
 - All thresholds (including the claim expiry), the trajectory rules, how well "exercised" can be computed, and staging rebuilds on a large repository are not settled. The first real runs decide them.

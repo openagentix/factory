@@ -10,7 +10,7 @@ Status: design drafted, one Go package (`internal/api`, shared types and strict 
 
 ## Where things are
 
-- Design: `docs/superpowers/specs/2026-11-26-openagentix-factory-design.md`
+- Design: `docs/design.md`
 - Decision records: `docs/decisions/` (0001 core contracts, 0002 threat model)
 - Plans: `ROADMAP.md`. History: `CHANGELOG.md`.
 - Rules for people: `CONTRIBUTING.md`, `GOVERNANCE.md`, `SECURITY.md`

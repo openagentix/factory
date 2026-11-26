@@ -93,13 +93,13 @@ Durable state lives in the git host and the orchestrator's store. An unattended 
 
 ## A run and its three stages
 
-1. **Work.** The worker gets a checkout of the current staging state on a new branch (for `review`, of its subject), the input files and a prompt. The factory gives it no git host credential. It edits files and commits locally. The orchestrator squashes its commits into one.
+1. **Work.** The worker gets a checkout of the current staging state on a new branch (for `review`, of its subject), the input files and a prompt. The factory gives it no git host credential. It edits files. It does not commit. After the work stage the orchestrator makes one commit from the worktree, under the factory's own author name. A trial showed that one harness's sandbox blocks writes to git's own files, and this way no run needs git in its policy.
 2. **Verify.** The orchestrator computes the change, checks protected paths, and runs the task's checks and the acceptance checks on a clean checkout of the commit, with no model access. The checks run code the worker wrote, so they run with the same scrubbed environment and the same sandbox as the worker, never with the tokens in their environment. Then it builds the evidence bundle.
 3. **Publish.** The publish step performs the actions the output files ask for, from a fixed list (see Credentials).
 
 An unattended run never asks a person. Each run has a **permission policy**: the commands it may run (`spec.permissions.commands`) and the paths it may write, which are the worktree only. The adapter turns it into the harness's own settings. A request outside the policy is denied and recorded. A harness is never started in a mode that asks a person during an unattended run, and never in a mode that skips all permission checks.
 
-The **unattended contract** is a fixed text placed before any method in every run after the plan is approved: you run unattended; never ask for confirmation; where your method says to ask a person, if the choice can be undone and is inside the ticket, decide and record a ruling; otherwise write the question to the result and stop.
+The **unattended contract** is a fixed text placed before any method in every run after the plan is approved: you run unattended; never ask for confirmation; where your method says to ask a person, if the choice can be undone and is inside the ticket, decide and record a ruling; otherwise write the question to the result and stop. The contract also lists what the run's policy allows, and says that a denied command is denied alone, so the agent must try an allowed way before it gives up. A trial run stopped wrongly after one denial because it was told neither.
 
 **Take the wheel.** A person can do a work stage, or a planning session, in their own session. `oxf` serves a Model Context Protocol endpoint with four tools, a public contract: `factory_list` (goals to plan and ready tickets), `factory_claim` (claims a goal or ticket, makes the worktree, returns the brief and paths), `factory_ask` (posts a question through the publish step), `factory_submit` (hands back a spec, a plan or a change). Verify, review, the machine gate and publish are unchanged.
 
@@ -419,16 +419,21 @@ Go, one binary, with the web app embedded through `go:embed`. SQLite through a p
 
 OpenAgentix Software Factory, decided by the owner. The site and the API group are `factory.openagentix.org`, a domain the owner holds. The command `oxf` is a working name. Tagline: "Runs on your laptop. Governed on OpenAgentix." The group is the product's own, separate from the platform group `openagentix.io`, as OpenAgentix ADR 0012 requires. The risk of one brand is that the name suggests the platform is required; the tagline and a quick start with no platform must answer that. No trademark search was done. The name and group live in one Go constant and one web constant.
 
+## What runs have shown
+
+Four trial runs by hand on 2026-11-26 are written up in `docs/trials/2026-11-26-unattended-runs.md`. In short: Claude Code and Codex both start with no terminal and end with a result file a program can read. A deny-by-default policy denies without asking and records the denial. A ruling and a question both come out in the result file as designed. A start on a subscription login works and can be told apart from a start on an API key. These were tiny tasks on one machine. Everything else in this record is still unproven.
+
 ## Not settled
 
 Left to the first real runs, and not designed further here:
 
 - Every threshold: the trajectory values, the trust count and window, the size limit in the risk rules, the claim expiry.
-- The exact harness flags that give a no-prompt permission policy.
+- The harness flags for a no-prompt permission policy are known for Claude Code from a trial (deny by default with an allowlist). For Codex only the sandbox setting was tried.
+- Whether to shut a person's global agent instructions and tools out of a run. A trial showed they leak in, cost tokens and change behaviour.
 - How well "exercised" can be computed.
 - How staging rebuilds behave on a large repository, in time and in checks run, and how the staging claim passes between machines.
 - Whether subscription terms allow unattended runs started by another program. If they do not, unattended runs need an API key, and take the wheel remains for subscription users.
-- Whether a workflow plugin can be started and driven in a run with no terminal. Not tried.
+- A workflow plugin was loaded for one run by path and its skill was called by name, in one trial with Claude Code. Driving a whole planning or build method this way, and doing it with Codex or with Open GSD, is not tried.
 - How the factory should choose a lane.
 
 ## Limits

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
 )
 
 func TestManifestPath(t *testing.T) {

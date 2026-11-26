@@ -3,7 +3,7 @@
 // checkout, applies the risk rules and builds the evidence bundle.
 //
 // The package works only on a trusted bare repository: one made by
-// InitTrustedRepository, whose layout and configuration pass a fixed
+// repo.Init, whose layout and configuration pass a fixed
 // allowlist. The guard detects a repository that was tampered with, at the
 // start of each call. It cannot stop a process running as the same user from
 // changing the repository between calls. Keeping the trusted repository

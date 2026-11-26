@@ -1,4 +1,4 @@
-package verify
+package repo
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"strings"
 )
 
-// The verify package works only on a repository whose configuration the
-// factory wrote itself: a bare repository made by InitTrustedRepository, where
-// the orchestrator imports the files of a run. The agent's workspace is a
-// plain directory with no .git. Git reads many settings from a repository that
-// make it start programs, and a list of settings to switch off can never be
-// complete. So the package checks that the repository holds nothing but a
-// short list of harmless settings, and refuses anything else.
+// This package works only on a repository whose configuration the factory
+// wrote itself: a bare repository made by Init, where the orchestrator imports
+// the files of a run. The agent's workspace is a plain directory with no .git.
+// Git reads many settings from a repository that make it start programs, and a
+// list of settings to switch off can never be complete. So the package checks
+// that the repository holds nothing but a short list of harmless settings, and
+// refuses anything else.
 
 // trustedConfigKeys are the configuration keys a trusted repository may have.
 // Git writes them in lower case. There is no prefix or wildcard: a key is on
@@ -46,14 +46,14 @@ var trustedLayout = map[string]bool{ // true means a directory
 	"objects": true, "refs": true, "info": true, "hooks": true, "branches": true, "logs": true,
 }
 
-// InitTrustedRepository creates an empty bare repository in dir, which must
+// Init creates an empty bare repository in dir, which must
 // not exist or must be empty. It copies no template files, so it has no hooks.
 // With an empty template, git init creates only HEAD, config, objects and
 // refs, which are all on the layout list. If a git version made another
-// entry, it would not be on the list and InitTrustedRepository would fail
+// entry, it would not be on the list and Init would fail
 // rather than allow it, and the list would be reviewed. The result passes the
 // guard. The orchestrator uses it, and so do tests.
-func InitTrustedRepository(dir string) error {
+func Init(dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
@@ -70,8 +70,8 @@ func InitTrustedRepository(dir string) error {
 	return checkTrusted(context.Background(), abs)
 }
 
-// checkTrusted is the guard. Every exported function of this package that
-// uses git calls it first. It runs nothing from the repository. It looks at
+// checkTrusted is the guard. Every exported function and method of this
+// package that uses git calls it first. It runs nothing from the repository. It looks at
 // the layout of the repository directory without starting git, then reads the
 // configuration file as a list of keys, with includes switched off. It fails
 // closed. The error names what it found.
@@ -97,7 +97,7 @@ func checkTrusted(ctx context.Context, dir string) error {
 		}
 		key, _, _ := strings.Cut(rec, "\n")
 		if !trustedConfigKeys[strings.ToLower(key)] {
-			return fmt.Errorf("repository is not trusted: the configuration key %q is not allowed", visible(key, 100))
+			return fmt.Errorf("repository is not trusted: the configuration key %q is not allowed", Visible(key, 100))
 		}
 	}
 	return nil
@@ -126,7 +126,7 @@ func checkLayout(abs string) error {
 		isDir, known := trustedLayout[e.Name()]
 		switch {
 		case !known:
-			return untrusted("%q is not an allowed entry", visible(e.Name(), 100))
+			return untrusted("%q is not an allowed entry", Visible(e.Name(), 100))
 		case e.Type()&fs.ModeSymlink != 0:
 			return untrusted("%s is a symbolic link", e.Name())
 		case isDir != e.IsDir() || (!isDir && !e.Type().IsRegular()):
@@ -165,7 +165,7 @@ func checkObjects(abs string) error {
 	}
 	for _, e := range ents {
 		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 {
-			return untrusted("objects/%s is not a plain directory", visible(e.Name(), 100))
+			return untrusted("objects/%s is not a plain directory", Visible(e.Name(), 100))
 		}
 	}
 	for _, sub := range []string{"objects/info", "objects/pack"} {
@@ -175,7 +175,7 @@ func checkObjects(abs string) error {
 		}
 		for _, e := range ents {
 			if e.Type()&fs.ModeSymlink != 0 {
-				return untrusted("%s/%s is a symbolic link", sub, visible(e.Name(), 100))
+				return untrusted("%s/%s is a symbolic link", sub, Visible(e.Name(), 100))
 			}
 			if sub == "objects/info" && (e.Name() == "alternates" || e.Name() == "http-alternates") {
 				return untrusted("it has %s/%s", sub, e.Name())
@@ -199,9 +199,9 @@ func checkRefs(abs string) error {
 		rel = filepath.ToSlash(rel)
 		switch {
 		case err != nil:
-			bad = untrusted("cannot read %s", visible(rel, 100))
+			bad = untrusted("cannot read %s", Visible(rel, 100))
 		case d.Type()&fs.ModeSymlink != 0:
-			bad = untrusted("%s is a symbolic link", visible(rel, 100))
+			bad = untrusted("%s is a symbolic link", Visible(rel, 100))
 		case rel == "refs/replace" || strings.HasPrefix(rel, "refs/replace/"):
 			if !d.IsDir() || rel != "refs/replace" {
 				bad = untrusted("it has refs/replace/ entries")
@@ -242,7 +242,7 @@ func checkInfo(abs string) error {
 				return untrusted("info/attributes is not empty")
 			}
 		default:
-			return untrusted("info/%s is not allowed", visible(e.Name(), 100))
+			return untrusted("info/%s is not allowed", Visible(e.Name(), 100))
 		}
 	}
 	return nil
@@ -273,7 +273,7 @@ func checkHooks(abs string) error {
 		return nil
 	})
 	if bad != "" {
-		return untrusted("%s", visible(bad, 200))
+		return untrusted("%s", Visible(bad, 200))
 	}
 	return nil
 }

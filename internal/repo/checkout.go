@@ -1,4 +1,4 @@
-package verify
+package repo
 
 import (
 	"bufio"
@@ -19,20 +19,6 @@ const (
 	modeGitlink    = "160000"
 )
 
-// limits bound the size of a checkout.
-type limits struct {
-	maxTotal   int64 // bytes in all files
-	maxFile    int64 // bytes in one file
-	maxEntries int   // entries in the tree
-}
-
-// Default limits of a checkout.
-const (
-	DefaultMaxTotalBytes = 2 << 30
-	DefaultMaxFileBytes  = 200 << 20
-	DefaultMaxEntries    = 200000
-)
-
 // materialize writes the files of a commit into dest, which must exist and be
 // empty. It reads git objects only: `git ls-tree` for the list and
 // `git cat-file --batch` for the content. It never runs `git checkout` or
@@ -51,7 +37,7 @@ const (
 // The sizes come from the tree listing and are checked against lim before
 // anything is written. The size of each object is checked again when it is
 // read.
-func materialize(ctx context.Context, repoDir, sha, dest string, lim limits) ([]string, error) {
+func materialize(ctx context.Context, repoDir, sha, dest string, lim Limits) ([]string, error) {
 	listing, err := runGit(ctx, repoDir, "ls-tree", "-r", "-z", "-l", "--full-tree", sha)
 	if err != nil {
 		return nil, err
@@ -69,8 +55,8 @@ func materialize(ctx context.Context, repoDir, sha, dest string, lim limits) ([]
 			continue
 		}
 		count++
-		if count > lim.maxEntries {
-			return nil, fmt.Errorf("the tree has more than %d entries", lim.maxEntries)
+		if count > lim.MaxEntries {
+			return nil, fmt.Errorf("the tree has more than %d entries", lim.MaxEntries)
 		}
 		meta, name, ok := strings.Cut(rec, "\t")
 		f := strings.Fields(meta)
@@ -87,11 +73,11 @@ func materialize(ctx context.Context, repoDir, sha, dest string, lim limits) ([]
 			if err != nil || size < 0 {
 				return nil, fmt.Errorf("unexpected git object size")
 			}
-			if size > lim.maxFile {
-				return nil, fmt.Errorf("file %s is %d bytes, over the limit of %d bytes", safeText(name), size, lim.maxFile)
+			if size > lim.MaxFileBytes {
+				return nil, fmt.Errorf("file %s is %d bytes, over the limit of %d bytes", safeText(name), size, lim.MaxFileBytes)
 			}
-			if total += size; total > lim.maxTotal {
-				return nil, fmt.Errorf("the files total more than %d bytes", lim.maxTotal)
+			if total += size; total > lim.MaxTotalBytes {
+				return nil, fmt.Errorf("the files total more than %d bytes", lim.MaxTotalBytes)
 			}
 			entries = append(entries, entry{f[0], f[2], name, size})
 		}
@@ -256,5 +242,5 @@ func safeJoin(dest, name string) (string, error) {
 // safeText shows untrusted text in a note: control, invisible and invalid
 // characters are replaced by a visible code, and long text is cut.
 func safeText(s string) string {
-	return "\"" + visible(s, 200) + "\""
+	return "\"" + Visible(s, 200) + "\""
 }

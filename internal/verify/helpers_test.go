@@ -2,6 +2,7 @@ package verify
 
 import (
 	"github.com/openagentix/factory/internal/api"
+	"github.com/openagentix/factory/internal/repo"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +10,7 @@ import (
 	"testing"
 )
 
-// testRepo is a trusted bare repository, made with InitTrustedRepository, and
+// testRepo is a trusted bare repository, made with repo.Init, and
 // a separate work tree for the files. The git identity comes from environment
 // variables set here, never from global git config.
 type testRepo struct {
@@ -21,8 +22,8 @@ type testRepo struct {
 func newTestRepo(t *testing.T) *testRepo {
 	t.Helper()
 	r := &testRepo{t: t, dir: filepath.Join(t.TempDir(), "repo.git"), wt: t.TempDir()}
-	if err := InitTrustedRepository(r.dir); err != nil {
-		t.Fatalf("InitTrustedRepository: %v", err)
+	if err := repo.Init(r.dir); err != nil {
+		t.Fatalf("repo.Init: %v", err)
 	}
 	return r
 }
@@ -88,4 +89,10 @@ func toClaims(in []claimLike) []api.Claim {
 		out = append(out, api.Claim{Text: c.text, Files: c.files})
 	}
 	return out
+}
+
+// openTrusted runs the guard of package repo on dir.
+func openTrusted(dir string) error {
+	_, err := repo.Open(dir)
+	return err
 }

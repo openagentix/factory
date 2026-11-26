@@ -2,9 +2,7 @@ package api
 
 import (
 	"fmt"
-	"path"
 	"regexp"
-	"strings"
 )
 
 // Defaults for optional factory fields.
@@ -62,7 +60,7 @@ type RiskPaths struct {
 // factory directory and the acceptance path. Each task has its own exception
 // (onboard for the factory directory, acceptance for the acceptance path).
 func (f *Factory) FixedProtectedPaths() []string {
-	ap := strings.TrimRight(f.Spec.AcceptancePath, "/")
+	ap := f.Spec.AcceptancePath
 	if ap == "" {
 		ap = DefaultAcceptancePath
 	}
@@ -116,8 +114,8 @@ func (f *Factory) Validate() error {
 		p.add("spec.pollInterval", "must be a positive duration such as 1m: %v", err)
 	}
 	ap := f.Spec.AcceptancePath
-	if ap == "" || path.Clean(ap) == "." || !relativeNoParent(ap) {
-		p.add("spec.acceptancePath", "must be a relative directory below the repository root, without ..")
+	if !cleanRelativePath(ap) {
+		p.add("spec.acceptancePath", "must be a clean relative directory below the repository root: no leading /, no trailing /, no empty, . or .. part")
 	}
 	f.checkPaths(&p)
 	return p.err()
@@ -154,13 +152,5 @@ func (f *Factory) checkPaths(p *problems) {
 				p.add(field, "%q is also in %s: a path cannot be both protected and a risk path", g, w)
 			}
 		}
-	}
-}
-
-func checkGlob(p *problems, field, g string) {
-	if g == "" {
-		p.add(field, "must not be empty")
-	} else if _, err := path.Match(g, ""); err != nil {
-		p.add(field, "invalid glob pattern: %v", err)
 	}
 }

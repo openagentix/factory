@@ -162,12 +162,12 @@ func (t *Task) Validate() error {
 
 	if s.Prompt == "" {
 		p.add("spec.prompt", "must be set")
-	} else if !relativeNoParent(s.Prompt) {
-		p.add("spec.prompt", "must be a relative path without ..")
+	} else if !cleanRelativePath(s.Prompt) {
+		p.add("spec.prompt", "must be a clean relative path: no leading /, no empty, . or .. part")
 	}
 
 	if !validMethod(s.Method) {
-		p.add("spec.method", "must be builtin, plugin:<name>, or a relative file path without ..")
+		p.add("spec.method", "must be builtin, plugin:<name>, or a clean relative file path")
 	}
 	for i, c := range s.Permissions.Commands {
 		if blank(c) {
@@ -179,11 +179,7 @@ func (t *Task) Validate() error {
 	}
 
 	for i, g := range s.ProtectedPaths {
-		if g == "" {
-			p.add(fmt.Sprintf("spec.protectedPaths[%d]", i), "must not be empty")
-		} else if _, err := path.Match(g, ""); err != nil {
-			p.add(fmt.Sprintf("spec.protectedPaths[%d]", i), "invalid glob pattern: %v", err)
-		}
+		checkGlob(&p, fmt.Sprintf("spec.protectedPaths[%d]", i), g)
 	}
 
 	seen := map[string]bool{}
@@ -235,17 +231,35 @@ func validateTrigger(p *problems, tr Trigger) {
 // validCron checks only the shape: five fields. The scheduler checks the values.
 func validCron(s string) bool { return len(strings.Fields(s)) == 5 }
 
-// relativeNoParent reports whether p is a relative path with no .. part.
-func relativeNoParent(p string) bool {
-	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || (len(p) > 1 && p[1] == ':') {
+// cleanRelativePath reports whether p is a clean repository-relative path.
+// This one rule applies to every path field. It rejects an empty path, an
+// absolute path, a backslash, an empty segment (a doubled or trailing slash)
+// and a "." or ".." segment. A path is never cleaned for the caller, so a
+// pattern built from it always matches what it says.
+func cleanRelativePath(p string) bool {
+	if p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, `\`) || (len(p) > 1 && p[1] == ':') {
 		return false
 	}
-	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if part == ".." {
+	for _, part := range strings.Split(p, "/") {
+		if part == "" || part == "." || part == ".." {
 			return false
 		}
 	}
 	return true
+}
+
+// checkGlob checks a path pattern: clean and relative, and a valid glob.
+func checkGlob(p *problems, field, g string) {
+	switch {
+	case g == "":
+		p.add(field, "must not be empty")
+	case !cleanRelativePath(g):
+		p.add(field, "must be a clean relative pattern: no leading /, no backslash, no empty, . or .. part")
+	default:
+		if _, err := path.Match(g, ""); err != nil {
+			p.add(field, "invalid glob pattern: %v", err)
+		}
+	}
 }
 
 var pluginName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -259,5 +273,5 @@ func validMethod(m string) bool {
 	case strings.HasPrefix(m, MethodPluginPrefix):
 		return pluginName.MatchString(strings.TrimPrefix(m, MethodPluginPrefix))
 	}
-	return m != "" && relativeNoParent(m)
+	return cleanRelativePath(m)
 }

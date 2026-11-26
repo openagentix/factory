@@ -47,6 +47,8 @@ func TestParseReview_Invalid(t *testing.T) {
 		{"bad verdict", `{"schemaVersion":1,"subject":"spec","verdict":"yes"}`, "verdict"},
 		{"bad severity", head + `,"points":[{"severity":"huge","text":"t"}]}`, "points[0].severity"},
 		{"point no text", head + `,"points":[{"severity":"minor"}]}`, "points[0].text"},
+		{"point absolute file", head + `,"points":[{"severity":"minor","text":"t","file":"/etc/passwd"}]}`, "points[0].file"},
+		{"point parent file", head + `,"points":[{"severity":"minor","text":"t","file":"../x.go"}]}`, "points[0].file"},
 		{"bad opinion", head + `,"criteria":[{"id":1,"opinion":"fine"}]}`, "criteria[0].opinion"},
 	}
 	for _, tt := range tests {

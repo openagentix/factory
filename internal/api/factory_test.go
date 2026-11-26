@@ -76,6 +76,15 @@ func TestFactoryValidate(t *testing.T) {
 		{"acceptance path absolute", func(f *Factory) { f.Spec.AcceptancePath = "/x" }, "spec.acceptancePath: "},
 		{"acceptance path dot", func(f *Factory) { f.Spec.AcceptancePath = "." }, "spec.acceptancePath: "},
 		{"acceptance path nested ok", func(f *Factory) { f.Spec.AcceptancePath = "tests/acceptance" }, ""},
+		{"acceptance path dot segment", func(f *Factory) { f.Spec.AcceptancePath = "./acceptance" }, "spec.acceptancePath: "},
+		{"acceptance path trailing slash", func(f *Factory) { f.Spec.AcceptancePath = "acceptance/" }, "spec.acceptancePath: "},
+		{"acceptance path doubled slash", func(f *Factory) { f.Spec.AcceptancePath = "a//b" }, "spec.acceptancePath: "},
+		{"protected absolute", func(f *Factory) { f.Spec.ProtectedPaths = []string{"/etc/**"} }, "spec.protectedPaths[0]: "},
+		{"protected parent", func(f *Factory) { f.Spec.ProtectedPaths = []string{"a/../../b/**"} }, "spec.protectedPaths[0]: "},
+		{"protected dot segment", func(f *Factory) { f.Spec.ProtectedPaths = []string{"./.github/**"} }, "spec.protectedPaths[0]: "},
+		{"risk absolute", func(f *Factory) { f.Spec.RiskPaths.Security = []string{"/etc/**"} }, "spec.riskPaths.security[0]: "},
+		{"risk parent", func(f *Factory) { f.Spec.RiskPaths.Dependencies = []string{"../go.mod"} }, "spec.riskPaths.dependencies[0]: "},
+		{"risk dot segment", func(f *Factory) { f.Spec.RiskPaths.Contract = []string{"./api/**"} }, "spec.riskPaths.contract[0]: "},
 		{"bad protected glob", func(f *Factory) { f.Spec.ProtectedPaths = []string{"[a"} }, "spec.protectedPaths[0]: "},
 		{"empty protected glob", func(f *Factory) { f.Spec.ProtectedPaths = []string{""} }, "spec.protectedPaths[0]: "},
 		{"bad risk glob", func(f *Factory) { f.Spec.RiskPaths.Contract = []string{"[a"} }, "spec.riskPaths.contract[0]: "},
@@ -180,7 +189,6 @@ func TestFixedProtectedPaths(t *testing.T) {
 	}{
 		{"acceptance", []string{".factory/**", "acceptance/**"}},
 		{"tests/acceptance", []string{".factory/**", "tests/acceptance/**"}},
-		{"tests/acceptance/", []string{".factory/**", "tests/acceptance/**"}},
 		{"", []string{".factory/**", "acceptance/**"}},
 	}
 	for _, tt := range tests {

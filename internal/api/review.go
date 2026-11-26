@@ -70,6 +70,9 @@ func ParseReview(data []byte) (*ReviewFile, error) {
 		if blank(pt.Text) {
 			p.add(base+".text", "must be set")
 		}
+		if pt.File != "" {
+			checkFilePath(&p, base+".file", pt.File)
+		}
 	}
 	checkOpinions(&p, "criteria", r.Criteria)
 	if err := p.err(); err != nil {

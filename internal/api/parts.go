@@ -43,9 +43,7 @@ func checkClaims(p *problems, field string, claims []Claim) {
 			p.add(base+".text", "must be set")
 		}
 		for j, f := range c.Files {
-			if blank(f) {
-				p.add(fmt.Sprintf("%s.files[%d]", base, j), "must not be empty")
-			}
+			checkFilePath(p, fmt.Sprintf("%s.files[%d]", base, j), f)
 		}
 	}
 }
@@ -81,5 +79,15 @@ func checkRulings(p *problems, field string, list []Ruling) {
 		if blank(r.CostIfWrong) {
 			p.add(base+".costIfWrong", "must be set")
 		}
+	}
+}
+
+// checkFilePath checks a path that is only compared with changed files.
+func checkFilePath(p *problems, field, f string) {
+	switch {
+	case f == "":
+		p.add(field, "must not be empty")
+	case !cleanRelativePath(f):
+		p.add(field, "must be a clean relative path: no leading /, no backslash, no empty, . or .. part")
 	}
 }

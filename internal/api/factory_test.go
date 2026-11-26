@@ -95,13 +95,26 @@ func TestFactoryValidate(t *testing.T) {
 		}, ""},
 		{"same path protected and risk", func(f *Factory) {
 			f.Spec.RiskPaths.Security = append(f.Spec.RiskPaths.Security, ".github/**")
-		}, `spec.riskPaths.security[1]: ".github/**" is also in spec.protectedPaths[0]`},
+		}, `spec.riskPaths.security[1]: ".github/**" overlaps ".github/**" in spec.protectedPaths[0]`},
+		{"risk under protected", func(f *Factory) {
+			f.Spec.RiskPaths.Security = []string{".github/workflows/**"}
+		}, `spec.riskPaths.security[0]: ".github/workflows/**" overlaps ".github/**" in spec.protectedPaths[0]`},
+		{"protected under risk", func(f *Factory) {
+			f.Spec.ProtectedPaths = []string{"api/v1/**"}
+		}, `spec.riskPaths.contract[0]: "api/**" overlaps "api/v1/**" in spec.protectedPaths[0]`},
+		{"risk file under fixed dir", func(f *Factory) {
+			f.Spec.RiskPaths.Security = []string{".factory/factory.yaml"}
+		}, `spec.riskPaths.security[0]: ".factory/factory.yaml" overlaps ".factory/**" in the fixed protected paths`},
+		{"sibling paths do not overlap", func(f *Factory) {
+			f.Spec.ProtectedPaths = []string{".github/**"}
+			f.Spec.RiskPaths.Security = []string{".githubx/**"}
+		}, ""},
 		{"risk path in fixed factory dir", func(f *Factory) {
 			f.Spec.RiskPaths.Contract = []string{".factory/**"}
-		}, `spec.riskPaths.contract[0]: ".factory/**" is also in the fixed protected paths`},
+		}, `spec.riskPaths.contract[0]: ".factory/**" overlaps ".factory/**" in the fixed protected paths`},
 		{"risk path in acceptance path", func(f *Factory) {
 			f.Spec.RiskPaths.Documents = []string{"acceptance/**"}
-		}, `spec.riskPaths.documents[0]: "acceptance/**" is also in the fixed protected paths`},
+		}, `spec.riskPaths.documents[0]: "acceptance/**" overlaps "acceptance/**" in the fixed protected paths`},
 		{"zero poll interval", func(f *Factory) { f.Spec.PollInterval = "0s" }, "spec.pollInterval: "},
 	}
 	for _, tt := range tests {
@@ -198,5 +211,69 @@ func TestFixedProtectedPaths(t *testing.T) {
 		if strings.Join(got, ",") != strings.Join(tt.want, ",") {
 			t.Errorf("acceptancePath %q: got %v, want %v", tt.acceptance, got, tt.want)
 		}
+	}
+}
+
+func TestPatternsOverlap(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{".github/**", ".github/**", true},
+		{".github/**", ".github/workflows/**", true},
+		{".github/workflows/**", ".github/**", true},
+		{".github/**", ".github/workflows/ci.yml", true},
+		{"go.mod", "go.mod", true},
+		{"api/**", "api/*.go", true},
+		{"docs/**", "docs/read*", true},
+		{"docs/**", "docs", true},
+		{"docs/**", "docs2/**", false},
+		{".github/**", ".githubx/**", false},
+		{"go.mod", "go.sum", false},
+		{"api/**", "internal/**", false},
+		// Limit of the rule: a pattern that starts with a glob character is
+		// compared by exact string only.
+		{"**/*_test.go", "api/**", false},
+		{"**/*_test.go", "**/*_test.go", true},
+		{"*.md", "docs/**", false},
+	}
+	for _, tt := range tests {
+		if got := patternsOverlap(tt.a, tt.b); got != tt.want {
+			t.Errorf("patternsOverlap(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+		if got := patternsOverlap(tt.b, tt.a); got != tt.want {
+			t.Errorf("patternsOverlap(%q, %q) = %v, want %v (reversed)", tt.b, tt.a, got, tt.want)
+		}
+	}
+}
+
+func TestCheckTaskProtectedPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		protected []string
+		wantErr   string
+	}{
+		{"none", nil, ""},
+		{"no overlap", []string{"**/*_test.go"}, ""},
+		{"same as a risk path", []string{"api/**"}, `spec.protectedPaths[0]: "api/**" overlaps "api/**" in spec.riskPaths.contract[0] of the factory file`},
+		{"under a risk path", []string{"ok/**", "internal/auth/login/**"}, `spec.protectedPaths[1]: "internal/auth/login/**" overlaps "internal/auth/**" in spec.riskPaths.security[0] of the factory file`},
+		{"over a risk path", []string{"internal/**"}, `spec.protectedPaths[0]: "internal/**" overlaps "internal/auth/**"`},
+		{"document path", []string{"docs/guide.md"}, `in spec.riskPaths.documents[0]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := validTask()
+			task.Spec.ProtectedPaths = tt.protected
+			err := CheckTaskProtectedPaths(task, validFactory())
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }

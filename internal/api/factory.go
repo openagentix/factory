@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Defaults for optional factory fields.
@@ -121,21 +122,13 @@ func (f *Factory) Validate() error {
 	return p.err()
 }
 
-// checkPaths validates the path patterns and rejects a pattern that is both
-// protected and a risk path.
-func (f *Factory) checkPaths(p *problems) {
-	where := map[string]string{} // pattern -> where it is protected
-	for _, g := range f.FixedProtectedPaths() {
-		where[g] = "the fixed protected paths"
-	}
-	for i, g := range f.Spec.ProtectedPaths {
-		field := fmt.Sprintf("spec.protectedPaths[%d]", i)
-		checkGlob(p, field, g)
-		if _, ok := where[g]; !ok {
-			where[g] = field
-		}
-	}
-	lists := []struct {
+// riskEntry is one risk pattern with the name of the field it came from.
+type riskEntry struct{ pattern, field string }
+
+// riskEntries lists every risk pattern, in a fixed order.
+func (f *Factory) riskEntries() []riskEntry {
+	var out []riskEntry
+	for _, l := range []struct {
 		name string
 		list []string
 	}{
@@ -143,14 +136,81 @@ func (f *Factory) checkPaths(p *problems) {
 		{"security", f.Spec.RiskPaths.Security},
 		{"dependencies", f.Spec.RiskPaths.Dependencies},
 		{"documents", f.Spec.RiskPaths.Documents},
-	}
-	for _, l := range lists {
+	} {
 		for i, g := range l.list {
-			field := fmt.Sprintf("spec.riskPaths.%s[%d]", l.name, i)
-			checkGlob(p, field, g)
-			if w, ok := where[g]; ok {
-				p.add(field, "%q is also in %s: a path cannot be both protected and a risk path", g, w)
+			out = append(out, riskEntry{g, fmt.Sprintf("spec.riskPaths.%s[%d]", l.name, i)})
+		}
+	}
+	return out
+}
+
+// checkPaths validates the path patterns and rejects a protected pattern and
+// a risk pattern that overlap.
+func (f *Factory) checkPaths(p *problems) {
+	var protected []riskEntry
+	for _, g := range f.FixedProtectedPaths() {
+		protected = append(protected, riskEntry{g, "the fixed protected paths"})
+	}
+	for i, g := range f.Spec.ProtectedPaths {
+		field := fmt.Sprintf("spec.protectedPaths[%d]", i)
+		checkGlob(p, field, g)
+		protected = append(protected, riskEntry{g, field})
+	}
+	for _, r := range f.riskEntries() {
+		checkGlob(p, r.field, r.pattern)
+		for _, pr := range protected {
+			if patternsOverlap(r.pattern, pr.pattern) {
+				p.add(r.field, "%q overlaps %q in %s: a path cannot be both protected and a risk path", r.pattern, pr.pattern, pr.field)
+				break
 			}
 		}
 	}
+}
+
+// CheckTaskProtectedPaths checks a task's protectedPaths against the risk
+// paths of the factory file with the same overlap rule as the factory file
+// uses. The task and the factory are in different files, so the caller must
+// run this when it has loaded both.
+func CheckTaskProtectedPaths(t *Task, f *Factory) error {
+	var p problems
+	risks := f.riskEntries()
+	for i, g := range t.Spec.ProtectedPaths {
+		for _, r := range risks {
+			if patternsOverlap(g, r.pattern) {
+				p.add(fmt.Sprintf("spec.protectedPaths[%d]", i),
+					"%q overlaps %q in %s of the factory file: a path cannot be both protected and a risk path", g, r.pattern, r.field)
+				break
+			}
+		}
+	}
+	return p.err()
+}
+
+// literalPrefix is the part of a pattern before its first glob character.
+func literalPrefix(pat string) string {
+	if i := strings.IndexAny(pat, "*?["); i >= 0 {
+		return pat[:i]
+	}
+	return pat
+}
+
+// patternsOverlap reports whether two path patterns can match the same path.
+// It is a prefix rule, not a full glob intersection: two patterns overlap when
+// the literal prefix of one (the part before its first glob character, without
+// a trailing slash) is a path prefix of the literal prefix of the other, on a
+// whole-segment boundary. Limits: a pattern that starts with a glob character,
+// such as **/*_test.go or *.md, has no literal prefix and is compared with
+// other patterns by exact string only. A prefix that ends inside a segment
+// (go.* against go.mod) is not seen as overlapping. So the rule catches the
+// usual mistakes and is not a proof that two lists are disjoint.
+func patternsOverlap(a, b string) bool {
+	if a == b {
+		return true
+	}
+	pa := strings.TrimRight(literalPrefix(a), "/")
+	pb := strings.TrimRight(literalPrefix(b), "/")
+	if pa == "" || pb == "" {
+		return false
+	}
+	return pa == pb || strings.HasPrefix(pb, pa+"/") || strings.HasPrefix(pa, pb+"/")
 }

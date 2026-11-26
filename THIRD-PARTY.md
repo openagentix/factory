@@ -1,6 +1,6 @@
 # Third-party dependencies
 
-Every dependency that is built into `oxf`, with its licence. The project embeds only MIT and Apache-2.0 code. Update this file in the same pull request that adds or removes a dependency.
+Every dependency that is built into `oxf`, with its licence. The project embeds MIT and Apache-2.0 code, plus BSD and public domain code for underlying modules of the Go ecosystem and for SQLite, as `AGENTS.md` says. Update this file in the same pull request that adds or removes a dependency.
 
 ## Go modules
 
@@ -18,7 +18,7 @@ The file `embed/sqlite3.wasm` in `go-sqlite3` is built from C code with `-nostdl
 
 | Component | Version | Licence | Note |
 |---|---|---|---|
-| SQLite, with the `ext/misc` extensions the build includes (`anycollseq`, `base64`, `decimal`, `ieee754`, `regexp`, `series`, `spellfix`, `uint`) | 3.51.x | Public domain | Not on the list of licences in AGENTS.md. Kept as a decision for the maintainer. SQLite's own licence page says its code is in the public domain |
+| SQLite, with the `ext/misc` extensions the build includes (`anycollseq`, `base64`, `decimal`, `ieee754`, `regexp`, `series`, `spellfix`, `uint`) | 3.51.x | Public domain | Accepted by the licence rule in `AGENTS.md` |
 | The module's own C glue and minimal libc (`sqlite3/*.c`, `sqlite3/libc/`) | as the module | MIT | Maths is done on the Go side |
 | Doug Lea's `malloc` (`sqlite3/libc/malloc.c`) | 2.8.6 | MIT-0 | The allocator. It is relicensed from CC0 by its author in 2023 |
 

@@ -28,6 +28,7 @@ import (
 // A pattern that cannot be parsed is an error that names it. The check never
 // treats it as "no match".
 func CheckProtected(f *api.Factory, task *api.Task, cs *ChangeSet) (api.ProtectedPathsReport, error) {
+	cs = cs.orEmpty()
 	fixed := f.FixedProtectedPaths() // factory directory, then acceptance path
 	if err := checkPatterns(fixed, f.Spec.ProtectedPaths, task.Spec.ProtectedPaths); err != nil {
 		return api.ProtectedPathsReport{}, err

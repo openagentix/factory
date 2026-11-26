@@ -52,6 +52,15 @@ type Built struct {
 // paths and test files and come first. For every other change, risk stays
 // empty until the review ends and ComputeRisk can read all its inputs.
 func BuildEvidence(in EvidenceInput) (*Built, error) {
+	b, err := buildEvidence(in)
+	if err != nil {
+		// A zero value, so a caller that skips the error check does not crash.
+		return &Built{Evidence: &api.Evidence{}, Uncovered: []string{}}, err
+	}
+	return b, nil
+}
+
+func buildEvidence(in EvidenceInput) (*Built, error) {
 	if in.Result == nil || in.Task == nil || in.Factory == nil || in.Changes == nil {
 		return nil, fmt.Errorf("evidence: result, task, factory and changes are required")
 	}

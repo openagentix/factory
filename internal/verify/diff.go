@@ -41,6 +41,9 @@ type ChangeSet struct {
 // Paths lists every path the change touches, sorted, without repeats. A
 // rename lists the old path and the new path.
 func (cs *ChangeSet) Paths() []string {
+	if cs == nil {
+		return []string{}
+	}
 	seen := map[string]bool{}
 	var out []string
 	for _, c := range cs.Changes {
@@ -52,13 +55,38 @@ func (cs *ChangeSet) Paths() []string {
 		}
 	}
 	sort.Strings(out)
+	if out == nil {
+		out = []string{}
+	}
 	return out
+}
+
+// orEmpty returns cs, or an empty change set when cs is nil.
+func (cs *ChangeSet) orEmpty() *ChangeSet {
+	if cs == nil {
+		return &ChangeSet{}
+	}
+	return cs
 }
 
 // ChangedFiles reads the change from base to head in the repository at dir.
 // It runs git with an argument list. Renames are found with the default
 // similarity. Output is read with NUL separators, so any file name is safe.
+//
+// It first checks that the repository is trusted. It never returns a nil
+// change set: with an error, the set is empty.
 func ChangedFiles(ctx context.Context, dir, base, head string) (*ChangeSet, error) {
+	cs, err := changedFiles(ctx, dir, base, head)
+	if err != nil {
+		return &ChangeSet{}, err
+	}
+	return cs, nil
+}
+
+func changedFiles(ctx context.Context, dir, base, head string) (*ChangeSet, error) {
+	if err := checkTrusted(ctx, dir); err != nil {
+		return nil, err
+	}
 	b, err := resolveCommit(ctx, dir, base)
 	if err != nil {
 		return nil, err
@@ -88,7 +116,7 @@ func ChangedFiles(ctx context.Context, dir, base, head string) (*ChangeSet, erro
 	for _, c := range changes {
 		n, ok := counts[c.Path]
 		if !ok {
-			return nil, fmt.Errorf("git gave no line counts for %q", c.Path)
+			return nil, fmt.Errorf("git gave no line counts for %q", visible(c.Path, 200))
 		}
 		c.Added, c.Removed, c.Binary = n.added, n.removed, n.binary
 		cs.Added += c.Added

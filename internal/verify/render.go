@@ -35,6 +35,9 @@ const (
 // span is fenced with more backticks than the text holds, so it cannot be
 // closed early. The page's own words and headings are fixed text.
 func Render(in RenderInput) string {
+	if in.Evidence == nil {
+		return ""
+	}
 	ev := in.Evidence
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }

@@ -19,6 +19,20 @@ const (
 	modeGitlink    = "160000"
 )
 
+// limits bound the size of a checkout.
+type limits struct {
+	maxTotal   int64 // bytes in all files
+	maxFile    int64 // bytes in one file
+	maxEntries int   // entries in the tree
+}
+
+// Default limits of a checkout.
+const (
+	DefaultMaxTotalBytes = 2 << 30
+	DefaultMaxFileBytes  = 200 << 20
+	DefaultMaxEntries    = 200000
+)
+
 // materialize writes the files of a commit into dest, which must exist and be
 // empty. It reads git objects only: `git ls-tree` for the list and
 // `git cat-file --batch` for the content. It never runs `git checkout` or
@@ -33,21 +47,34 @@ const (
 //     could make it climb out;
 //   - a path with a ".git" part, or that would be written through a link, is
 //     skipped.
-func materialize(ctx context.Context, repoDir, sha, dest string) ([]string, error) {
-	listing, err := runGit(ctx, repoDir, "ls-tree", "-r", "-z", "--full-tree", sha)
+//
+// The sizes come from the tree listing and are checked against lim before
+// anything is written. The size of each object is checked again when it is
+// read.
+func materialize(ctx context.Context, repoDir, sha, dest string, lim limits) ([]string, error) {
+	listing, err := runGit(ctx, repoDir, "ls-tree", "-r", "-z", "-l", "--full-tree", sha)
 	if err != nil {
 		return nil, err
 	}
-	type entry struct{ mode, oid, name string }
+	type entry struct {
+		mode, oid, name string
+		size            int64
+	}
 	var entries []entry
 	var notes []string
+	var total int64
+	count := 0
 	for _, rec := range strings.Split(string(listing), "\x00") {
 		if rec == "" {
 			continue
 		}
+		count++
+		if count > lim.maxEntries {
+			return nil, fmt.Errorf("the tree has more than %d entries", lim.maxEntries)
+		}
 		meta, name, ok := strings.Cut(rec, "\t")
 		f := strings.Fields(meta)
-		if !ok || len(f) != 3 {
+		if !ok || len(f) != 4 {
 			return nil, fmt.Errorf("unexpected git tree output")
 		}
 		switch {
@@ -56,7 +83,17 @@ func materialize(ctx context.Context, repoDir, sha, dest string) ([]string, erro
 		case unsafeEntryName(name):
 			notes = append(notes, fmt.Sprintf("skipped path with a .git or unsafe part: %s", safeText(name)))
 		default:
-			entries = append(entries, entry{f[0], f[2], name})
+			size, err := strconv.ParseInt(f[3], 10, 64)
+			if err != nil || size < 0 {
+				return nil, fmt.Errorf("unexpected git object size")
+			}
+			if size > lim.maxFile {
+				return nil, fmt.Errorf("file %s is %d bytes, over the limit of %d bytes", safeText(name), size, lim.maxFile)
+			}
+			if total += size; total > lim.maxTotal {
+				return nil, fmt.Errorf("the files total more than %d bytes", lim.maxTotal)
+			}
+			entries = append(entries, entry{f[0], f[2], name, size})
 		}
 	}
 
@@ -78,8 +115,8 @@ func materialize(ctx context.Context, repoDir, sha, dest string) ([]string, erro
 				return fmt.Errorf("unexpected git object %q", strings.TrimSpace(header))
 			}
 			size, err := strconv.ParseInt(hf[2], 10, 64)
-			if err != nil || size < 0 {
-				return fmt.Errorf("unexpected git object size")
+			if err != nil || size != e.size {
+				return fmt.Errorf("git object for %s has an unexpected size", safeText(e.name))
 			}
 			note, err := writeEntry(dest, e.mode, e.name, io.LimitReader(br, size), size)
 			if err != nil {

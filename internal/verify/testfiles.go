@@ -37,6 +37,7 @@ func ClassifyTestFiles(cs *ChangeSet, patterns []string) (TestFiles, error) {
 	if err := checkPatterns(patterns); err != nil {
 		return TestFiles{}, err
 	}
+	cs = cs.orEmpty()
 	isTest := func(p string) bool { return p != "" && matchAny(patterns, p, MatchAnywhere) }
 	tf := TestFiles{Added: []string{}, Changed: []string{}}
 	for _, c := range cs.Changes {
@@ -59,6 +60,7 @@ func ClassifyTestFiles(cs *ChangeSet, patterns []string) (TestFiles, error) {
 // covered when a claim names its new path or its old path, and is listed by
 // its new path. A claim must name the path exactly as git does.
 func UncoveredFiles(cs *ChangeSet, claims []api.Claim) []string {
+	cs = cs.orEmpty()
 	claimed := map[string]bool{}
 	for _, c := range claims {
 		for _, f := range c.Files {

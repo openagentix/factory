@@ -89,6 +89,7 @@ func ruleDocuments(in RiskInput) bool {
 // A risk pattern that cannot be parsed is an error that names it, not a
 // pattern that matches nothing.
 func PreliminaryRisk(in RiskInput) (api.Risk, bool, error) {
+	in.Changes = in.Changes.orEmpty()
 	rp := in.RiskPaths
 	if err := checkPatterns(rp.Contract, rp.Security, rp.Dependencies, rp.Documents); err != nil {
 		return api.Risk{}, false, err
@@ -115,6 +116,7 @@ func PreliminaryRisk(in RiskInput) (api.Risk, bool, error) {
 //
 // Medium lists why rule 3 did not match.
 func ComputeRisk(in RiskInput) (api.Risk, error) {
+	in.Changes = in.Changes.orEmpty()
 	r, ok, err := PreliminaryRisk(in)
 	if err != nil {
 		return api.Risk{}, err

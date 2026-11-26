@@ -30,6 +30,12 @@ type CheckOptions struct {
 	// Deadline is the time limit of each check. Zero means
 	// DefaultCheckDeadline.
 	Deadline time.Duration
+	// MaxTotalBytes, MaxFileBytes and MaxEntries bound the checkout. Zero
+	// means the defaults: DefaultMaxTotalBytes, DefaultMaxFileBytes and
+	// DefaultMaxEntries.
+	MaxTotalBytes int64
+	MaxFileBytes  int64
+	MaxEntries    int
 	// Environ is the environment to scrub, in NAME=value form. Nil means the
 	// environment of this process. Tests pass their own.
 	Environ []string
@@ -67,6 +73,20 @@ func AllPassed(outcomes []CheckOutcome) bool {
 	return true
 }
 
+func (o CheckOptions) limits() limits {
+	l := limits{o.MaxTotalBytes, o.MaxFileBytes, o.MaxEntries}
+	if l.maxTotal <= 0 {
+		l.maxTotal = DefaultMaxTotalBytes
+	}
+	if l.maxFile <= 0 {
+		l.maxFile = DefaultMaxFileBytes
+	}
+	if l.maxEntries <= 0 {
+		l.maxEntries = DefaultMaxEntries
+	}
+	return l
+}
+
 // containmentNotes are put on every outcome. They say what the checks are
 // not protected from. This package does not provide an operating system
 // sandbox.
@@ -78,7 +98,8 @@ var containmentNotes = []string{
 
 // RunChecks runs each check on a clean checkout of commit.
 //
-// The checkout is built by reading git objects only (see materialize) into a
+// The repository must pass the guard (see checkTrusted) before anything else
+// happens. The checkout is built by reading git objects only (see materialize) into a
 // new temporary directory outside the repository. It has no .git, so a check
 // has no path back to the repository, and no git filter or hook runs. The
 // directory is removed before RunChecks returns, also when a check fails,
@@ -97,6 +118,9 @@ var containmentNotes = []string{
 // configured command. That is the only place in this package that uses a
 // shell. If ctx ends, RunChecks returns the outcomes so far and the error.
 func RunChecks(ctx context.Context, repoDir, commit string, checks []api.Check, opts CheckOptions) ([]CheckOutcome, error) {
+	if err := checkTrusted(ctx, repoDir); err != nil {
+		return nil, err
+	}
 	sha, err := resolveCommit(ctx, repoDir, commit)
 	if err != nil {
 		return nil, err
@@ -110,7 +134,7 @@ func RunChecks(ctx context.Context, repoDir, commit string, checks []api.Check, 
 	if err := os.Mkdir(checkout, 0o700); err != nil {
 		return nil, err
 	}
-	notes, err := materialize(ctx, repoDir, sha, checkout)
+	notes, err := materialize(ctx, repoDir, sha, checkout, opts.limits())
 	if err != nil {
 		return nil, err
 	}

@@ -9,24 +9,29 @@ import (
 	"testing"
 )
 
-// testRepo is a small git repository in a temp directory. The git identity
-// comes from environment variables set here, never from global git config.
+// testRepo is a trusted bare repository, made with InitTrustedRepository, and
+// a separate work tree for the files. The git identity comes from environment
+// variables set here, never from global git config.
 type testRepo struct {
 	t   *testing.T
-	dir string
+	dir string // the bare repository: what the package under test is given
+	wt  string // the work tree, where tests write files
 }
 
 func newTestRepo(t *testing.T) *testRepo {
 	t.Helper()
-	r := &testRepo{t: t, dir: t.TempDir()}
-	r.git("init", "-q", "-b", "main")
+	r := &testRepo{t: t, dir: filepath.Join(t.TempDir(), "repo.git"), wt: t.TempDir()}
+	if err := InitTrustedRepository(r.dir); err != nil {
+		t.Fatalf("InitTrustedRepository: %v", err)
+	}
 	return r
 }
 
 func (r *testRepo) git(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.dir
+	full := append([]string{"--git-dir=" + r.dir, "--work-tree=" + r.wt, "-c", "core.bare=false"}, args...)
+	cmd := exec.Command("git", full...)
+	cmd.Dir = r.wt
 	cmd.Env = append(os.Environ(),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=Test Author", "GIT_AUTHOR_EMAIL=author@example.invalid",
@@ -42,7 +47,7 @@ func (r *testRepo) git(args ...string) string {
 // write creates or replaces a file.
 func (r *testRepo) write(name, content string) {
 	r.t.Helper()
-	full := filepath.Join(r.dir, filepath.FromSlash(name))
+	full := filepath.Join(r.wt, filepath.FromSlash(name))
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		r.t.Fatal(err)
 	}

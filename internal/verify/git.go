@@ -7,13 +7,15 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
-// hardenedGitConfig is put before every git command. The repository's own
-// configuration is not trusted: a worker or a check may have changed it.
-// These settings switch off what can start a program: the file system
-// monitor, hooks, a pager, an external diff and the ext transport.
+// hardenedGitConfig is put before every git command. It is a second layer.
+// The first is the guard (see checkTrusted), which refuses any repository
+// whose configuration the factory did not write. These settings switch off
+// what can start a program: the file system monitor, hooks, a pager, an
+// external diff and the ext transport.
 var hardenedGitConfig = []string{
 	"-c", "core.fsmonitor=false",
 	"-c", "core.hooksPath=/dev/null",
@@ -41,15 +43,29 @@ func gitEnv() []string {
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_NO_REPLACE_OBJECTS=1",
 	)
 }
 
 // gitCommand builds every git command of this package. It is the only place
 // that starts the git program, and a test keeps it that way. There is no
 // shell: args is an argument list.
-func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	full := append(append([]string{}, hardenedGitConfig...), args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
+//
+// gitDir is the git directory of a bare repository. The command is tied to it
+// with --git-dir, so git never searches the file system for another
+// repository, and replace objects are off. An empty gitDir is for the few
+// commands that need no repository: they run in the temporary directory.
+func gitCommand(ctx context.Context, gitDir string, args ...string) *exec.Cmd {
+	full := append([]string{}, hardenedGitConfig...)
+	dir := os.TempDir()
+	if gitDir != "" {
+		if abs, err := filepath.Abs(gitDir); err == nil {
+			gitDir = abs
+		}
+		full = append(full, "--git-dir="+gitDir, "--no-replace-objects")
+		dir = gitDir
+	}
+	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
 	return cmd

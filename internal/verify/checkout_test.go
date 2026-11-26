@@ -17,7 +17,7 @@ func TestMaterialize(t *testing.T) {
 	r := newTestRepo(t)
 	r.write("target.txt", "target\n")
 	r.write("bin/run.sh", "#!/bin/sh\necho hi\n")
-	if err := os.Chmod(filepath.Join(r.dir, "bin/run.sh"), 0o755); err != nil {
+	if err := os.Chmod(filepath.Join(r.wt, "bin/run.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	r.write("dir/deep/file.txt", "deep\n")
@@ -33,10 +33,10 @@ func TestMaterialize(t *testing.T) {
 		"dir/deep/climb2": "../../../x",
 		"backslash":       `a\b`,
 	} {
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(r.dir, link)), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(r.wt, link)), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, filepath.Join(r.dir, link)); err != nil {
+		if err := os.Symlink(target, filepath.Join(r.wt, link)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -47,7 +47,7 @@ func TestMaterialize(t *testing.T) {
 	head := r.git("rev-parse", "HEAD")
 
 	dest := t.TempDir()
-	notes, err := materialize(context.Background(), r.dir, head, dest)
+	notes, err := materialize(context.Background(), r.dir, head, dest, limits{DefaultMaxTotalBytes, DefaultMaxFileBytes, DefaultMaxEntries})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestGitEnvIsAnAllowlist(t *testing.T) {
 			t.Errorf("git environment holds %s", bad)
 		}
 	}
-	for _, want := range []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "PATH="} {
+	for _, want := range []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "PATH="} {
 		if !strings.Contains(env, want) {
 			t.Errorf("git environment lacks %s", want)
 		}
@@ -205,7 +205,7 @@ func TestGitEnvIsAnAllowlist(t *testing.T) {
 func TestGitCommandIsHardened(t *testing.T) {
 	cmd := gitCommand(context.Background(), ".", "status")
 	args := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"core.fsmonitor=false", "core.hooksPath=/dev/null", "core.pager=cat", "diff.external=", "protocol.ext.allow=never"} {
+	for _, want := range []string{"core.fsmonitor=false", "core.hooksPath=/dev/null", "core.pager=cat", "diff.external=", "protocol.ext.allow=never", "--no-replace-objects", "--git-dir="} {
 		if !strings.Contains(args, want) {
 			t.Errorf("git command lacks -c %s: %s", want, args)
 		}

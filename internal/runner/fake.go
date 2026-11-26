@@ -8,7 +8,8 @@ import (
 )
 
 // Fake is a Runner for tests of other packages. It starts nothing. It
-// records each spec, replays Events, and gives Outcome.
+// records each spec, replays Events, and gives Outcome. The zero Outcome
+// means failed, so a test sets Status to what it wants.
 type Fake struct {
 	// Outcome is returned by Wait.
 	Outcome Outcome
@@ -53,7 +54,7 @@ func (f *Fake) Start(_ context.Context, spec Spec) (Handle, error) {
 	if f.Hold {
 		go func() {
 			<-h.cancelled
-			h.out.Cancelled, h.out.Failed, h.out.Reason = true, true, "the run was cancelled"
+			h.out.Cancelled, h.out.Status, h.out.Reason = true, StatusCancelled, "the run was cancelled"
 			close(h.done)
 		}()
 	} else {
@@ -77,7 +78,7 @@ func (h *fakeHandle) Wait(ctx context.Context) (Outcome, error) {
 	case <-h.done:
 		return h.out, nil
 	case <-ctx.Done():
-		return Outcome{}, ctx.Err()
+		return Outcome{Status: StatusUnknown, Reason: "the run is still going"}, ctx.Err()
 	}
 }
 

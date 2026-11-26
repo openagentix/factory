@@ -22,7 +22,7 @@ func TestHappyRun(t *testing.T) {
 	  "result":` + goodResult + `}`)
 	spec.OnEvent = ev.on
 	o := f.do(spec)
-	if o.Failed || o.Reason != "" {
+	if o.Failed() || o.Reason != "" {
 		t.Fatalf("failed: %s", o.Reason)
 	}
 	if o.Result == nil || o.Result.Status != api.StatusSucceeded || o.ExitCode != 0 || o.TimedOut || o.Cancelled {
@@ -62,7 +62,7 @@ func TestHappyRun(t *testing.T) {
 func TestNoChange(t *testing.T) {
 	f := newFixture(t)
 	o := f.do(f.spec(`{"result":` + goodResult + `}`))
-	if o.Failed || o.Changed || o.Commit != f.base {
+	if o.Failed() || o.Changed || o.Commit != f.base {
 		t.Errorf("outcome = %+v", o)
 	}
 }
@@ -72,7 +72,7 @@ func TestNonZeroExitFailsTheRunAndKeepsItOnRequest(t *testing.T) {
 	spec := f.spec(`{"exitCode":3,"files":[{"path":"a","content":"x"}],"result":` + goodResult + `}`)
 	spec.KeepFailed = true
 	o := f.do(spec)
-	if !o.Failed || o.ExitCode != 3 || o.Commit != "" {
+	if !o.Failed() || o.ExitCode != 3 || o.Commit != "" {
 		t.Fatalf("outcome = %+v", o)
 	}
 	if o.RunDir == "" {
@@ -155,7 +155,7 @@ func TestEnvironmentIsAnAllowlist(t *testing.T) {
 	o := f.do(spec)
 	got := envSeen(ev.texts)
 	want := []string{
-		"HOME=/home/someone", "LANG=en_US.UTF-8", "LOGNAME=someone", "OXF_ALLOW_STUB=1", "PATH=" + os.Getenv("PATH"),
+		"HOME=/home/someone", "LANG=en_US.UTF-8", "LOGNAME=someone", "OXF_ALLOW_STUB=1", "OXF_STUB_ATTACK_ROOT=" + filepath.Dir(filepath.Dir(f.data)), "PATH=" + os.Getenv("PATH"),
 		"SHELL=/bin/zsh", "TERM=xterm", "USER=someone",
 	}
 	var checked []string
@@ -233,12 +233,16 @@ func TestMeteredRunPassesOnlyTheNamedKey(t *testing.T) {
 	if env := run(false, []string{"ANTHROPIC_API_KEY"}); has(env, "ANTHROPIC_API_KEY=sk-named") {
 		t.Error("a key was passed for a run that is not metered")
 	}
+	if env := run(true, []string{"ANTHROPIC_AUTH_TOKEN"}); len(env) == 0 {
+		t.Error("a documented bearer token name must be accepted")
+	}
 	env := run(true, []string{"ANTHROPIC_API_KEY"})
 	if !has(env, "ANTHROPIC_API_KEY=sk-named") || has(env, "OPENAI_API_KEY=sk-other") || has(env, "GITHUB_TOKEN=gh") {
 		t.Errorf("metered env = %v", env)
 	}
 	// A key variable that names a git host secret is refused at the start.
-	for _, bad := range []string{"GITHUB_TOKEN", "SSH_AUTH_SOCK", "GIT_ASKPASS", "PATH", "lower", "A=B", "FACTORY_OUT"} {
+	for _, bad := range []string{"GITHUB_TOKEN", "SSH_AUTH_SOCK", "GIT_ASKPASS", "PATH", "lower", "A=B", "FACTORY_OUT",
+		"LD_PRELOAD", "BASH_ENV", "DYLD_INSERT_LIBRARIES", "AWS_SECRET_ACCESS_KEY", "NODE_OPTIONS", "HTTPS_PROXY"} {
 		spec := f.spec(`{"result":` + goodResult + `}`)
 		spec.Environ, spec.Metered, spec.KeyEnv = environ, true, []string{bad}
 		if _, err := NewLocal().Start(context.Background(), spec); err == nil {

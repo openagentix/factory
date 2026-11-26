@@ -41,7 +41,7 @@ func writeFile(t *testing.T, dir, name, content string) string {
 
 func requireFailed(t *testing.T, o Outcome, why string) {
 	t.Helper()
-	if !o.Failed || o.Result != nil || o.Commit != "" {
+	if !o.Failed() || o.Result != nil || o.Commit != "" {
 		t.Fatalf("%s: the run must fail with no result and no commit: %+v", why, o)
 	}
 }
@@ -119,7 +119,7 @@ func TestResultClaimsOfTheOrchestratorAreDropped(t *testing.T) {
 	script := `{"result":{"schemaVersion":1,"status":"succeeded","summary":"x","harness":{"name":"stub"},
 	  "usage":{"billing":"plan","source":"worker says so","enforced":true}}}`
 	o := f.doWithin(f.spec(script), 30*time.Second)
-	if o.Failed || o.Result == nil {
+	if o.Failed() || o.Result == nil {
 		t.Fatalf("outcome = %+v", o)
 	}
 	if o.Result.Usage.Source != "" || o.Result.Usage.Enforced {
@@ -153,7 +153,7 @@ func TestEventsFileLinkIsNotWrittenThrough(t *testing.T) {
 	// puts it in place before it prints, as an agent that raced the runner.
 	spec := f.spec(`{"eventsLink":"` + victim + `","events":[{"kind":"message","text":"real"}],"result":` + goodResult + `}`)
 	o := f.doWithin(spec, 30*time.Second)
-	if o.Failed {
+	if o.Failed() {
 		t.Fatalf("a link at events.jsonl must not fail the run: %s", o.Reason)
 	}
 	if b, _ := os.ReadFile(victim); string(b) != "keep" {
@@ -173,7 +173,7 @@ func TestBackgroundChildInTheGroupIsKilled(t *testing.T) {
 		t.Fatalf("no child pid: %v", ev.texts)
 	}
 	killLater(t, pid)
-	if o.Failed {
+	if o.Failed() {
 		t.Fatalf("failed: %s", o.Reason)
 	}
 	if !gone(pid) {
@@ -192,7 +192,7 @@ func TestChildInANewSessionIsDetectedAndStated(t *testing.T) {
 	o := f.doWithin(spec, 30*time.Second)
 	pid, _ := strconv.Atoi(ev.find("child-pid="))
 	killLater(t, pid)
-	if o.Failed {
+	if o.Failed() {
 		t.Fatalf("failed: %s", o.Reason)
 	}
 	found := false
@@ -217,7 +217,7 @@ func TestDeadlineKillsAProcessThatIgnoresTheSignal(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Errorf("returned after %v, want close to the deadline", elapsed)
 	}
-	if !o.TimedOut || !o.Failed || o.Result != nil {
+	if !o.TimedOut || !o.Failed() || o.Result != nil {
 		t.Fatalf("outcome = %+v", o)
 	}
 	_ = ev
@@ -239,7 +239,7 @@ func TestCancelStopsTheRunAndTheGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	o, err := h.Wait(cctx)
-	if err != nil || !o.Cancelled || !o.Failed || o.Commit != "" {
+	if err != nil || !o.Cancelled || !o.Failed() || o.Commit != "" {
 		t.Fatalf("outcome = %+v err = %v", o, err)
 	}
 	if len(runDirs(f)) != 0 {
@@ -255,7 +255,7 @@ func TestOutputFloodIsBounded(t *testing.T) {
 	spec.Limits.MaxStderrBytes = 100 << 10
 	spec.Limits.MaxStdoutBytes = 1 << 20
 	o := f.doWithin(spec, 60*time.Second)
-	if !o.Failed {
+	if !o.Failed() {
 		t.Fatal("exit code 1 must fail the run")
 	}
 	fi, err := os.Stat(o.StderrPath)
@@ -277,7 +277,7 @@ func TestFloodOfStdoutAndLongLineStillGivesAResult(t *testing.T) {
 	before.read()
 	o := f.doWithin(spec, 60*time.Second)
 	after.read()
-	if o.Failed || o.Result == nil {
+	if o.Failed() || o.Result == nil {
 		t.Fatalf("outcome = %+v", o)
 	}
 	if grown := after.total - before.total; grown > 400<<20 {
@@ -311,7 +311,7 @@ func TestWorkspaceReplacedByALinkFailsSafely(t *testing.T) {
 	other := t.TempDir()
 	writeFile(t, other, "secret.txt", "private")
 	o := f.doWithin(f.spec(`{"replaceWorkspace":"link","workspaceTarget":"`+other+`","result":`+goodResult+`}`), 30*time.Second)
-	if !o.Failed || o.Commit != "" {
+	if !o.Failed() || o.Commit != "" {
 		t.Fatalf("outcome = %+v", o)
 	}
 	if b, _ := os.ReadFile(filepath.Join(other, "secret.txt")); string(b) != "private" {
@@ -325,7 +325,7 @@ func TestWorkspaceReplacedByALinkFailsSafely(t *testing.T) {
 func TestWorkspaceRemovedFailsSafely(t *testing.T) {
 	f := newFixture(t)
 	o := f.doWithin(f.spec(`{"replaceWorkspace":"remove","result":`+goodResult+`}`), 30*time.Second)
-	if !o.Failed || o.Commit != "" {
+	if !o.Failed() || o.Commit != "" {
 		t.Fatalf("outcome = %+v", o)
 	}
 }
@@ -339,7 +339,7 @@ func TestInputsAreReadOnlyForTheAgent(t *testing.T) {
 	spec := f.spec(`{"writeIn":true,"result":` + goodResult + `}`)
 	spec.OnEvent = ev.on
 	o := f.doWithin(spec, 30*time.Second)
-	if o.Failed {
+	if o.Failed() {
 		t.Fatalf("failed: %s", o.Reason)
 	}
 	if ev.find("write-in: task.json: ") != "refused" || ev.find("write-in: new file: ") != "refused" {

@@ -20,12 +20,7 @@ import (
 // A swap between the look and the open is narrowed, not ruled out, without an
 // operating system sandbox. Reading never leaves the run directory: it uses
 // os.Root.
-func readResult(runDir string, max int64) ([]byte, error) {
-	root, err := os.OpenRoot(runDir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
+func readResult(root *os.Root, max int64) ([]byte, error) {
 	outInfo, err := root.Lstat("out")
 	if err != nil {
 		return nil, err

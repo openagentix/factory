@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/ncruces/go-sqlite3"
 
 	"github.com/openagentix/factory/internal/api"
 	"github.com/openagentix/factory/internal/store"
@@ -77,12 +78,23 @@ func (s *Store) CreateRun(ctx context.Context, r *api.Run) error {
 		p.ID, p.Task, p.Ticket, p.Goal, string(p.Phase), formatTime(p.CreatedAt),
 		formatTimePtr(p.StartedAt), formatTimePtr(p.FinishedAt), reachedWork(p), string(body))
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "PRIMARY KEY") {
+		if isDuplicate(err) {
 			return fmt.Errorf("%w: run %q", store.ErrExists, p.ID)
 		}
 		return fmt.Errorf("store: create run %q: %w", p.ID, err)
 	}
 	return nil
+}
+
+// isDuplicate reports a primary key or unique constraint violation, by the
+// driver's extended error code.
+func isDuplicate(err error) bool {
+	var se *sqlite3.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	code := se.ExtendedCode()
+	return code == sqlite3.CONSTRAINT_PRIMARYKEY || code == sqlite3.CONSTRAINT_UNIQUE
 }
 
 // GetRun returns one run.

@@ -189,3 +189,17 @@ func TestClaudeReadErrorResult(t *testing.T) {
 		t.Errorf("summary = %+v", sum)
 	}
 }
+
+func TestReadDropsAHugeLineAndKeepsGoing(t *testing.T) {
+	huge := strings.Repeat("b", maxLine+10)
+	in := `{"type":"assistant","message":{"content":[{"type":"text","text":"` + huge + `"}]}}` + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"after"}]}}` + "\n"
+	var events []api.Event
+	sum, err := fixedClaude().Read(strings.NewReader(in), func(e api.Event) { events = append(events, e) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Skipped != 1 || len(events) != 1 || events[0].Text != "after" {
+		t.Errorf("skipped=%d events=%+v", sum.Skipped, events)
+	}
+}

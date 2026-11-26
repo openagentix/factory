@@ -19,6 +19,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		fmt.Fprintf(stdout, "oxf %s\n", Version)
 		return 0
+	case "stub-harness":
+		// Hidden: not in the usage text. See stub_harness.go.
+		return runStubHarness(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		return 2

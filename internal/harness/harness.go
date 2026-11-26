@@ -130,6 +130,11 @@ func (s Spec) validate() error {
 		if strings.TrimSpace(c) == "" {
 			return fmt.Errorf("harness: spec.Commands[%d] is empty", i)
 		}
+		for _, f := range forbidden {
+			if strings.Contains(c, f) {
+				return fmt.Errorf("%w: policy command %q", ErrForbidden, c)
+			}
+		}
 		if err := checkGit(c); err != nil {
 			return err
 		}

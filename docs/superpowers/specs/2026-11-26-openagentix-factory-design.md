@@ -173,6 +173,16 @@ Changing how a method behaves in this way is accepted. **(owner)** A method with
 
 **Several machines.** State is in GitHub, so each teammate can run `oxf` on their own machine. A run claims its ticket with a label and a marker comment, reads back, and the earliest claim wins. One machine at a time holds the staging claim for a repository, by the same rule, and only it combines, rebuilds and accepts. No shared server is needed. **(call)**
 
+### Lanes: the process fits the size of the job
+
+A goal runs in one of three lanes. **Quick**: one sentence and a few acceptance lines, then the factory builds and checks alone. **Standard**: a short spec, then tickets. **Deep**: research, a roadmap and a phased plan, then one phase at a time. Planning shrinks with the size of the job. Checking never does. A goal that goes off course moves up a lane. It never moves down without the person saying so. **(owner: a heavy method is too slow for a quick job, and a light one is not enough for a large build)**
+
+### Methods: keep the one you use
+
+How the agent works inside a run is a **method**, and the factory does not own it. People who use superpowers for quick work and Open GSD for large builds keep doing so: the factory runs the plugin they have installed, by name, with the unattended contract in front. It ships and copies none of their text. With no plugin installed, short built-in prompts are used. A plugin's own verification is information only. The factory's acceptance checks and gate decide. **(owner)**
+
+The front of a deep job is where a person's attention goes: brainstorm, roadmap, plan. After the plan is approved the factory works with the lights off. **(owner)**
+
 ## 7. The pipeline
 
 Seven phases. v0.1 covers the first four, as far as Accept.

@@ -59,6 +59,35 @@ At dial level 1 a person also approves each output before it is used or combined
 - When both harnesses are installed, `review` uses the one that did not write the subject.
 - A fix run's own failure triggers nothing. Pull requests from forks are not reviewed in the first release.
 
+## Lanes and methods
+
+**The process fits the size of the job.** A heavy method on a small job wastes hours. No method on a large job starts a bad course. So a goal runs in one of three lanes.
+
+| Lane | For | What a person does first | What the factory then does alone |
+|---|---|---|---|
+| Quick | A fix, a tweak, a small feature | One sentence and one to three acceptance lines | `acceptance`, one ticket, `implement`, the machine gate |
+| Standard | A feature | Approves a short spec | `decompose` into tickets, `acceptance`, then each ticket |
+| Deep | A new product, a large rework, a large existing codebase | Works through research, a roadmap and a phased plan | One phase at a time. The acceptance checks of a phase run on staging before the next phase starts |
+
+- The factory proposes a lane. The person can change it with one action. How the factory chooses is not settled. Until real runs show better, the person's choice wins.
+- The amount of planning shrinks with the size of the job. The checking does not. Every lane has acceptance checks and the machine gate.
+- A goal can move up a lane. When a quick or standard goal goes off course, the factory stops and proposes the next lane up. A goal never moves down a lane without the person saying so.
+- Planning documents are markdown files in the repository: the spec, and for the deep lane a roadmap and a plan per phase. A person can read and edit them. They are the plan of record.
+
+**Methods.** A method is how the agent works inside one run. The factory does not own it. `spec.method` in a task names one of:
+
+| Value | Meaning |
+|---|---|
+| `builtin` | Short prompts that ship with `oxf`. Always available |
+| `plugin:<name>` | A workflow plugin the person has installed for their harness, such as superpowers or Open GSD. The run tells the agent to use it by name |
+| a file path | A prompt file in the repository |
+
+- The factory ships no text from any plugin and copies none. The person installs a plugin from its own source. At start `oxf` reports which plugins it found and their versions.
+- A plugin that is named but not installed is not an error. The run uses `builtin` and says so.
+- The unattended contract goes in front of every method. A plugin step that would ask a person becomes a ruling or a question, as for any method.
+- A plugin's own verification is read as information. It never sets an acceptance state and never passes the machine gate.
+- The ideas behind `builtin` come from superpowers, Open GSD and Matt Pocock's skills, with thanks. The text is our own.
+
 ## A run and its three stages
 
 1. **Work.** The worker gets a checkout of the current staging state on a new branch (for `review`, of its subject), the input files and a prompt. It has no git host credential. It edits files and commits locally. The orchestrator squashes its commits into one.
@@ -380,6 +409,8 @@ Left to the first real runs, and not designed further here:
 - How well "exercised" can be computed.
 - How staging rebuilds behave on a large repository, in time and in checks run, and how the staging claim passes between machines.
 - Whether subscription terms allow unattended runs started by another program. If they do not, unattended runs need an API key, and take the wheel remains for subscription users.
+- Whether a workflow plugin can be started and driven in a run with no terminal. Read from their text only. Not tried.
+- How the factory should choose a lane.
 
 ## Limits
 

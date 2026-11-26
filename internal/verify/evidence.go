@@ -57,7 +57,14 @@ func BuildEvidence(in EvidenceInput) (*Built, error) {
 	}
 	cs := in.Changes
 	paths := cs.Paths()
-	tests := ClassifyTestFiles(cs, in.TestPatterns)
+	tests, err := ClassifyTestFiles(cs, in.TestPatterns)
+	if err != nil {
+		return nil, fmt.Errorf("evidence: %w", err)
+	}
+	protected, err := CheckProtected(in.Factory, in.Task, cs)
+	if err != nil {
+		return nil, fmt.Errorf("evidence: %w", err)
+	}
 	ev := &api.Evidence{
 		SchemaVersion:    api.SchemaVersion,
 		Run:              in.Run,
@@ -76,7 +83,7 @@ func BuildEvidence(in EvidenceInput) (*Built, error) {
 		Claims:           in.Result.Claims,
 		Rulings:          in.Result.Rulings,
 		Denials:          in.Denials,
-		ProtectedPaths:   CheckProtected(in.Factory, in.Task, cs),
+		ProtectedPaths:   protected,
 		TestFilesChanged: tests.Changed,
 		TestFilesAdded:   tests.Added,
 		Acceptance:       []api.AcceptanceEntry{},
@@ -100,11 +107,15 @@ func BuildEvidence(in EvidenceInput) (*Built, error) {
 		ev.Checks = append(ev.Checks, c.Result)
 	}
 	if len(paths) > 0 {
-		if r, ok := PreliminaryRisk(RiskInput{
+		r, ok, err := PreliminaryRisk(RiskInput{
 			Changes:              cs,
 			RiskPaths:            in.Factory.Spec.RiskPaths,
 			ExistingTestsChanged: tests.Changed,
-		}); ok {
+		})
+		if err != nil {
+			return nil, fmt.Errorf("evidence: %w", err)
+		}
+		if ok {
 			ev.Risk = r
 		}
 	}

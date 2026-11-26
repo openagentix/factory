@@ -2,6 +2,7 @@ package verify
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/openagentix/factory/internal/api"
@@ -60,10 +61,26 @@ func TestCheckProtected(t *testing.T) {
 		{"rename between protected", taskNamed("implement"),
 			&ChangeSet{Changes: []Change{renamed(".github/a.yml", ".factory/a.yml")}}, []string{".factory/a.yml", ".github/a.yml"}},
 		{"no change", taskNamed("implement"), &ChangeSet{}, nil},
+		{"bare factory name", taskNamed("implement"), modified(".factory", "a.go"), []string{".factory"}},
+		{"bare acceptance name", taskNamed("implement"), modified("acceptance"), []string{"acceptance"}},
+		{"bare name of a configured path", taskNamed("implement"), modified(".github"), []string{".github"}},
+		{"bare factory name, onboard", taskNamed("onboard"), modified(".factory"), []string{".factory"}},
+		{"bare acceptance name stays touched even for acceptance (a link there redirects)", taskNamed("acceptance"), modified("acceptance"), []string{"acceptance"}},
+		{"a link named like the factory dir", taskNamed("implement"),
+			&ChangeSet{Changes: []Change{{Path: ".factory", Status: StatusAdded}}}, []string{".factory"}},
+		{"suspicious: newline", taskNamed("implement"), modified("a\nb.go"), []string{"a<U+000A>b.go"}},
+		{"suspicious: bidi override", taskNamed("implement"), modified("evil\u202egpj.exe"), []string{"evil<U+202E>gpj.exe"}},
+		{"suspicious: zero width", taskNamed("implement"), modified("a\u200bb.go"), []string{"a<U+200B>b.go"}},
+		{"suspicious: not UTF-8", taskNamed("implement"), modified("a\xffb.go"), []string{"a<0xFF>b.go"}},
+		{"suspicious: nul", taskNamed("implement"), modified("a\x00b"), []string{"a<U+0000>b"}},
+		{"suspicious and protected", taskNamed("implement"), modified(".factory/a\x1b"), []string{".factory/a<U+001B>"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rep := CheckProtected(testFactory(), tt.task, tt.cs)
+			rep, err := CheckProtected(testFactory(), tt.task, tt.cs)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(rep.Touched) == 0 && len(tt.touched) == 0 {
 				rep.Touched = nil
 			}
@@ -80,7 +97,10 @@ func TestCheckProtected(t *testing.T) {
 func TestCheckProtected_CustomAcceptancePath(t *testing.T) {
 	f := testFactory()
 	f.Spec.AcceptancePath = "qa/accept"
-	rep := CheckProtected(f, taskNamed("implement"), modified("qa/accept/1/x", "acceptance/y"))
+	rep, err := CheckProtected(f, taskNamed("implement"), modified("qa/accept/1/x", "acceptance/y"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(rep.Touched, []string{"qa/accept/1/x"}) {
 		t.Errorf("touched = %v", rep.Touched)
 	}
@@ -88,8 +108,35 @@ func TestCheckProtected_CustomAcceptancePath(t *testing.T) {
 
 func TestCheckProtected_ReportValidates(t *testing.T) {
 	// Touched is never nil, so the evidence JSON has [] and not null.
-	rep := CheckProtected(testFactory(), taskNamed("implement"), modified("a.go"))
+	rep, err := CheckProtected(testFactory(), taskNamed("implement"), modified("a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if rep.Touched == nil || !rep.OK {
 		t.Errorf("report = %+v", rep)
+	}
+}
+
+func TestCheckProtected_BadPatternFailsClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		f    func() *api.Factory
+		task *api.Task
+	}{
+		{"factory file", func() *api.Factory { f := testFactory(); f.Spec.ProtectedPaths = []string{"ok/**", "[bad"}; return f }, taskNamed("implement")},
+		{"task", testFactory, taskNamed("implement", "[bad")},
+		{"acceptance path", func() *api.Factory { f := testFactory(); f.Spec.AcceptancePath = "[bad"; return f }, taskNamed("implement")},
+		{"empty", func() *api.Factory { f := testFactory(); f.Spec.ProtectedPaths = []string{""}; return f }, taskNamed("implement")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := CheckProtected(tt.f(), tt.task, modified("a.go"))
+			if err == nil {
+				t.Fatal("a pattern that cannot be parsed must fail verification")
+			}
+			if tt.name != "empty" && !strings.Contains(err.Error(), "[bad") {
+				t.Errorf("the error must name the pattern: %v", err)
+			}
+		})
 	}
 }

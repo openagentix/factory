@@ -2,6 +2,7 @@ package verify
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/openagentix/factory/internal/api"
@@ -94,7 +95,10 @@ func TestComputeRisk(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ComputeRisk(tt.in)
+			got, err := ComputeRisk(tt.in)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if got.Level != tt.level {
 				t.Fatalf("level = %q, want %q (reasons %v)", got.Level, tt.level, got.Reasons)
 			}
@@ -112,12 +116,12 @@ func TestComputeRisk_Order(t *testing.T) {
 	// A change that fits rules 1, 2, 3 and 4 gets rule 1.
 	in := goodInput("go.mod")
 	in.RiskPaths.Documents = append(in.RiskPaths.Documents, "go.mod")
-	if got := ComputeRisk(in); got.Level != api.RiskHigh {
+	if got, _ := ComputeRisk(in); got.Level != api.RiskHigh {
 		t.Errorf("rule 1 must win over rule 2: %+v", got)
 	}
 	// Rule 2 wins over rule 3 and 4.
 	in2 := RiskInput{Changes: modified("docs/x.md"), RiskPaths: testRiskPaths}
-	if got := ComputeRisk(in2); got.Level != api.RiskLow || got.Reasons[0] != "only document paths changed" {
+	if got, _ := ComputeRisk(in2); got.Level != api.RiskLow || got.Reasons[0] != "only document paths changed" {
 		t.Errorf("rule 2 must win over rule 4: %+v", got)
 	}
 }
@@ -139,10 +143,31 @@ func TestPreliminaryRisk(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, ok := PreliminaryRisk(RiskInput{Changes: tt.cs, RiskPaths: testRiskPaths, ExistingTestsChanged: tt.tests})
+			r, ok, err := PreliminaryRisk(RiskInput{Changes: tt.cs, RiskPaths: testRiskPaths, ExistingTestsChanged: tt.tests})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if ok != tt.set || r.Level != tt.level {
 				t.Errorf("got %+v ok=%v", r, ok)
 			}
 		})
+	}
+}
+
+func TestComputeRisk_BadPatternFailsClosed(t *testing.T) {
+	for _, set := range []func(*api.RiskPaths){
+		func(r *api.RiskPaths) { r.Contract = []string{"[bad"} },
+		func(r *api.RiskPaths) { r.Security = []string{"ok", "[bad"} },
+		func(r *api.RiskPaths) { r.Dependencies = []string{"[bad"} },
+		func(r *api.RiskPaths) { r.Documents = []string{"[bad"} },
+	} {
+		in := goodInput("main.go")
+		set(&in.RiskPaths)
+		if _, err := ComputeRisk(in); err == nil || !strings.Contains(err.Error(), "[bad") {
+			t.Errorf("ComputeRisk error = %v, want one naming the pattern", err)
+		}
+		if _, _, err := PreliminaryRisk(in); err == nil {
+			t.Error("PreliminaryRisk must fail closed too")
+		}
 	}
 }

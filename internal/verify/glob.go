@@ -4,6 +4,7 @@
 package verify
 
 import (
+	"fmt"
 	"path"
 	"strings"
 )
@@ -79,4 +80,34 @@ func matchAny(patterns []string, p string, match func(pattern, p string) bool) b
 		}
 	}
 	return false
+}
+
+// CheckPattern reports a pattern that Match could not use. Match answers false
+// for such a pattern, which would mean "not protected" or "not risky", so the
+// callers check every pattern first and fail verification when one is bad.
+func CheckPattern(pattern string) error {
+	if strings.TrimSpace(pattern) == "" {
+		return fmt.Errorf("bad path pattern %q: it is empty", pattern)
+	}
+	for _, seg := range strings.Split(pattern, "/") {
+		if seg == "**" {
+			continue
+		}
+		if _, err := path.Match(seg, ""); err != nil {
+			return fmt.Errorf("bad path pattern %q: %v", pattern, err)
+		}
+	}
+	return nil
+}
+
+// checkPatterns runs CheckPattern on every pattern of every list.
+func checkPatterns(lists ...[]string) error {
+	for _, l := range lists {
+		for _, p := range l {
+			if err := CheckPattern(p); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

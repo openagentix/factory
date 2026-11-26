@@ -2,6 +2,7 @@ package verify
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -26,7 +27,10 @@ func TestClassifyTestFiles(t *testing.T) {
 		// a test renamed to a non-test name is still a change to an existing test
 		{Path: "c/helper.go", OldPath: "c/helper_test.go", Status: StatusRenamed},
 	}}
-	got := ClassifyTestFiles(cs, nil)
+	got, err := ClassifyTestFiles(cs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	wantAdded := []string{"a/new_test.go", "c/fresh_test.go", "py/test_x.py", "svc/test/util.rb", "web/a.test.ts"}
 	wantChanged := []string{"a/gone_test.go", "a/old_test.go", "a/was_test.go", "c/helper_test.go", "py/y_test.py", "svc/__tests__/c.js", "tests/fixtures/data.json", "web/b.spec.js"}
 	if !reflect.DeepEqual(got.Added, wantAdded) {
@@ -42,14 +46,14 @@ func TestClassifyTestFiles_CallerPatternsReplaceDefaults(t *testing.T) {
 		{Path: "x_test.go", Status: StatusModified},
 		{Path: "check/one.sh", Status: StatusModified},
 	}}
-	got := ClassifyTestFiles(cs, []string{"check/**"})
+	got, _ := ClassifyTestFiles(cs, []string{"check/**"})
 	if !reflect.DeepEqual(got.Changed, []string{"check/one.sh"}) || len(got.Added) != 0 {
 		t.Errorf("got %+v", got)
 	}
 }
 
 func TestClassifyTestFiles_EmptyListsAreNotNil(t *testing.T) {
-	got := ClassifyTestFiles(&ChangeSet{}, nil)
+	got, _ := ClassifyTestFiles(&ChangeSet{}, nil)
 	if got.Added == nil || got.Changed == nil {
 		t.Errorf("lists must be non-nil: %+v", got)
 	}
@@ -80,5 +84,29 @@ func TestUncoveredFiles(t *testing.T) {
 				t.Errorf("got %v want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClassifyTestFiles_BadPatternLists(t *testing.T) {
+	cs := &ChangeSet{Changes: []Change{{Path: "a_test.go", Status: StatusModified}}}
+	tests := []struct {
+		name     string
+		patterns []string
+		wantErr  string
+	}{
+		{"empty list", []string{}, "empty"},
+		{"bad pattern", []string{"*_test.go", "[bad"}, "[bad"},
+		{"empty pattern", []string{""}, "empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ClassifyTestFiles(cs, tt.patterns)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want one mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+	if _, err := ClassifyTestFiles(cs, nil); err != nil {
+		t.Errorf("nil means the defaults: %v", err)
 	}
 }

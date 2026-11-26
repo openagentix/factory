@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,5 +185,26 @@ func TestBuildEvidence_FromGit(t *testing.T) {
 	}
 	if ev.Checks[0].ExitCode != 0 {
 		t.Errorf("checks = %+v", ev.Checks)
+	}
+}
+
+func TestBuildEvidence_FailsClosed(t *testing.T) {
+	in := baseInput(modified("a.go"))
+	in.Factory.Spec.RiskPaths.Security = []string{"[bad"}
+	if _, err := BuildEvidence(in); err == nil || !strings.Contains(err.Error(), "[bad") {
+		t.Errorf("bad risk pattern: %v", err)
+	}
+	in = baseInput(modified("a.go"))
+	in.TestPatterns = []string{}
+	if _, err := BuildEvidence(in); err == nil {
+		t.Error("an explicit empty test pattern list must be an error")
+	}
+	in = baseInput(modified("a\u202eb.go"))
+	b, err := BuildEvidence(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Evidence.ProtectedPaths.OK || !strings.Contains(b.Evidence.ProtectedPaths.Touched[0], "<U+202E>") {
+		t.Errorf("a suspicious path must fail verification: %+v", b.Evidence.ProtectedPaths)
 	}
 }

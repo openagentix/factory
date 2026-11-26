@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/openagentix/factory/internal/api"
@@ -23,11 +24,18 @@ type TestFiles struct {
 }
 
 // ClassifyTestFiles sorts the test files of a change. A nil patterns list
-// means DefaultTestPatterns. A renamed file is an existing test that changed
+// means DefaultTestPatterns. An empty list that is not nil is an error, not
+// "no test files", because it would hide every changed test from the risk
+// rules. So is a pattern that cannot be parsed. A renamed file is an existing test that changed
 // when its old path is a test, and a new test when only its new path is.
-func ClassifyTestFiles(cs *ChangeSet, patterns []string) TestFiles {
+func ClassifyTestFiles(cs *ChangeSet, patterns []string) (TestFiles, error) {
 	if patterns == nil {
 		patterns = DefaultTestPatterns
+	} else if len(patterns) == 0 {
+		return TestFiles{}, fmt.Errorf("the test file pattern list is empty: pass nil for the defaults")
+	}
+	if err := checkPatterns(patterns); err != nil {
+		return TestFiles{}, err
 	}
 	isTest := func(p string) bool { return p != "" && matchAny(patterns, p, MatchAnywhere) }
 	tf := TestFiles{Added: []string{}, Changed: []string{}}
@@ -44,7 +52,7 @@ func ClassifyTestFiles(cs *ChangeSet, patterns []string) TestFiles {
 	}
 	sort.Strings(tf.Added)
 	sort.Strings(tf.Changed)
-	return tf
+	return tf, nil
 }
 
 // UncoveredFiles lists the changed files that no claim names. A rename is

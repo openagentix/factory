@@ -85,14 +85,21 @@ func ruleDocuments(in RiskInput) bool {
 // files, and they come first, so a later stage cannot change their answer.
 // It reports false when the change is left to rules 3 and 4, which need the
 // review and the acceptance states.
-func PreliminaryRisk(in RiskInput) (api.Risk, bool) {
+//
+// A risk pattern that cannot be parsed is an error that names it, not a
+// pattern that matches nothing.
+func PreliminaryRisk(in RiskInput) (api.Risk, bool, error) {
+	rp := in.RiskPaths
+	if err := checkPatterns(rp.Contract, rp.Security, rp.Dependencies, rp.Documents); err != nil {
+		return api.Risk{}, false, err
+	}
 	if reasons, ok := ruleHigh(in); ok {
-		return api.Risk{Level: api.RiskHigh, Reasons: reasons}, true
+		return api.Risk{Level: api.RiskHigh, Reasons: reasons}, true, nil
 	}
 	if ruleDocuments(in) {
-		return api.Risk{Level: api.RiskLow, Reasons: []string{"only document paths changed"}}, true
+		return api.Risk{Level: api.RiskLow, Reasons: []string{"only document paths changed"}}, true, nil
 	}
-	return api.Risk{}, false
+	return api.Risk{}, false, nil
 }
 
 // ComputeRisk applies the ordered rules of the decision record. The first
@@ -107,9 +114,13 @@ func PreliminaryRisk(in RiskInput) (api.Risk, bool) {
 //  4. Medium: everything else.
 //
 // Medium lists why rule 3 did not match.
-func ComputeRisk(in RiskInput) api.Risk {
-	if r, ok := PreliminaryRisk(in); ok {
-		return r
+func ComputeRisk(in RiskInput) (api.Risk, error) {
+	r, ok, err := PreliminaryRisk(in)
+	if err != nil {
+		return api.Risk{}, err
+	}
+	if ok {
+		return r, nil
 	}
 	size := in.Changes.Added + in.Changes.Removed
 	var why []string
@@ -136,12 +147,12 @@ func ComputeRisk(in RiskInput) api.Risk {
 		why = append(why, fmt.Sprintf("change is %d lines, over the size limit of %d", size, in.SizeLimit))
 	}
 	if len(why) > 0 {
-		return api.Risk{Level: api.RiskMedium, Reasons: why}
+		return api.Risk{Level: api.RiskMedium, Reasons: why}, nil
 	}
 	return api.Risk{Level: api.RiskLow, Reasons: []string{
 		"review came from a different harness",
 		"every served criterion is working",
 		"every changed file is covered by a claim",
 		fmt.Sprintf("change is within the size limit of %d lines", in.SizeLimit),
-	}}
+	}}, nil
 }

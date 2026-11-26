@@ -86,6 +86,7 @@ func (c *Codex) Read(r io.Reader, emit func(api.Event)) (Summary, error) {
 	now := clock(c.Now)
 	started := now()
 	var sum Summary
+	var inTurn, failed bool
 	sum.Harness = api.HarnessInfo{Name: c.Name()}
 	sum.Usage.Billing = c.Billing
 	if sum.Usage.Billing == "" {
@@ -103,16 +104,19 @@ func (c *Codex) Read(r io.Reader, emit func(api.Event)) (Summary, error) {
 		case "thread.started":
 			send(api.EventStatus, "started "+c.Name())
 		case "turn.started":
+			inTurn = true
 		case "turn.completed":
-			sum.Complete = true
+			inTurn = false
 			sum.Turns++
 			if l.Usage != nil {
-				sum.Usage.InputTokens += l.Usage.Input
-				sum.Usage.OutputTokens += l.Usage.Output
+				var s1, s2 bool
+				sum.Usage.InputTokens, s1 = addTokens(sum.Usage.InputTokens, l.Usage.Input)
+				sum.Usage.OutputTokens, s2 = addTokens(sum.Usage.OutputTokens, l.Usage.Output)
+				sum.TokensSaturated = sum.TokensSaturated || s1 || s2
 			}
 			send(api.EventStatus, "finished")
 		case "turn.failed":
-			sum.Complete, sum.Failed = true, true
+			inTurn, failed = false, true
 			msg := l.Message
 			if l.Error != nil {
 				msg = l.Error.Message
@@ -155,6 +159,10 @@ func (c *Codex) Read(r io.Reader, emit func(api.Event)) (Summary, error) {
 		}
 	}, func() { sum.Skipped++ })
 
+	// Only a clean end is complete: at least one finished turn, no failed
+	// turn, and no turn left open.
+	sum.Failed = failed
+	sum.Complete = sum.Turns > 0 && !failed && !inTurn
 	sum.Duration = now().Sub(started)
 	return sum, err
 }

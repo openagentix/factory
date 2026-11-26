@@ -81,6 +81,9 @@ type Summary struct {
 	Complete bool
 	// Failed is true when the final event reports an error.
 	Failed bool
+	// TokensSaturated is true when a token sum would have overflowed and was
+	// held at the largest value. Treat the figure as a lower bound.
+	TokensSaturated bool
 	// Skipped counts lines that were not valid JSON or of a kind the adapter
 	// does not know. They are ignored, never fatal.
 	Skipped int
@@ -287,4 +290,21 @@ func checkForbidden(c Command) error {
 		}
 	}
 	return nil
+}
+
+// addTokens adds counts and holds the sum at the largest value instead of
+// overflowing. A negative count is ignored. It reports whether it saturated.
+func addTokens(total int64, counts ...int64) (int64, bool) {
+	saturated := false
+	for _, c := range counts {
+		if c <= 0 {
+			continue
+		}
+		if total > math.MaxInt64-c {
+			total, saturated = math.MaxInt64, true
+			continue
+		}
+		total += c
+	}
+	return total, saturated
 }

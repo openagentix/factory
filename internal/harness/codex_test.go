@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -114,10 +115,42 @@ func TestCodexReadTurnFailed(t *testing.T) {
 	in := `{"type":"turn.failed","error":{"message":"boom"}}` + "\n"
 	var events []api.Event
 	sum, _ := fixedCodex().Read(strings.NewReader(in), func(e api.Event) { events = append(events, e) })
-	if !sum.Complete || !sum.Failed {
-		t.Errorf("summary = %+v", sum)
+	if sum.Complete || !sum.Failed {
+		t.Errorf("a failed turn is not a clean end: %+v", sum)
 	}
 	if len(events) != 1 || !strings.Contains(events[0].Text, "boom") {
 		t.Errorf("events = %+v", events)
+	}
+}
+
+func TestCodexOnlyACleanEndIsComplete(t *testing.T) {
+	ok := `{"type":"turn.started"}` + "\n" + `{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}` + "\n"
+	tests := []struct {
+		name     string
+		in       string
+		complete bool
+		failed   bool
+	}{
+		{"clean", ok, true, false},
+		{"completed then failed", ok + `{"type":"turn.failed","error":{"message":"x"}}` + "\n", false, true},
+		{"completed then a new turn that never ends", ok + `{"type":"turn.started"}` + "\n", false, false},
+		{"two clean turns", ok + ok, true, false},
+		{"started only", `{"type":"turn.started"}` + "\n", false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sum, _ := fixedCodex().Read(strings.NewReader(tc.in), func(api.Event) {})
+			if sum.Complete != tc.complete || sum.Failed != tc.failed {
+				t.Errorf("complete=%v failed=%v", sum.Complete, sum.Failed)
+			}
+		})
+	}
+}
+
+func TestCodexTokenSumsSaturate(t *testing.T) {
+	big := `{"type":"turn.completed","usage":{"input_tokens":9223372036854775807,"output_tokens":9223372036854775807}}` + "\n"
+	sum, _ := fixedCodex().Read(strings.NewReader(big+big), func(api.Event) {})
+	if sum.Usage.InputTokens != math.MaxInt64 || sum.Usage.OutputTokens != math.MaxInt64 || !sum.TokensSaturated {
+		t.Errorf("summary = %+v", sum)
 	}
 }

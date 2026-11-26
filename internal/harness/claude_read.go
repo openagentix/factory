@@ -72,6 +72,7 @@ func (c *Claude) Read(r io.Reader, emit func(api.Event)) (Summary, error) {
 	var (
 		sum      Summary
 		last     time.Time
+		inits    int
 		requests = map[string]string{} // tool_use id to a short request text
 		live     []api.Denial
 	)
@@ -99,8 +100,16 @@ func (c *Claude) Read(r io.Reader, emit func(api.Event)) (Summary, error) {
 		case "system":
 			switch l.Subtype {
 			case "init":
-				sum.Harness = api.HarnessInfo{Name: c.Name(), Version: l.Version, Model: l.Model}
-				sum.Usage.Billing = claudeBilling(l.APIKeySource)
+				inits++
+				b := claudeBilling(l.APIKeySource)
+				if inits == 1 {
+					sum.Harness = api.HarnessInfo{Name: c.Name(), Version: l.Version, Model: l.Model}
+					sum.Usage.Billing = b
+				} else if b != sum.Usage.Billing {
+					// Billing is set by the first init event. A later event that
+					// disagrees must not hide a metered run, so the run is metered.
+					sum.Usage.Billing = api.BillingMetered
+				}
 				send(api.EventStatus, fmt.Sprintf("started %s %s %s", c.Name(), l.Version, l.Model))
 			case "permission_denied":
 				req := requests[l.ToolUseID]
@@ -148,8 +157,10 @@ func (c *Claude) Read(r io.Reader, emit func(api.Event)) (Summary, error) {
 			sum.Failed = (l.IsError != nil && *l.IsError) || (l.Subtype != "" && l.Subtype != "success")
 			if u := l.Usage; u != nil {
 				// Claude counts cached input apart from fresh input. Add them.
-				sum.Usage.InputTokens = u.Input + u.CacheCreation + u.CacheRead
-				sum.Usage.OutputTokens = u.Output
+				var s1, s2 bool
+				sum.Usage.InputTokens, s1 = addTokens(0, u.Input, u.CacheCreation, u.CacheRead)
+				sum.Usage.OutputTokens, s2 = addTokens(0, u.Output)
+				sum.TokensSaturated = s1 || s2
 			}
 			// A dollar figure is kept only for metered billing. The program
 			// prints one for a subscription too, but it is an estimate.

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -209,5 +210,43 @@ func TestClaudeReadCountsASyntheticUnknownEvent(t *testing.T) {
 	sum, _ := fixedClaude().Read(strings.NewReader(in), func(api.Event) {})
 	if sum.Skipped != 1 || !sum.Complete {
 		t.Errorf("summary = %+v", sum)
+	}
+}
+
+func TestClaudeBillingComesFromTheFirstInitAndALaterDisagreementMeansMetered(t *testing.T) {
+	init := func(src string) string {
+		return `{"type":"system","subtype":"init","apiKeySource":"` + src + `","claude_code_version":"1","model":"m"}` + "\n"
+	}
+	final := `{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.5}` + "\n"
+	tests := []struct {
+		name     string
+		in       string
+		billing  string
+		wantCost bool
+	}{
+		{"key then none", init("ANTHROPIC_API_KEY") + init("none") + final, api.BillingMetered, true},
+		{"none then key", init("none") + init("ANTHROPIC_API_KEY") + final, api.BillingMetered, true},
+		{"none twice", init("none") + init("none") + final, api.BillingPlan, false},
+		{"key twice", init("ANTHROPIC_API_KEY") + init("ANTHROPIC_API_KEY") + final, api.BillingMetered, true},
+		{"none then a blank source", init("none") + init("") + final, api.BillingMetered, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sum, _ := fixedClaude().Read(strings.NewReader(tc.in), func(api.Event) {})
+			if sum.Usage.Billing != tc.billing || (sum.Usage.CostUSD != nil) != tc.wantCost {
+				t.Errorf("billing=%q cost=%v", sum.Usage.Billing, sum.Usage.CostUSD)
+			}
+		})
+	}
+}
+
+func TestClaudeTokenSumsSaturate(t *testing.T) {
+	in := `{"type":"result","subtype":"success","num_turns":1,"usage":{"input_tokens":9223372036854775807,"cache_read_input_tokens":9223372036854775807,"output_tokens":-5}}` + "\n"
+	sum, _ := fixedClaude().Read(strings.NewReader(in), func(api.Event) {})
+	if sum.Usage.InputTokens != math.MaxInt64 || !sum.TokensSaturated {
+		t.Errorf("input=%d saturated=%v", sum.Usage.InputTokens, sum.TokensSaturated)
+	}
+	if sum.Usage.OutputTokens != 0 {
+		t.Errorf("a negative count must not be kept: %d", sum.Usage.OutputTokens)
 	}
 }

@@ -214,7 +214,7 @@ func TestRunChecks_FreshHomeForEachCheck(t *testing.T) {
 		t.Errorf("HOME %s was not removed", la[0])
 	}
 	notes := strings.Join(out[0].Notes, "\n")
-	for _, want := range []string{"cold", "sandbox", "setsid"} {
+	for _, want := range []string{"cold", "sandbox", "setsid", "same user", "tampered", "separate user"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("notes lack %q: %s", want, notes)
 		}

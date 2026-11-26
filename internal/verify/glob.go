@@ -1,6 +1,14 @@
 // Package verify is the verify stage. It runs outside the agent. It reads the
 // change from git, checks protected paths, runs the task's checks on a clean
 // checkout, applies the risk rules and builds the evidence bundle.
+//
+// The package works only on a trusted bare repository: one made by
+// InitTrustedRepository, whose layout and configuration pass a fixed
+// allowlist. The guard detects a repository that was tampered with, at the
+// start of each call. It cannot stop a process running as the same user from
+// changing the repository between calls. Keeping the trusted repository
+// outside any directory an agent or a check is given, under a separate user
+// or an operating system sandbox, is what reduces that.
 package verify
 
 import (

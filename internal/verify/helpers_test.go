@@ -38,6 +38,9 @@ func (r *testRepo) git(args ...string) string {
 		"GIT_COMMITTER_NAME=Test Author", "GIT_COMMITTER_EMAIL=author@example.invalid",
 	)
 	out, err := cmd.CombinedOutput()
+	// git commit leaves this file in the repository. The guard allows no
+	// other top-level name, and the orchestrator's import does not make it.
+	_ = os.Remove(filepath.Join(r.dir, "COMMIT_EDITMSG"))
 	if err != nil {
 		r.t.Fatalf("git %v: %v\n%s", args, err, out)
 	}

@@ -80,6 +80,72 @@ func TestGuard_RefusesUntrustedRepositories(t *testing.T) {
 		}, "alternates"},
 		{"grafts", func(tr *trapRepo) { put(tr.t, filepath.Join(tr.dir, "info/grafts"), tr.head+" "+tr.base+"\n", 0o644) }, "grafts"},
 		{"shallow file", func(tr *trapRepo) { put(tr.t, filepath.Join(tr.dir, "shallow"), tr.head+"\n", 0o644) }, "shallow"},
+		{"commondir", func(tr *trapRepo) {
+			// Points git at another directory's configuration.
+			other := t.TempDir()
+			put(tr.t, filepath.Join(other, "config"), "[core]\n\tfsmonitor = "+tr.script("commondir")+"\n", 0o644)
+			put(tr.t, filepath.Join(tr.dir, "commondir"), other+"\n", 0o644)
+		}, "commondir"},
+		{"gitdir file", func(tr *trapRepo) { put(tr.t, filepath.Join(tr.dir, "gitdir"), "/elsewhere\n", 0o644) }, "gitdir"},
+		{"worktrees directory", func(tr *trapRepo) {
+			if err := os.MkdirAll(filepath.Join(tr.dir, "worktrees", "w"), 0o755); err != nil {
+				tr.t.Fatal(err)
+			}
+		}, "worktrees"},
+		{"modules directory", func(tr *trapRepo) {
+			if err := os.Mkdir(filepath.Join(tr.dir, "modules"), 0o755); err != nil {
+				tr.t.Fatal(err)
+			}
+		}, "modules"},
+		{"config.worktree", func(tr *trapRepo) { put(tr.t, filepath.Join(tr.dir, "config.worktree"), "[core]\n", 0o644) }, "config.worktree"},
+		{"rebase state", func(tr *trapRepo) {
+			if err := os.Mkdir(filepath.Join(tr.dir, "rebase-merge"), 0o755); err != nil {
+				tr.t.Fatal(err)
+			}
+		}, "rebase-merge"},
+		{"lock file", func(tr *trapRepo) { put(tr.t, filepath.Join(tr.dir, "HEAD.lock"), "", 0o644) }, "HEAD.lock"},
+		{"unknown top-level file", func(tr *trapRepo) { put(tr.t, filepath.Join(tr.dir, "surprise"), "x", 0o644) }, "surprise"},
+		{"top-level name of the wrong type", func(tr *trapRepo) {
+			if err := os.Remove(filepath.Join(tr.dir, "packed-refs")); err != nil && !os.IsNotExist(err) {
+				tr.t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(tr.dir, "packed-refs"), 0o755); err != nil {
+				tr.t.Fatal(err)
+			}
+		}, "packed-refs"},
+		{"symlinked objects", func(tr *trapRepo) { moveAndLink(tr, "objects") }, "objects"},
+		{"symlinked refs", func(tr *trapRepo) { moveAndLink(tr, "refs") }, "refs"},
+		{"symlinked refs/heads", func(tr *trapRepo) { moveAndLink(tr, "refs/heads") }, "refs/heads"},
+		{"symlinked config", func(tr *trapRepo) { moveAndLink(tr, "config") }, "config"},
+		{"symlinked HEAD", func(tr *trapRepo) { moveAndLink(tr, "HEAD") }, "HEAD"},
+		{"symlinked objects/pack", func(tr *trapRepo) {
+			if err := os.MkdirAll(filepath.Join(tr.dir, "objects/pack"), 0o755); err != nil {
+				tr.t.Fatal(err)
+			}
+			moveAndLink(tr, "objects/pack")
+		}, "objects/pack"},
+		{"link inside refs", func(tr *trapRepo) {
+			if err := os.Symlink("/etc/passwd", filepath.Join(tr.dir, "refs/heads/evil")); err != nil {
+				tr.t.Fatal(err)
+			}
+		}, "refs/heads/evil"},
+		{"link inside hooks", func(tr *trapRepo) {
+			if err := os.MkdirAll(filepath.Join(tr.dir, "hooks"), 0o755); err != nil {
+				tr.t.Fatal(err)
+			}
+			if err := os.Symlink(tr.script("hooklink"), filepath.Join(tr.dir, "hooks/post-checkout.sample")); err != nil {
+				tr.t.Fatal(err)
+			}
+		}, "hooks/post-checkout.sample"},
+		{"non-empty info/attributes", func(tr *trapRepo) {
+			put(tr.t, filepath.Join(tr.dir, "info/attributes"), "* filter=x\n", 0o644)
+		}, "info/attributes"},
+		{"unknown file in info", func(tr *trapRepo) { put(tr.t, filepath.Join(tr.dir, "info/refs"), "x", 0o644) }, "info/refs"},
+		{"http-alternates", func(tr *trapRepo) {
+			put(tr.t, filepath.Join(tr.dir, "objects/info/http-alternates"), "http://example.invalid/\n", 0o644)
+		}, "http-alternates"},
+		{"gc subsection key", func(tr *trapRepo) { tr.git("config", "gc.x.y", "1") }, "gc.x.y"},
+		{"gc key not on the list", func(tr *trapRepo) { tr.git("config", "gc.worktreePruneExpire", "1") }, "gc.worktreepruneexpire"},
 		{"executable hook", func(tr *trapRepo) {
 			put(tr.t, filepath.Join(tr.dir, "hooks/post-checkout"), "#!/bin/sh\ntouch '"+filepath.Join(tr.markers, "hook")+"'\n", 0o755)
 		}, "hooks/post-checkout"},
@@ -109,7 +175,12 @@ func put(t *testing.T, path, content string, mode os.FileMode) {
 func TestGuard_AcceptsWhatIsHarmless(t *testing.T) {
 	tr := newTrapRepo(t)
 	tr.git("config", "gc.auto", "0")
-	tr.git("config", "gc.reflogExpire", "30.days")
+	tr.git("config", "GC.AutoDetach", "false")
+	tr.git("config", "gc.pruneExpire", "2.weeks.ago")
+	put(t, filepath.Join(tr.dir, "info/exclude"), "*.o\n", 0o644)
+	put(t, filepath.Join(tr.dir, "info/attributes"), "", 0o644) // empty is fine
+	put(t, filepath.Join(tr.dir, "description"), "a repository\n", 0o644)
+	put(t, filepath.Join(tr.dir, "ORIG_HEAD"), tr.head+"\n", 0o644)
 	tr.git("config", "core.symlinks", "true")
 	put(t, filepath.Join(tr.dir, "hooks/pre-commit.sample"), "#!/bin/sh\n", 0o755) // a sample is never run
 	put(t, filepath.Join(tr.dir, "hooks/notes.txt"), "not executable\n", 0o644)
@@ -249,5 +320,19 @@ func TestRunChecks_LimitsComeFromOptionsWithDefaults(t *testing.T) {
 	l := CheckOptions{}.limits()
 	if l.maxTotal != 2<<30 || l.maxFile != 200<<20 || l.maxEntries != 200000 {
 		t.Errorf("defaults = %+v", l)
+	}
+}
+
+// moveAndLink replaces the file or directory rel of the repository with a
+// symbolic link to where it was moved.
+func moveAndLink(tr *trapRepo, rel string) {
+	tr.t.Helper()
+	from := filepath.Join(tr.dir, filepath.FromSlash(rel))
+	to := filepath.Join(tr.t.TempDir(), "moved")
+	if err := os.Rename(from, to); err != nil {
+		tr.t.Fatal(err)
+	}
+	if err := os.Symlink(to, from); err != nil {
+		tr.t.Fatal(err)
 	}
 }

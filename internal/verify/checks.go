@@ -94,7 +94,15 @@ var containmentNotes = []string{
 	"HOME and TMPDIR are a fresh empty directory for each check, so tool caches are cold",
 	"writes outside the checkout are not prevented: there is no operating system sandbox here",
 	"a check that leaves its process group, for example with setsid, is not contained or killed",
+	trustLimit,
 }
+
+// trustLimit states what the repository guard does not do. The package
+// documentation (glob.go) says the same.
+const trustLimit = "the repository guard detects a repository that was tampered with, at the start of each call; " +
+	"it cannot stop a process running as the same user from changing the repository between calls; " +
+	"keeping the trusted repository outside any directory an agent or a check is given, under a separate user " +
+	"or an operating system sandbox, is what reduces that"
 
 // RunChecks runs each check on a clean checkout of commit.
 //

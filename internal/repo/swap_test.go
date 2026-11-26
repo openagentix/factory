@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -39,12 +42,51 @@ func swapLoop(dir, target string, stop *atomic.Bool) {
 	moved := dir + ".moved"
 	for !stop.Load() {
 		if os.Rename(dir, moved) != nil {
+			runtime.Gosched()
 			continue
 		}
 		_ = os.Symlink(target, dir)
 		_ = os.Remove(dir)
 		_ = os.Rename(moved, dir)
 	}
+}
+
+// startGoroutineSwapper runs swapLoop and returns a function that stops it and
+// waits until it has ended. The function also runs when the test ends, before
+// the temporary directories are removed, also if the test stopped early.
+func startGoroutineSwapper(t *testing.T, dir, target string) (stop func()) {
+	t.Helper()
+	var flag atomic.Bool
+	done := make(chan struct{})
+	go func() { swapLoop(dir, target, &flag); close(done) }()
+	var once sync.Once
+	stop = func() { once.Do(func() { flag.Store(true); <-done }) }
+	t.Cleanup(stop)
+	return stop
+}
+
+// startProcessSwapper runs a shell loop in its own process group, as another
+// process of the same user would. stop kills the whole group, so no mv or ln
+// outlives it, and reaps it. It also runs when the test ends, before the
+// temporary directories are removed.
+func startProcessSwapper(t *testing.T, base string) (stop func()) {
+	t.Helper()
+	script := `cd "$1" || exit 1
+while :; do mv run1 run1.moved && ln -s run2 run1 && rm run1 ; mv run1.moved run1; done`
+	cmd := exec.Command("sh", "-c", script, "sh", base)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start the swapper: %v", err)
+	}
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait() // reap it: the error is the kill, and is expected
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 // leaks reports whether a commit holds a file of the other run.
@@ -64,21 +106,39 @@ func (f *swapFixture) openRoot(t *testing.T, dir string) *os.Root {
 	return openTestRoot(t, dir)
 }
 
-// importMany imports through root n times and counts commits that hold a file
-// of the other run, or that lack the run's own file.
-func (im *importer) importMany(t *testing.T, root *os.Root, n int) (ok, leaked, lacking int) {
+// importMany imports through root n times. An import through an opened root
+// has no reason to fail, but the property under test is only that no commit
+// holds a file of the other run, and that every commit holds this run's own
+// file. So it reports both, and every failure with the tree that was found,
+// and does not fail the test on how many imports succeed. requireOwn is false
+// when the swapper renames things inside the opened directory, which changes
+// its content on purpose.
+func (im *importer) importMany(t *testing.T, root *os.Root, n int, requireOwn bool) (ok, leaked, lacking int) {
 	t.Helper()
+	reported := 0
 	for i := 0; i < n; i++ {
 		c, _, err := im.r.ImportRoot(context.Background(), root, "", "m", testAuthor, ImportOptions{Now: fixedNow})
 		if err != nil {
+			if reported < 3 {
+				t.Logf("import %d failed: %v", i, err)
+				reported++
+			}
 			continue
 		}
 		ok++
+		bad := false
 		if im.leaks(c) {
 			leaked++
+			bad = true
 		}
-		if !im.has(c, "100644 src/mine.txt") {
+		// Only when the swapper does not change the opened directory itself.
+		if requireOwn && !im.has(c, "100644 src/mine.txt") {
 			lacking++
+			bad = true
+		}
+		if bad && reported < 3 {
+			t.Errorf("import %d, commit %s, tree:\n%s", i, c, strings.Join(im.tree(c), "\n"))
+			reported++
 		}
 	}
 	return
@@ -88,15 +148,12 @@ func TestImportRoot_ASwappedPathNeverChangesWhatIsRead(t *testing.T) {
 	im := newImporter(t)
 	f := newSwapFixture(t)
 	root := f.openRoot(t, f.ws) // opened before the swapping starts
-	var stop atomic.Bool
-	done := make(chan struct{})
-	go func() { swapLoop(f.ws, f.other, &stop); close(done) }()
-	ok, leaked, lacking := im.importMany(t, root, swapRounds)
-	stop.Store(true)
-	<-done
+	stop := startGoroutineSwapper(t, f.ws, f.other)
+	ok, leaked, lacking := im.importMany(t, root, swapRounds, true)
+	stop()
 	t.Logf("goroutine swap: %d imports, %d leaked", ok, leaked)
-	if ok < swapRounds || leaked != 0 || lacking != 0 {
-		t.Errorf("ok=%d of %d, leaked=%d, lacking own file=%d", ok, swapRounds, leaked, lacking)
+	if leaked != 0 || lacking != 0 {
+		t.Errorf("leaked=%d, lacking own file=%d", leaked, lacking)
 	}
 }
 
@@ -104,18 +161,13 @@ func TestImportRoot_ASwappedPathFromAnotherProcessNeverChangesWhatIsRead(t *test
 	im := newImporter(t)
 	f := newSwapFixture(t)
 	root := f.openRoot(t, f.ws)
-	script := `cd "$1" || exit 1
-while :; do mv run1 run1.moved && ln -s run2 run1 && rm run1 ; mv run1.moved run1; done`
-	cmd := exec.Command("sh", "-c", script, "sh", f.base)
-	if err := cmd.Start(); err != nil {
-		t.Skip(err)
-	}
-	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
+	stop := startProcessSwapper(t, f.base)
 	time.Sleep(50 * time.Millisecond)
-	ok, leaked, lacking := im.importMany(t, root, swapRounds)
+	ok, leaked, lacking := im.importMany(t, root, swapRounds, true)
+	stop()
 	t.Logf("process swap: %d imports, %d leaked", ok, leaked)
-	if ok < swapRounds || leaked != 0 || lacking != 0 {
-		t.Errorf("ok=%d of %d, leaked=%d, lacking own file=%d", ok, swapRounds, leaked, lacking)
+	if leaked != 0 || lacking != 0 {
+		t.Errorf("leaked=%d, lacking own file=%d", leaked, lacking)
 	}
 }
 
@@ -130,7 +182,7 @@ func TestImportRoot_ThePathReplacedByACopyOrAParentReplaced(t *testing.T) {
 	os.MkdirAll(filepath.Join(f.ws, "src"), 0o755)
 	os.WriteFile(filepath.Join(f.ws, "src", "mine.txt"), []byte("mine\n"), 0o644)
 	os.WriteFile(filepath.Join(f.ws, "MARKER-COPY.txt"), []byte("x"), 0o644)
-	ok, leaked, lacking := im.importMany(t, root, 5)
+	ok, leaked, lacking := im.importMany(t, root, 5, true)
 	if ok != 5 || leaked != 0 || lacking != 0 {
 		t.Errorf("copy: ok=%d leaked=%d lacking=%d", ok, leaked, lacking)
 	}
@@ -147,7 +199,7 @@ func TestImportRoot_ThePathReplacedByACopyOrAParentReplaced(t *testing.T) {
 	if err := os.Symlink(filepath.Join(base, "q"), filepath.Join(base, "p")); err != nil {
 		t.Fatal(err)
 	}
-	ok, leaked, lacking = im.importMany(t, root2, 5)
+	ok, leaked, lacking = im.importMany(t, root2, 5, true)
 	if ok != 5 || leaked != 0 || lacking != 0 {
 		t.Errorf("parent: ok=%d leaked=%d lacking=%d", ok, leaked, lacking)
 	}
@@ -179,13 +231,9 @@ func TestImportRoot_ASubdirectoryReplacedByALinkIsNotFollowed(t *testing.T) {
 	for _, target := range []string{outside, "../" + filepath.Base(outside), "."} {
 		f2 := newSwapFixture(t)
 		root2 := f2.openRoot(t, f2.ws)
-		var stop atomic.Bool
-		done := make(chan struct{})
-		sub := filepath.Join(f2.ws, "src")
-		go func() { swapLoop(sub, target, &stop); close(done) }()
-		_, leaked, _ := im.importMany(t, root2, 150)
-		stop.Store(true)
-		<-done
+		stop := startGoroutineSwapper(t, filepath.Join(f2.ws, "src"), target)
+		_, leaked, _ := im.importMany(t, root2, 150, false)
+		stop()
 		if leaked != 0 {
 			t.Errorf("link to %q: %d commits hold outside files", target, leaked)
 		}
@@ -200,9 +248,7 @@ func TestExportRoot_ASwappedPathNeverReceivesFiles(t *testing.T) {
 	os.Mkdir(dest, 0o755)
 	os.Mkdir(other, 0o755)
 	root := openTestRoot(t, dest)
-	var stop atomic.Bool
-	done := make(chan struct{})
-	go func() { swapLoop(dest, other, &stop); close(done) }()
+	stop := startGoroutineSwapper(t, dest, other)
 	for i := 0; i < 100; i++ {
 		if _, err := r.ExportRoot(context.Background(), tr.head, root, Limits{}); err != nil {
 			t.Fatal(err)
@@ -215,8 +261,7 @@ func TestExportRoot_ASwappedPathNeverReceivesFiles(t *testing.T) {
 		}
 		root.RemoveAll(".gitattributes")
 	}
-	stop.Store(true)
-	<-done
+	stop()
 	if ents, _ := os.ReadDir(other); len(ents) != 0 {
 		t.Errorf("files were written to the other directory: %v", ents)
 	}

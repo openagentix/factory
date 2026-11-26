@@ -126,7 +126,7 @@ func BindReview(c ChangeRef, run ReviewRun, file *api.ReviewFile) (*BoundReview,
 	case !plainID(run.Harness):
 		return refuse("the harness of the review run was not recorded, or it holds white space")
 	}
-	return &BoundReview{valid: true, change: c, run: run, file: file, a: Assess(file)}, nil
+	return &BoundReview{valid: true, change: c, run: run, file: file, a: assess(file, "")}, nil
 }
 
 // RunID is the recorded run id of the review run. A zero review has none.
@@ -146,13 +146,23 @@ func (b *BoundReview) Harness() string {
 }
 
 // Usable reports whether the review was made by BindReview and passed the
-// sanity rules. A review that did not counts as no review.
+// sanity rules, whatever its subject. A review that did not counts as no review.
 func (b *BoundReview) Usable() bool { return b != nil && b.valid && b.a.Usable }
 
 // Agrees reports whether the review is valid, usable and agrees.
 func (b *BoundReview) Agrees() bool { return b.Usable() && b.a.Agrees }
 
-// Assessment is the gate's reading of the review. A zero or nil review is
+// assessFor reads the review for one task's subject. A zero review is not
+// usable.
+func (b *BoundReview) assessFor(task string) Assessment {
+	if b == nil || !b.valid || b.file == nil {
+		return Assessment{Reasons: []string{"there is no usable review"}}
+	}
+	return assess(b.file, SubjectFor(task))
+}
+
+// Assessment is the gate's reading of the review, for any valid subject. The
+// gate itself uses the reading for the task's subject. A zero or nil review is
 // not usable and says why.
 func (b *BoundReview) Assessment() Assessment {
 	if b == nil || !b.valid {

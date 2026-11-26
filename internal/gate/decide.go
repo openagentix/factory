@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -21,9 +22,6 @@ const (
 	OutcomeReviewAgain Outcome = "review_again"
 	// OutcomeException stops. A person is told in plain words.
 	OutcomeException Outcome = "exception"
-	// OutcomeDeclined is a change that a person did not want. It is dropped,
-	// its ticket is closed as declined, and no attempt is used.
-	OutcomeDeclined Outcome = "declined"
 )
 
 // ExceptionKind says which kind of exception an exception is. Only
@@ -53,6 +51,10 @@ const (
 	// up. It is reported as setup that did not finish.
 	ExceptionSetupNotFinished ExceptionKind = "setup_not_finished"
 )
+
+// MaxReviewTriesLimit is the hard upper bound of Facts.MaxReviewTries. A
+// larger value is a fault in the facts.
+const MaxReviewTriesLimit = 5
 
 // DefaultMaxReviewTries is how many review runs the gate asks for, for one
 // attempt, when Facts leaves the limit at zero.
@@ -135,6 +137,36 @@ type Decision struct {
 	sealedVerify bool
 	sealedHigh   bool
 	sealedReview string
+	digest       [32]byte
+}
+
+// sum is a digest of every field of the decision, exported and sealed.
+func (d Decision) sum() [32]byte {
+	h := sha256.New()
+	fmt.Fprintf(h, "%q|%q|%q|%q|%v|%v|%v|%q|%q|%d|%d|%q|%v|", d.Outcome, d.Exception, d.Reasons, d.Task,
+		d.SingleOpinion, d.ReviewMissing, d.ReviewAgreed, d.Risk.Level, d.Risk.Reasons,
+		d.Attempt, d.MaxAttempts, d.Plain, d.PassedByPerson)
+	fmt.Fprintf(h, "%v|%q|%q|%v|%v|%v|%q", d.sealed, d.change, d.sealedKind,
+		d.sealedAgreed, d.sealedVerify, d.sealedHigh, d.sealedReview)
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// resealed returns the decision with its digest computed. Only Decide and
+// ApplyPersonDecision call it.
+func (d Decision) resealed() Decision {
+	d.sealed = true
+	d.digest = d.sum()
+	return d
+}
+
+// Verify reports whether the decision is exactly as Decide or
+// ApplyPersonDecision produced it. Changing any exported field, or building
+// a decision by hand, makes it report false. The orchestrator must call
+// Verify, and must refuse to act on Outcome of a decision that fails it.
+func (d Decision) Verify() bool {
+	return d.sealed && d.digest == d.sum()
 }
 
 // gatedTask reports whether the gate judges changes of the task.
@@ -170,7 +202,7 @@ func Decide(f Facts) Decision {
 		if f.Review != nil {
 			d.sealedReview = f.Review.run.RunID
 		}
-		return d
+		return d.resealed()
 	}
 
 	if bad := invalidFacts(f); len(bad) > 0 {
@@ -183,14 +215,15 @@ func Decide(f Facts) Decision {
 	failures = append(failures, regressionReasons(f.Acceptance)...)
 	verifyOK := len(failures) == 0
 
-	usable := f.Review.Usable() && f.Review.change == f.Change
-	agrees := usable && f.Review.a.Agrees
+	ra := f.Review.assessFor(f.Task)
+	usable := ra.Usable && f.Review.Usable() && f.Review.change == f.Change
+	agrees := usable && ra.Agrees
 	d.ReviewMissing = !usable
 	d.ReviewAgreed = agrees
 	if usable {
 		d.SingleOpinion = sameHarness(f.BuilderHarness, f.Review.Harness()) || strings.TrimSpace(f.BuilderHarness) == ""
 		if !agrees {
-			for _, r := range f.Review.a.Reasons {
+			for _, r := range ra.Reasons {
 				failures = append(failures, "review: "+r)
 			}
 		}
@@ -209,10 +242,10 @@ func Decide(f Facts) Decision {
 
 	if !usable {
 		why := "review: there is no usable review for this change"
-		if f.Review != nil && f.Review.Usable() {
+		if f.Review != nil && ra.Usable {
 			why = "review: the review is about a different change"
 		} else if f.Review != nil {
-			why = "review: " + strings.Join(f.Review.Assessment().Reasons, "; ")
+			why = "review: " + strings.Join(ra.Reasons, "; ")
 		}
 		max := f.MaxReviewTries
 		if max == 0 {
@@ -223,8 +256,15 @@ func Decide(f Facts) Decision {
 			d.Reasons = []string{why, fmt.Sprintf("the review will run again (try %d of %d)", f.ReviewTries+1, max)}
 			return seal(d, false, verifyOK)
 		}
-		d.Outcome, d.Exception = OutcomeException, ExceptionNoReview
 		d.Reasons = []string{why, fmt.Sprintf("the review could not be obtained in %d tries", max)}
+		if (f.Task == api.TaskAcceptance || f.Task == api.TaskOnboard) && f.Change.Attempt >= f.MaxAttempts {
+			// The attempts are used up too. The record's end for the task
+			// applies, with or without a review.
+			d.Outcome, d.Exception = OutcomeException, usedUpKind(f.Task)
+			d.Plain = plainUsedUp(d.Exception)
+			return seal(d, false, verifyOK)
+		}
+		d.Outcome, d.Exception = OutcomeException, ExceptionNoReview
 		d.Plain = "The factory could not get a second opinion on this change, so it did not combine it. A developer is needed."
 		return seal(d, false, verifyOK)
 	}
@@ -283,8 +323,8 @@ func invalidFacts(f Facts) []string {
 	if f.MaxAttempts < 1 {
 		bad = append(bad, fmt.Sprintf("the attempt limit (%d) must be 1 or more", f.MaxAttempts))
 	}
-	if f.ReviewTries < 0 || f.MaxReviewTries < 0 {
-		bad = append(bad, "the review try counts must not be negative")
+	if f.ReviewTries < 0 || f.MaxReviewTries < 0 || f.MaxReviewTries > MaxReviewTriesLimit {
+		bad = append(bad, fmt.Sprintf("the review try counts must not be negative, and the limit is at most %d", MaxReviewTriesLimit))
 	}
 	if riskApplies(f.Task) {
 		switch f.Risk.Level {

@@ -67,7 +67,27 @@ func overLimits(r *api.ReviewFile) bool {
 // it. A review for any subject but a change, an unknown verdict or severity,
 // and a review that does not agree but gives no point are all unusable: a
 // rework needs reasons.
-func Assess(r *api.ReviewFile) Assessment {
+func Assess(r *api.ReviewFile) Assessment { return AssessFor(api.TaskImplement, r) }
+
+// SubjectFor is the subject the record names for the review of a task's
+// output: acceptance for the acceptance task, change for every other task the
+// gate judges. A review about any other subject is refused for that task.
+func SubjectFor(task string) string {
+	if task == api.TaskAcceptance {
+		return api.SubjectAcceptance
+	}
+	return api.SubjectChange
+}
+
+// AssessFor is Assess for the review of one task's output. It accepts only
+// the subject of SubjectFor(task).
+func AssessFor(task string, r *api.ReviewFile) Assessment {
+	return assess(r, SubjectFor(task))
+}
+
+// assess applies the sanity rules. An empty subject accepts any of the four
+// valid subjects.
+func assess(r *api.ReviewFile, subject string) Assessment {
 	if r == nil {
 		return Assessment{Reasons: []string{"there is no review"}}
 	}
@@ -75,8 +95,10 @@ func Assess(r *api.ReviewFile) Assessment {
 	if r.SchemaVersion != api.SchemaVersion {
 		return bad("the review file has the wrong schema version")
 	}
-	if r.Subject != api.SubjectChange {
-		return bad("the review is not about a change")
+	switch {
+	case subject == "" && (r.Subject == api.SubjectSpec || r.Subject == api.SubjectPlan || r.Subject == api.SubjectAcceptance || r.Subject == api.SubjectChange):
+	case r.Subject != subject:
+		return bad(fmt.Sprintf("the review is about %q, and a review about %q is needed here", clean(r.Subject, 20), subject))
 	}
 	switch r.Verdict {
 	case api.VerdictAgrees, api.VerdictConcerns, api.VerdictDisagrees:

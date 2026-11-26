@@ -15,7 +15,7 @@ import (
 // source calls none of them.
 func TestPackageStartsNoProgramAndReadsNoFile(t *testing.T) {
 	allowed := map[string]bool{
-		"errors": true, "fmt": true, "sort": true, "strings": true, "unicode": true, "unicode/utf8": true,
+		"crypto/sha256": true, "errors": true, "fmt": true, "sort": true, "strings": true, "unicode": true, "unicode/utf8": true,
 		"github.com/openagentix/factory/internal/api": true,
 		// verify is imported only for its path matching, verify.Match. The
 		// gate calls no other function of it.

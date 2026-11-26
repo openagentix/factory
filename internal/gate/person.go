@@ -29,15 +29,20 @@ var ErrYesRefused = errors.New("gate: a yes cannot pass this exception")
 // apply to. Every other kind refuses a yes with ErrYesRefused. Exported
 // fields of the decision are not trusted: the sealed facts are checked.
 //
-// A no to a high risk question means the change is not wanted: it is dropped
-// and its ticket is closed as declined. It is not off course and uses no
-// attempt. A no to any other exception changes nothing.
+// A no to a high risk question takes the change back to its ticket as a new
+// attempt, as the record says: the outcome is rework with the person's refusal
+// as the reason, and it counts as an attempt like any rework. At the attempt
+// limit the goal goes off course. A no to any other exception changes nothing.
+//
+// The function keeps no state. The orchestrator must call Decision.Verify on
+// the decision first, and must record an applied yes against the change, so
+// that the same yes is applied once.
 func ApplyPersonDecision(d Decision, c ChangeRef, a Answer) (Decision, error) {
 	fail := func(err error) (Decision, error) { return d, err }
 	if a != AnswerYes && a != AnswerNo {
 		return fail(fmt.Errorf("gate: the answer %q is not yes or no", string(a)))
 	}
-	if !d.sealed {
+	if !d.Verify() {
 		return fail(fmt.Errorf("%w: the decision was not made by the gate", ErrYesRefused))
 	}
 	if d.Outcome != OutcomeException {
@@ -60,9 +65,15 @@ func ApplyPersonDecision(d Decision, c ChangeRef, a Answer) (Decision, error) {
 			return d, nil
 		}
 		next := d
-		next.Reasons = append(append([]string(nil), d.Reasons...), "a person said no, the change is dropped and its ticket is closed as declined")
-		next.Outcome, next.Exception, next.Plain = OutcomeDeclined, "", ""
-		return next, nil
+		next.Reasons = append(append([]string(nil), d.Reasons...), "a person said no to this change")
+		if d.Attempt >= d.MaxAttempts {
+			next.Outcome, next.Exception, next.Plain = OutcomeException, ExceptionOffCourse, plainOffCourse
+			next.sealedKind = ExceptionOffCourse
+		} else {
+			next.Outcome, next.Exception, next.Plain = OutcomeRework, "", ""
+			next.sealedKind = ""
+		}
+		return next.resealed(), nil
 	}
 	if d.Exception != ExceptionHighRisk {
 		return fail(fmt.Errorf("%w: the exception is %q", ErrYesRefused, string(d.Exception)))
@@ -73,5 +84,6 @@ func ApplyPersonDecision(d Decision, c ChangeRef, a Answer) (Decision, error) {
 	next := d
 	next.Reasons = append(append([]string(nil), d.Reasons...), "a person said yes")
 	next.Outcome, next.Exception, next.Plain, next.PassedByPerson = OutcomePass, "", "", true
-	return next, nil
+	next.sealedKind = ""
+	return next.resealed(), nil
 }

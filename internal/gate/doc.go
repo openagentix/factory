@@ -11,6 +11,10 @@
 // kind of exception: a change that is high risk by its content and whose
 // review agreed.
 //
+// The orchestrator must call Decision.Verify before it acts on a decision,
+// and must apply a person's "yes" once, recording it against the change: the
+// package keeps no state.
+//
 // Limits, stated here because they cannot be removed by code in this package:
 //
 //   - A builder can plant text in the code or in file names, aimed at the

@@ -3,6 +3,7 @@ package gate
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/openagentix/factory/internal/api"
@@ -80,7 +81,7 @@ func TestApplyPersonDecisionIsTiedToTheChange(t *testing.T) {
 		if got, err := ApplyPersonDecision(high, c, AnswerYes); err == nil || got.Outcome == OutcomePass {
 			t.Fatalf("case %d: a yes for another change passed", i)
 		}
-		if got, err := ApplyPersonDecision(high, c, AnswerNo); err == nil || got.Outcome == OutcomeDeclined {
+		if got, err := ApplyPersonDecision(high, c, AnswerNo); err == nil || got.Outcome == OutcomeRework {
 			t.Fatalf("case %d: a no for another change was applied", i)
 		}
 	}
@@ -90,7 +91,7 @@ func TestApplyPersonDecisionChecksTheSealedFacts(t *testing.T) {
 	// Exported fields can be changed by a careless caller. The sealed facts
 	// cannot.
 	offCourse, f := exceptionOf(t, func(f *Facts) { at(f, 3); f.Verify.ChecksPassed = false })
-	offCourse.Exception = ExceptionHighRisk
+	offCourse.Exception = ExceptionHighRisk // Verify now fails
 	offCourse.ReviewAgreed = true
 	offCourse.Risk.Level = api.RiskHigh
 	if got, err := ApplyPersonDecision(offCourse, f.Change, AnswerYes); err == nil || got.Outcome == OutcomePass {
@@ -107,20 +108,66 @@ func TestApplyPersonDecisionChecksTheSealedFacts(t *testing.T) {
 func TestApplyPersonDecisionNo(t *testing.T) {
 	high, f := exceptionOf(t, highRisk)
 	got, err := ApplyPersonDecision(high, f.Change, AnswerNo)
-	if err != nil || got.Outcome != OutcomeDeclined || got.PassedByPerson || got.Exception != "" {
+	if err != nil || got.Outcome != OutcomeRework || got.PassedByPerson || got.Exception != "" || !got.Verify() {
 		t.Fatalf("got %+v, %v", got, err)
 	}
-	// A no is not off course and uses no attempt, even on the last attempt.
-	last, f := exceptionOf(t, func(f *Facts) { at(f, 3); f.Risk.Level = api.RiskHigh })
+	if !strings.Contains(strings.Join(got.Reasons, "|"), "a person said no") {
+		t.Fatalf("the refusal is not a reason: %v", got.Reasons)
+	}
+	// A no counts as an attempt: on the last attempt the goal goes off course.
+	last, f := exceptionOf(t, func(f *Facts) { f.Risk.Level = api.RiskHigh; at(f, 3) })
 	got, err = ApplyPersonDecision(last, f.Change, AnswerNo)
-	if err != nil || got.Outcome != OutcomeDeclined {
+	if err != nil || got.Outcome != OutcomeException || got.Exception != ExceptionOffCourse || !got.Verify() {
 		t.Fatalf("a no on the last attempt: got %+v, %v", got, err)
+	}
+	if _, err := ApplyPersonDecision(got, f.Change, AnswerYes); err == nil {
+		t.Fatal("a yes passed an off course decision made from a no")
 	}
 	// A no to a statement changes nothing.
 	off, f := exceptionOf(t, func(f *Facts) { at(f, 3); f.Verify.ChecksPassed = false })
 	got, err = ApplyPersonDecision(off, f.Change, AnswerNo)
 	if err != nil || !reflect.DeepEqual(got, off) {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+func TestDecisionVerify(t *testing.T) {
+	f := okFacts(t)
+	pass := Decide(f)
+	if !pass.Verify() {
+		t.Fatal("a decision from Decide does not verify")
+	}
+	if (Decision{}).Verify() || (Decision{Outcome: OutcomePass}).Verify() {
+		t.Fatal("a hand-built decision verifies")
+	}
+	edits := map[string]func(*Decision){
+		"outcome":   func(d *Decision) { d.Outcome = OutcomeRework },
+		"reasons":   func(d *Decision) { d.Reasons = append(d.Reasons, "x") },
+		"single":    func(d *Decision) { d.SingleOpinion = !d.SingleOpinion },
+		"missing":   func(d *Decision) { d.ReviewMissing = !d.ReviewMissing },
+		"agreed":    func(d *Decision) { d.ReviewAgreed = !d.ReviewAgreed },
+		"risk":      func(d *Decision) { d.Risk.Level = api.RiskHigh },
+		"riskwhy":   func(d *Decision) { d.Risk.Reasons = []string{"x"} },
+		"attempt":   func(d *Decision) { d.Attempt++ },
+		"max":       func(d *Decision) { d.MaxAttempts++ },
+		"plain":     func(d *Decision) { d.Plain = "x" },
+		"byperson":  func(d *Decision) { d.PassedByPerson = true },
+		"task":      func(d *Decision) { d.Task = api.TaskOnboard },
+		"exception": func(d *Decision) { d.Exception = ExceptionHighRisk },
+	}
+	for name, edit := range edits {
+		d := pass
+		edit(&d)
+		if d.Verify() {
+			t.Fatalf("changing %s still verifies", name)
+		}
+	}
+	high, f := exceptionOf(t, highRisk)
+	for _, ans := range []Answer{AnswerYes, AnswerNo} {
+		got, err := ApplyPersonDecision(high, f.Change, ans)
+		if err != nil || !got.Verify() {
+			t.Fatalf("answer %s: %v, verifies %v", ans, err, got.Verify())
+		}
 	}
 }
 

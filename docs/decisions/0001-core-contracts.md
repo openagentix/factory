@@ -6,9 +6,9 @@
 
 ## Context
 
-Free tools already turn an issue into a pull request. Reports from practitioners say where teams hurt now: review capacity is the limit, agents edit tests to pass them, pull request text often does not match the change, cost per outcome is not visible, and there is no basis for trusting an agent. These come from other people's reports, not our runs, so this record quotes no numbers.
+Free tools already turn an issue into a pull request. Practitioners report where teams hurt now: review capacity is the limit, agents edit tests to pass them, pull request text often does not match the change, cost per outcome is not visible, and there is no basis for trusting an agent. These are other people's reports, not findings from our runs, so this record quotes no numbers.
 
-The product is for a person who states a business goal and will not read code. It must do the judging itself, show outcomes in plain words, and say plainly what it could not confirm. Positioning: **the software factory that earns its autonomy.** Every run leaves evidence. Trust comes from what happened after a person accepted the work.
+The product is for a person who states a business goal and will not read code. They plan with the factory for as long as they need. After the plan is approved, the factory builds and judges the work alone, shows outcomes in plain words, and says plainly what it could not confirm. The product line: **"Spend your time deciding what to build. None watching it get built."** Positioning: **the software factory that earns its autonomy.** Trust comes from what happened after a person accepted the work.
 
 ## Vocabulary
 
@@ -16,65 +16,50 @@ Task, trigger, run, runner, worker, ticket tracker, git host and orchestrator ar
 
 - **Harness**: the coding agent program a worker starts: Claude Code, Codex CLI, or a stub for tests and demo mode.
 - **Goal**: a business outcome, as an issue labelled `factory:goal`. **Spec**: the goal written out in `docs/specs/<slug>.md`, with numbered acceptance criteria in the person's words. **Ticket**: one piece of the plan, a sub-issue of the goal. **Change**: the one commit a ticket produced, with its evidence.
+- **Planning**: a live conversation between the person and an agent that ends when the person approves the plan. **The plan is approved** is the moment the factory starts working alone.
 - **Acceptance check**: an executable check for one criterion, written before building, that the builder cannot change.
 - **Machine gate**: what a change must pass before it is combined into staging.
-- **Staging**: the branch `factory-staging`: the default branch plus everything that passed. **Accept**: a person's choice to move the default branch to the staging state they saw.
-- **Exception**: anything the factory cannot settle alone. The only thing that interrupts a person.
+- **Staging**: the branch `factory-staging`: the default branch plus every change that passed. **Accept**: a person's choice to move the default branch to the staging state they saw.
+- **Exception**: a plain question or statement that the factory sends to a person after the plan is approved.
 - **Publish step**: the step that writes to the git host, outside the worker. **Evidence bundle**: the record of what a run did and what was checked, built by the orchestrator.
 
 ## Three moments and two views
 
-At the default dial level a person is asked three things, and more only when an exception needs them.
-
 | Moment | The factory asks, in plain words | It never asks |
 |---|---|---|
-| What do you want? | Questions about the business and the outcome, then "here is what you asked for and how we will know it works. Right?" | Anything about code |
+| What do you want? | A planning conversation with no limit on rounds or questions. It ends with "here is what you asked for and how we will know it works. Right?" | Anything about code |
 | Is this what you meant? | The acceptance list with its states, and Try it where the project gives a start command | To read a change |
 | Accept it? | "This is what works now. Accept?" | To approve a merge |
 
-The first moment ends when the person approves the spec, which they see as the acceptance list. An **exception** reaches the person as one plain question about what they want, or as a plain statement that a line is not working yet, never as a request to read a change. A high-risk change is put as its consequence: "this changes how other programs talk to yours. Is that what you want?".
+After the plan is approved, at the default dial level, nothing else reaches the person except exceptions. An **exception** is one plain question about what they want, or a plain statement that a line is not working yet. It is never a request to read a change. A high-risk change is put as its consequence: "this changes how other programs talk to yours. Is that what you want?".
 
-**Outcome view**, the default: goals, the acceptance list with its three states, plain questions, Try it, Accept, Undo, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit. **Engineering view**, one action away: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. A developer can take the wheel on a ticket or set the dial to guided, while the factory builds the rest.
+**Try it** starts the project's start command in the same sandbox and scrubbed environment as the checks. The person is told that it runs code the factory wrote and no person has read.
 
-## The pipeline and its tasks
+**Outcome view**, the default: goals, the acceptance list with its three states, plain questions, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit. **Engineering view**, one action away: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. A developer can take the wheel on a ticket or set the dial to guided, while the factory builds the rest.
 
-Durable state lives in the git host and the orchestrator's store. A run never waits for a person. It ends, and the next event starts the next run. A pipeline is a chain of triggers, not a workflow engine.
+## Lanes and planning
 
-| Task | Started by | Writes | Passes when |
-|---|---|---|---|
-| `onboard` | A repository is added | A change inside `.factory/` only, with a readiness report | Its review agrees. It takes effect after Accept |
-| `brainstorm` | A goal is labelled, or the person answers | Questions, or a spec with numbered criteria | Its review agrees and the person approves it |
-| `decompose` | The spec is approved | `issues.json`: at most twelve tickets, each naming the criteria it serves | Its review agrees |
-| `acceptance` | The plan has passed | One check per criterion and a manifest, under the acceptance path only | Its review agrees |
-| `implement` | A ticket is ready | One change | The machine gate |
-| `review` | A spec, plan, set of checks or change is ready for review | `review.json` | Never gated. It is the opinion others wait for |
-| `fix-ci` | A required check on the git host failed on an open agent pull request | A fix commit on that pull request's branch | The machine gate, again |
+**The process fits the size of the job.** A heavy method on a small job wastes hours. No method on a large job starts a bad course. The first release has two lanes.
 
-At dial level 1 a person also approves each output before it is used or combined (see The dial).
+| Lane | For | Planning, with the person | The plan is approved when | Then, alone |
+|---|---|---|---|---|
+| Quick | A fix, a tweak, a small feature | A short conversation: the goal and one to three acceptance lines | The person confirms the lines | The orchestrator writes a short spec file (the goal and its numbered lines) and creates one ticket. No `brainstorm` or `decompose` run. Then `acceptance`, `implement`, the machine gate |
+| Standard | A feature | `brainstorm` to a spec, then `decompose` to tickets | The person approves the plan after approving the spec | `acceptance`, then each ticket |
 
-- A ticket becomes `factory:ready` when the acceptance checks of its goal are in staging, every ticket it depends on is in staging, and the cap on open agent pull requests (`maxOpenAgentPullRequests`) allows it. Otherwise it stays `factory:planned` and the web app shows why.
-- `brainstorm` asks a few questions per round, at most three rounds, then writes the spec with its open points listed.
-- The spec, the plan and the acceptance checks each pass an independent review before any building starts. A weak plan is the cheapest place to stop a bad course.
+- The factory proposes a lane. The person can change it with one action. How the factory should choose is not settled; until real runs show better, the person's choice wins.
+- Planning shrinks with the size of the job. Checking does not. Every lane has acceptance checks and the machine gate.
+- A goal moves up a lane only when it goes off course and the person agrees. It never moves down without the person saying so.
+- Direction for a later release, not designed here: a **deep** lane for a new product or a large rework. It would add research, a roadmap and phases, built one phase at a time. It is likely to be driven by an installed plugin such as Open GSD, after a trial.
+
+**Planning is interactive and has no limit.** The person spends as much time as they need. Planning runs as a live conversation, either in the person's own Claude Code or Codex session, through the Model Context Protocol tools, or in the web app, where `oxf` relays the conversation to a harness session. A workflow plugin's interactive planning steps, such as superpowers brainstorming or Open GSD discuss, are used as they are. The unattended contract does not apply to planning.
+
+- When the person says the spec or the plan is ready, an independent `review` runs on it. Its points are shown to the person in the planning conversation. The person decides whether to change it or approve it. A review never blocks or approves a plan on its own.
 - An approved spec is combined into staging as a change, so it reaches the default branch with the work on Accept.
-- When both harnesses are installed, `review` uses the one that did not write the subject.
-- A fix run's own failure triggers nothing. Pull requests from forks are not reviewed in the first release.
+- A planning session in the web app writes only the spec, the plan and its notes. It runs under the same permission policy rules as any run.
 
-## Lanes and methods
+## Methods
 
-**The process fits the size of the job.** A heavy method on a small job wastes hours. No method on a large job starts a bad course. So a goal runs in one of three lanes.
-
-| Lane | For | What a person does first | What the factory then does alone |
-|---|---|---|---|
-| Quick | A fix, a tweak, a small feature | One sentence and one to three acceptance lines | `acceptance`, one ticket, `implement`, the machine gate |
-| Standard | A feature | Approves a short spec | `decompose` into tickets, `acceptance`, then each ticket |
-| Deep | A new product, a large rework, a large existing codebase | Works through research, a roadmap and a phased plan | One phase at a time. The acceptance checks of a phase run on staging before the next phase starts |
-
-- The factory proposes a lane. The person can change it with one action. How the factory chooses is not settled. Until real runs show better, the person's choice wins.
-- The amount of planning shrinks with the size of the job. The checking does not. Every lane has acceptance checks and the machine gate.
-- A goal can move up a lane. When a quick or standard goal goes off course, the factory stops and proposes the next lane up. A goal never moves down a lane without the person saying so.
-- Planning documents are markdown files in the repository: the spec, and for the deep lane a roadmap and a plan per phase. A person can read and edit them. They are the plan of record.
-
-**Methods.** A method is how the agent works inside one run. The factory does not own it. `spec.method` in a task names one of:
+A method is how the agent works inside one run or planning session. The factory does not own it. `spec.method` names one of:
 
 | Value | Meaning |
 |---|---|
@@ -82,38 +67,58 @@ At dial level 1 a person also approves each output before it is used or combined
 | `plugin:<name>` | A workflow plugin the person has installed for their harness, such as superpowers or Open GSD. The run tells the agent to use it by name |
 | a file path | A prompt file in the repository |
 
-- The factory ships no text from any plugin and copies none. The person installs a plugin from its own source. At start `oxf` reports which plugins it found and their versions.
-- A plugin that is named but not installed is not an error. The run uses `builtin` and says so.
-- The unattended contract goes in front of every method. A plugin step that would ask a person becomes a ruling or a question, as for any method.
-- A plugin's own verification is read as information. It never sets an acceptance state and never passes the machine gate.
+- The factory ships and copies no text from any plugin. At start `oxf` reports which plugins it found and their versions.
+- A plugin that is named but not installed is not an error. The run uses `builtin`, records `method` (what was asked) and `methodUsed` (what ran), and the engineering view says so.
+- In an unattended run, the unattended contract goes in front of every method, so a plugin step that would ask a person becomes a ruling or a question.
+- A plugin's own verification is information only. It never sets an acceptance state and never passes the machine gate.
 - The ideas behind `builtin` come from superpowers, Open GSD and Matt Pocock's skills, with thanks. The text is our own.
+
+## Tasks after the plan is approved
+
+Durable state lives in the git host and the orchestrator's store. An unattended run never waits for a person. It ends, and the next event starts the next run. A pipeline is a chain of triggers, not a workflow engine.
+
+| Task | Started by | Writes | Passes when | Attempts |
+|---|---|---|---|---|
+| `onboard` | A repository is added | A change inside `.factory/` only, with a readiness report | Its review agrees. It takes effect after Accept | Per repository. When used up, a plain statement that setup did not finish |
+| `acceptance` | The plan is approved | One check per criterion and a manifest, under the acceptance path only | Its review agrees | Per goal. When used up, every criterion without an agreed check is "could not confirm", the person is told, and building goes ahead |
+| `implement` | A ticket is ready | One change | The machine gate | Per ticket, shared with `fix-ci` |
+| `fix-ci` | A required check on the git host failed on an open agent pull request | A fix commit on that pull request's branch | The machine gate, again | Per ticket, shared with `implement` |
+| `review` | A spec, plan, set of checks or change is ready | `review.json` | Never gated. It is the opinion others use | None |
+
+- `maxAttempts` (default 3: one first try and two rework rounds) is one setting. It counts work-stage starts, including a person's take-the-wheel submission. A run cut off by sleep or a restart does not use up an attempt.
+- A ticket becomes `factory:ready` when the acceptance checks of its goal are in staging, every ticket it depends on is in staging, and the cap on open agent pull requests (`maxOpenAgentPullRequests`) allows it. Otherwise it stays `factory:planned` and the web app shows why.
+- At dial level 1 a person also approves each output before it is combined (see The dial).
+- When both harnesses are installed, `review` uses the one that did not write the subject.
+- A fix run's own failure triggers nothing. Pull requests from forks are not reviewed in the first release.
 
 ## A run and its three stages
 
-1. **Work.** The worker gets a checkout of the current staging state on a new branch (for `review`, of its subject), the input files and a prompt. It has no git host credential. It edits files and commits locally. The orchestrator squashes its commits into one.
-2. **Verify.** The orchestrator, outside the worker and with no model access, computes the change, checks protected paths, runs the task's checks and the acceptance checks on a clean checkout of the commit, and builds the evidence bundle.
+1. **Work.** The worker gets a checkout of the current staging state on a new branch (for `review`, of its subject), the input files and a prompt. The factory gives it no git host credential. It edits files and commits locally. The orchestrator squashes its commits into one.
+2. **Verify.** The orchestrator computes the change, checks protected paths, and runs the task's checks and the acceptance checks on a clean checkout of the commit, with no model access. The checks run code the worker wrote, so they run with the same scrubbed environment and the same sandbox as the worker, never with the tokens in their environment. Then it builds the evidence bundle.
 3. **Publish.** The publish step performs the actions the output files ask for, from a fixed list (see Credentials).
 
-A run never asks a person. Each run has a **permission policy**: the commands it may run (`spec.permissions.commands`) and the paths it may write, which are the worktree only. The adapter turns it into the harness's own settings. A request outside the policy is denied and recorded. A harness is never started in a mode that asks a person, and never in a mode that skips all permission checks.
+An unattended run never asks a person. Each run has a **permission policy**: the commands it may run (`spec.permissions.commands`) and the paths it may write, which are the worktree only. The adapter turns it into the harness's own settings. A request outside the policy is denied and recorded. A harness is never started in a mode that asks a person during an unattended run, and never in a mode that skips all permission checks.
 
-The **unattended contract** is a fixed text placed before any method: you run unattended; never ask for confirmation; where your method says to ask a person, if the choice can be undone and is inside the ticket, decide and record a ruling; otherwise write the question to the result and stop. **Bring your own method**: `spec.method` is `builtin` or a prompt file in the repository. The factory judges the result contract, not the route.
+The **unattended contract** is a fixed text placed before any method in every run after the plan is approved: you run unattended; never ask for confirmation; where your method says to ask a person, if the choice can be undone and is inside the ticket, decide and record a ruling; otherwise write the question to the result and stop.
 
-**Take the wheel.** A person can do the work stage in their own session. `oxf` serves a Model Context Protocol endpoint with four tools, a public contract: `factory_list` (ready work), `factory_claim` (claims a ticket, makes the worktree, returns the brief and paths), `factory_ask` (posts a question through the publish step), `factory_submit` (ends the work stage). Verify, the machine gate and publish are unchanged.
+**Take the wheel.** A person can do a work stage, or a planning session, in their own session. `oxf` serves a Model Context Protocol endpoint with four tools, a public contract: `factory_list` (goals to plan and ready tickets), `factory_claim` (claims a goal or ticket, makes the worktree, returns the brief and paths), `factory_ask` (posts a question through the publish step), `factory_submit` (hands back a spec, a plan or a change). Verify, review, the machine gate and publish are unchanged.
 
-**Claims across machines**: a run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The earliest marker wins. The other run ends with no change.
+**Claims across machines.** A run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The earliest marker wins and the other run ends with no change. A claim expires after a set time, so a crashed machine does not hold a ticket for ever. The time is a setting with no default yet.
 
 **Triggers** act only on events from a user with write access, or from the factory itself. Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer or approval given in the web app is posted with an answer marker and counts as the person's. Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
 
 ## Credentials
 
-The worker never holds any credential for the git host. The publish step holds two keys, kept apart.
+The factory never gives a worker a credential for the git host. The publish step holds two keys, kept apart.
 
 | Key | Granted | Used for | Never used for |
 |---|---|---|---|
 | Propose token | At setup, required | Push branches under `factory/`; write `factory-staging` through the combine action; open and update draft pull requests and the one staging pull request; comment; add or remove labels from a fixed list; create at most twelve issues per run as sub-issues of the goal; set a commit status | Any write to the default branch |
-| Accept token | Separately by the person, optional | Merge staging into the default branch on a person's Accept in the web app; merge a revert on Undo after Accept; an earned automatic Accept | Anything else |
+| Accept token | Separately by the person, optional | Merge staging into the default branch on a person's Accept; merge a revert on Undo after Accept; an earned automatic Accept | Anything else |
 
-Without the accept token, the factory keeps a pull request open from staging to the default branch and the engineering view says that a developer must merge it. The outcome view says "ask a developer to finish this step". The git host must enforce the split. On GitHub a token that can push a branch can also merge, so the propose token's user must be one that branch protection does not allow to update the default branch. The factory checks the protection rules at start and shows a standing warning when they are missing.
+The git host must enforce the split. On GitHub a token that can push a branch can also merge, so the propose token's user must be one that branch protection does not allow to update the default branch. The factory checks the protection rules at start and shows a standing warning when they are missing. For `factory-staging`, restrict who may push to the propose token's user. Do not forbid force pushes: every rebuild needs one.
+
+**Local mode limit.** In local mode the worker runs as the same operating system user as `oxf`. The factory cannot stop it reading what that user can read, including the home directory. Controls: the tokens are kept in the operating system's credential store, not in a plain file; git host credentials are removed from the worker's environment; the harness sandbox limits reads outside the worktree where the harness supports it. Recommended setup on a dedicated machine, not built in the first release: run `oxf` under its own operating system user, apart from the user the agent runs as.
 
 ## The worker contract
 
@@ -123,7 +128,7 @@ The same for every runner and every harness. Paths are shown as in a container. 
 
 | Path or variable | Content |
 |---|---|
-| `/workspace` | A checkout of the staging state on a new branch. Read-write. No remote credential |
+| `/workspace` | A checkout of the staging state on a new branch. Read-write. No remote credential is given |
 | `/factory/in/task.json` | The resolved task, read-only |
 | `/factory/in/prompt.md` | Unattended contract, method, task prompt, trigger data. Ticket and comment text is marked as untrusted |
 | `/factory/in/trigger.json` | The trigger payload, and for rework the review points and the failure record |
@@ -177,50 +182,52 @@ The same for every runner and every harness. Paths are shown as in a container. 
 
 ## Acceptance checks
 
-The answers to "how will you know it worked?" become the spec's numbered acceptance criteria. The `acceptance` task runs after the plan passes and before any building. It writes one executable check per criterion and a manifest, under the acceptance path, `acceptance/<goal number>/` by default (`acceptancePath` in `factory.yaml`):
+The person's answers to "how will you know it worked?" become the spec's numbered acceptance criteria. `acceptance` runs once the plan is approved and before any building. It writes one executable check per criterion and one manifest per goal, under `acceptance/<goal number>/` (the root is `acceptancePath` in `factory.yaml`):
 
 ```json
 { "schemaVersion": 1, "goal": 40, "criteria": [
   { "id": 1, "text": "A customer can move a booking to another day", "run": "go test ./acceptance/40 -run TestMoveBooking" },
-  { "id": 5, "text": "Works on a phone", "run": "", "reason": "No phone browser is available to the checks" } ] }
+  { "id": 2, "text": "Works on a phone", "run": "", "reason": "No phone browser is available to the checks" } ] }
 ```
 
 - The acceptance path is protected for every task except `acceptance`, and `acceptance` may write nothing else. The builder cannot change the manifest or the check files.
-- The manifest is not configuration. The orchestrator reads it from the staging state under test. The protected-path rule is what keeps a change from altering it.
-- The checks pass their own independent review, which compares each check with the person's wording, before they are combined into staging.
+- The manifest is not configuration. The orchestrator reads it from the staging state under test. The protected-path rule keeps a change from altering it.
+- The checks pass their own independent review, which compares each check with the person's wording, before they are combined into staging. If the review does not agree, its points go back to `acceptance` while the goal's attempts last.
 - The orchestrator runs each command in the verify stage of every change and on every staging rebuild. A check that already passes before any building is flagged in the engineering view.
 - A check may be changed only by a new `acceptance` run that passes its own review. When a builder or reviewer says a check is wrong, that is recorded, and the orchestrator may start such a run. `implement` never changes a check.
 
-The state of each criterion is computed only by the orchestrator, from the checks:
+The state of each criterion is computed only by the orchestrator, from the checks. There are three states and no others. The outcome view may add a note such as "being worked on" beside a line that is not working yet; a note is not a state.
 
 | State | Meaning |
 |---|---|
 | Working | Its check passes |
 | Not working yet | Its check fails |
-| Could not confirm | No check exists for it, or `acceptance` reported that it could not write one. Never shown as working |
+| Could not confirm | No check exists for it, `acceptance` reported that it could not write one, or no check passed review. Never shown as working |
 
 ## The machine gate and risk
 
-A change from `implement` or `fix-ci` passes the machine gate when all three hold:
+A change from `implement` or `fix-ci` passes the machine gate when all three hold, in this order:
 
 1. **Verify passes**: no protected path was touched, the task's checks pass, and no acceptance check that is working on staging fails on the change.
 2. **An independent review agrees**: `review.json` with subject `change` and verdict `agrees`.
 3. **Risk is not high**, by the rules below.
 
-If verify fails or the review does not agree, the failure or the review points go back to the builder as a new attempt. `maxAttempts` counts work-stage starts per ticket, from `implement`, `fix-ci` and take the wheel. The default is 3: one first try and two rework rounds. When they are used up, the ticket is an exception. A rework commit, or a `fix-ci` commit, makes earlier verify and review results stale, and the change goes through the gate again. A review by the same harness as the builder may pass a change, but the change is marked **single-opinion**. Single-opinion changes never count toward automatic Accept.
+If verify fails or the review does not agree, the failure or the review points go back to the builder as a new attempt. No person can pass a change whose review did not agree. A rework or `fix-ci` commit makes earlier verify and review results stale, and the change goes through the gate again. When the ticket's attempts are used up, its goal is off course (see Trajectory), and that is the one notice the person gets: in plain words, the ticket's lines are not working yet.
 
-**Risk** is rule based. No model sets it. It is computed after the review. The rules are tried in order and the first match wins.
+A review by the same harness as the builder may pass a change, but the change is marked **single-opinion**. Single-opinion changes never count toward automatic Accept.
+
+**Risk** is about what changed, never about the review. It is rule based; no model sets it. The rules are tried in order and the first match wins.
 
 | Order | Risk | When |
 |---|---|---|
-| 1 | High | A contract, security, dependency or CI path from `riskPaths` changed. Or an existing test file was changed or deleted. Or the review verdict is `disagrees` |
+| 1 | High | A contract, security or dependency path from `riskPaths` changed. Or an existing test file was changed or deleted |
 | 2 | Low | Only paths listed as documents changed |
-| 3 | Low | The review agrees and came from a different harness than the builder, every criterion the ticket serves is working with the change, every changed file is covered by a claim, and the change is under a size limit from the settings |
-| 4 | Medium | Everything else. This includes a ticket that serves no criterion, a criterion that is not working yet or could not be confirmed, and a review by the same harness as the builder |
+| 3 | Low | The review came from a different harness than the builder, every criterion the ticket serves is working with the change, every changed file is covered by a claim, and the change is under a size limit from the settings |
+| 4 | Medium | Everything else. This includes a ticket that serves no criterion, a served criterion that is not working yet or could not be confirmed, and a review by the same harness as the builder |
 
-New test files do not raise the risk. Changing or deleting an existing test does, because that is how a change makes itself pass. A change to a protected path fails verify before risk is computed.
+New test files do not raise the risk. Changing or deleting an existing test does, because that is how a change makes itself pass. A change to a protected path, or one that breaks a working acceptance check, fails verify before risk is computed.
 
-High risk is always an exception. The person is asked about its consequence in plain words. A yes combines the change, recorded as passed by a person. A no takes it back to its ticket. `onboard`, `brainstorm`, `decompose` and `acceptance` have no risk level. Their gate is their path rule and an independent review that agrees.
+A change that is high risk and has an agreeing review is an exception: one plain question about its consequence. A yes combines it, recorded as passed by a person. A no takes it back to its ticket as a new attempt.
 
 **The decision card** is the engineering view of one change, computed by the orchestrator from structured inputs, never written by a model: changed paths under `riskPaths` and changed test files; the rulings, each with an overturn action; what is not confirmed (files no claim covers, criteria that could not be confirmed, opinions that differ from the computed state, policy denials); the review verdict and points; the risk with its reasons.
 
@@ -228,32 +235,36 @@ High risk is always an exception. The person is asked about its consequence in p
 
 There is one staging branch per repository, `factory-staging`. It is not under the `factory/` prefix. Only the publish step's **combine** action writes it. `fix-ci`, agent pull requests and the agent-branch rule do not apply to it.
 
-**Staging is rebuilt, never patched.** Staging is the current default branch plus each change that passed, applied in the order it passed, one commit per change. On any event (a change passes, a change is undone, the default branch moves), the orchestrator rebuilds staging from the default branch and runs the task checks and the acceptance checks on the result.
+**Staging is rebuilt, never patched.** The orchestrator keeps the list of passed changes, in the order they passed. Staging is the current default branch plus each change on the list, one commit per change. On any event (a change passes, a change is undone, the default branch moves), the orchestrator rebuilds staging from the default branch and the list, and runs the task checks and the acceptance checks on the result.
 
-- A change that no longer applies cleanly, or whose addition makes a task check fail or makes a working acceptance check fail, is taken out. The orchestrator finds the first such change in order, takes it out and rebuilds again. The change goes back to its ticket: if the ticket has attempts left it is built again on the new staging; if not, it is an exception.
-- A change already contained in the default branch drops out of staging.
+- A change that no longer applies cleanly, or whose addition makes a task check or a working acceptance check fail, is taken out. The orchestrator finds the first such change in order, takes it out and rebuilds again. The change goes back to its ticket and is built again on the new staging, which uses an attempt.
+- A change already contained in the default branch drops off the list.
 - If the default branch alone fails a task check, staging stops at the default branch. The outcome view says the project's own checks are failing and a developer is needed.
 - Each staging state is recorded: its commit, the default branch commit it was built on, its changes in order, and the state of every criterion.
-- With several machines, one machine holds the staging claim for a repository, taken by the marker-comment rule on the staging pull request. Only that machine combines, rebuilds and accepts.
+- With several machines, one machine holds the staging claim for a repository, taken and expired by the same rule as a ticket claim, on the staging pull request. Only that machine combines, rebuilds and accepts.
 
 **Agent pull requests.** Each change has a branch `factory/<run id>` and a draft pull request into `factory-staging`, labelled `factory:agent`. It is the engineering trace and the place where `fix-ci` works. When the change is combined, the publish step closes the pull request with a comment naming its commit on staging.
 
-**Accept** takes the whole of staging: the exact state the person saw, named by its commit. If staging has been rebuilt since, or its branch head differs from the recorded state, Accept is refused and the person sees the current state. With the accept token, the publish step merges the staging pull request into the default branch with a merge commit, so each change keeps its own commit and outcomes are attributed per change. Without it, the person's Accept is recorded, a developer merges that pull request, and no new change is combined until the default branch contains the accepted commit. If the git host refuses the merge, that is an exception.
+**Accept** takes the whole of staging: the exact state the person saw, named by its commit. Accept and Undo always need the web app's login token, also on localhost. If staging has been rebuilt since, or its branch head differs from the recorded state, Accept is refused and the person sees the current state. While an Accept is pending, staging is frozen: no rebuild and no new change until the Accept lands or the person cancels it.
 
-**Undo** before Accept removes the change and rebuilds staging. Undo after Accept is a revert commit on the default branch, merged with the accept token, then a rebuild. Without the accept token the factory opens the revert as a pull request for a developer. Every change must be cheap to take back.
+- With the accept token, the publish step merges the staging pull request into the default branch with a merge commit, so each change keeps its own commit and outcomes are attributed per change.
+- Without it, the outcome view says "ask a developer to finish this step", and the engineering view says that a developer must merge the staging pull request without squashing. If the per-change commits are lost, the outcomes of those changes are recorded as unattributed.
+- If the git host refuses the merge, that is an exception and the Accept is cancelled.
+
+**Undo** works on any change on the list, not only the last. Before Accept, the change is taken off the list and staging is rebuilt. Changes whose tickets depend on its ticket are undone with it, and the person is told which lines this affects. After Accept, Undo is a revert commit on the default branch, merged with the accept token, then a rebuild; without the accept token the factory opens the revert as a pull request for a developer. An undone change's ticket is closed as taken back and is not built again unless the person asks.
 
 ## The dial
 
-One level per task sets where the factory stops for a person.
+One level per unattended task sets where the factory stops for a person after the plan is approved. Planning is always with the person and is not on the dial.
 
 | Level | Name | A person approves |
 |---|---|---|
 | 0 | Off | The task does not run |
-| 1 | Guided | The spec, the plan, and each change before it is combined. This is the engineering profile |
-| 2 | Autopilot | Only the spec, and Accept. The default |
+| 1 | Guided | Each output of the task before it is combined. This is the engineering profile |
+| 2 | Autopilot | Nothing until Accept. The default |
 | 3 | Automatic Accept | Nothing, for classes of change that earned it. Shown, not active, in the first release |
 
-- A task's level applies to its own output: `brainstorm` makes the spec, `decompose` the plan, the other tasks make changes. Exceptions reach a person at every level.
+- Exceptions reach a person at every level.
 - `spec.autonomy.ceiling` in the task file sets the highest level. It changes only through the default branch.
 - The current level is stored by the orchestrator and moved in the web app at or below the ceiling. Every change is logged with time and the previous level. On OpenAgentix, platform policy supplies the ceiling and can only lower it.
 
@@ -263,28 +274,35 @@ Trust comes from outcomes after Accept, never from the act of accepting, and nev
 
 - **Bad**: the change is reverted, a later fix names it, or the default branch turns red on the Accept merge commit and stays red when run again. A red build counts against every change in that Accept.
 - **Good**: none of that happened, and the change was exercised: a check on the default branch ran tests that cover the changed files, as far as the project's test tool can tell, or later the change was deployed.
-- **Silent**: otherwise. Silence counts for nothing.
+- **Silent**: otherwise. Silence counts for nothing. **Unattributed**: the change's commit was lost in the merge. It counts for nothing.
 
 A documents-only change has nothing to exercise. For that kind alone, good means no revert and no correcting change inside the window: weaker evidence, for less at stake.
 
-A **class of change** is the task, the risk level, and the most serious kind of path touched, in this order: security, contract, dependencies, CI, code, tests, documents. The orchestrator assigns it from the change. A class is **eligible** for automatic Accept when it is low risk and, inside the window, has at least a set number of good outcomes, no bad outcome, and every review from a different harness than the builder. The count and the window are settings with no default. The factory proposes an eligible class and a person switches it on. Every switch is logged. A bad outcome switches the class off, and it needs a fresh full count. In the first release eligibility is computed and shown only.
+A **class of change** is the task, the risk level, and the most serious kind of path touched, in this order: security, contract, dependencies, code, tests, documents. The orchestrator assigns it from the change. A class is **eligible** for automatic Accept when it is low risk and, inside the window, has at least a set number of good outcomes, no bad outcome, and every review from a different harness than the builder. The count and the window are settings with no default. The factory proposes an eligible class and a person switches it on. Every switch is logged. A bad outcome switches the class off, and it needs a fresh full count. In the first release eligibility is computed and shown only.
 
-The **attention record**, per task: touches per accepted goal, questions asked, rulings made, rulings overturned. A ruling is overturned when a person marks it so in the engineering view. Many overturned rulings say turn the dial down.
+The **attention record**, per task: touches per accepted goal, questions asked, rulings made, rulings overturned. A ruling is overturned when a person marks it so in the engineering view. Many overturned rulings say turn the dial down. Planning time is not counted against the factory.
 
 ## Trajectory
 
 Each goal has a course, computed by rules, never by a model. The thresholds are settings. These starting values are untested.
 
-- **Off course** when any of these happens: a ticket uses all its attempts; the same criterion stops working on two rebuilds, counted even when the change that caused it was taken out; two changes of the goal are undone.
-- **Drifting** when a criterion stopped working on one rebuild, or one change of the goal was undone, or no criterion of the goal became working over its last three changes. **On course** otherwise.
+- **Off course** when any of these happens: a ticket of the goal uses all its attempts; the same criterion stops working on two rebuilds, counted even when the change that caused it was taken out; two changes of the goal are undone.
+- **Drifting** when a criterion stopped working on one rebuild, or one change of the goal was undone, or no criterion of the goal became working over its last three changes. **On course** otherwise. Drifting: the factory keeps working and says so in the outcome view.
 
-The **last good point** is the most recent staging state in which every criterion that had ever been working was working. It never goes back past accepted work: if that state is older than the last Accept, the last good point is the default branch. Drifting: the factory keeps working and says so in the outcome view. Off course: it stops building on that goal, rebuilds staging at the last good point, closes the goal's open tickets, and runs `decompose` again from there with the failure record as input. It asks one plain question only when the cause is unclear intent.
+The **last good point** of a goal is the most recent staging state in which every criterion of that goal that had ever been working was working. It never goes back past accepted work.
+
+**Off course** has one answer:
+
+1. Stop building on that goal and close its open tickets.
+2. Take that goal's changes on staging back to its last good point: they come off the list and staging is rebuilt. Other goals' changes stay.
+3. Tell the person in plain words which lines are not working yet.
+4. Plan again with the person, with the failure record as input. For a quick goal, propose the standard lane.
 
 ## The run record and the evidence bundle
 
-The **run record** is stored in SQLite. Its field names follow the planned OpenAgentix `AgentRun`, so that kind can back it later: `id`, `task`, `attempt` (work-stage starts on the ticket), `goal`, `ticket`, `trigger` (kind and reference), `mode` (`unattended` or `wheel`), `input` (resolved task and prompt hash), `limits`, `phase`, `result`, `usage` (with its source), `provenance` (the evidence bundle), `outputs` (branch, commit, pull request), `createdAt`, `startedAt`, `finishedAt`. The phases are `queued`, `held`, `working`, `verifying`, `publishing`, `succeeded`, `failed`, `needs_human` and `cancelled`.
+The **run record** is stored in SQLite. Its field names follow the planned OpenAgentix `AgentRun`, so that kind can back it later: `id`, `task`, `attempt`, `goal`, `ticket`, `trigger` (kind and reference), `mode` (`unattended` or `wheel`), `method`, `methodUsed`, `input` (resolved task and prompt hash), `limits`, `phase`, `result`, `usage` (with its source), `provenance` (the evidence bundle), `outputs` (branch, commit, pull request), `createdAt`, `startedAt`, `finishedAt`. The phases are `queued`, `held` (waiting for the cap, a throttle or a staging freeze), `working`, `verifying`, `publishing`, `succeeded`, `failed`, `needs_human` and `cancelled`.
 
-The orchestrator also stores each staging state, the dial levels and their log, and the outcome of each accepted change. The trust record is a query over these and outcomes read from the git host, never a second source of truth.
+The orchestrator also stores each staging state and the list of passed changes, the dial levels and their log, and the outcome of each accepted change. The trust record is a query over these and outcomes read from the git host, never a second source of truth.
 
 The **evidence bundle** is built by the orchestrator in the verify stage. The review, risk and gate fields are added when the review ends.
 
@@ -292,6 +310,7 @@ The **evidence bundle** is built by the orchestrator in the verify stage. The re
 {
   "schemaVersion": 1,
   "run": "r_01H8Z", "task": "implement", "goal": 40, "ticket": 42, "attempt": 1, "mode": "unattended",
+  "method": "plugin:superpowers", "methodUsed": "builtin",
   "trigger": { "kind": "issueLabeled", "ref": "#42" },
   "worker": { "name": "claude-code", "version": "2.1.326", "model": "" },
   "base": "9f2c1e7", "commit": "a1b2c3d",
@@ -304,7 +323,7 @@ The **evidence bundle** is built by the orchestrator in the verify stage. The re
   "checks": [ { "name": "test", "exitCode": 0, "durationSeconds": 41, "ranBy": "orchestrator" } ],
   "acceptance": [ { "id": 1, "state": "working", "before": "not_working" } ],
   "review": { "run": "r_01H9A", "harness": "codex", "verdict": "agrees", "singleOpinion": false },
-  "risk": { "level": "low", "reasons": ["review agrees from the other harness", "served criteria working"] },
+  "risk": { "level": "low", "reasons": ["review from the other harness", "served criteria working"] },
   "gate": "passed",
   "usage": { "billing": "plan", "inputTokens": 12000, "outputTokens": 3400, "source": "harness", "enforced": false },
   "limits": { "deadline": "30m", "maxCostUSD": 5 }
@@ -335,17 +354,19 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 
 **Local runner rules**, and others that vary by place:
 
-- It starts the official `claude` or `codex` program in place. It never reads, copies or forwards a login token.
-- It removes git host credentials from the process environment where it can: no token variables, no credential helper, no agent socket. This is best effort, because the home directory is still there.
-- It uses the strictest sandbox setting of the harness that still lets the task run. A deadline always applies, and the process group is killed at it. Runs are safe to repeat. A run cut off by sleep or a restart is marked failed and may start again.
+- It starts the official `claude` or `codex` program in place. It never reads, copies or forwards a login token. It is designed to need no API key; whether subscription terms allow this is not checked (see Not settled).
+- It removes git host credentials from the process environment: no token variables, no credential helper, no agent socket. This does not stop the agent reading the home directory (see Credentials, local mode limit).
+- It uses the strictest sandbox setting of the harness that still lets the task run. A deadline always applies, and the process group is killed at it. Runs are safe to repeat.
 - A cost limit applies only to metered usage. The orchestrator reads usage from the event stream and cancels the run past the limit. This lags, so the web app says "best effort".
 - **Toolchain.** Locally the stages use the compilers on the machine. The container runner names a base image in `factory.yaml` (`image:`). Outbound network is open in both stages.
 - **Demo mode.** A fake git host with a seeded repository and a scripted story, a fake runner and the stub harness. No login, no token. Every screen says it is a demo.
-- **Listening.** On a laptop, localhost. On a dedicated machine `oxf` runs as a service and may listen on the local network behind a login token.
+- **Listening.** On a laptop, localhost. On a dedicated machine `oxf` runs as a service and may listen on the local network. The web app has no user accounts: a login token is needed on any address other than localhost, and always for Accept and Undo.
 
 ## Configuration
 
-In the repository under `.factory/`: `factory.yaml`, `tasks/*.yaml`, `prompts/*.md`. The orchestrator reads `.factory/` from the default branch only, so a change to it takes effect only after Accept. `.factory/` is protected for every task except `onboard`, which may change nothing else. Unknown fields are an error. The schema version is in `apiVersion`.
+In the repository under `.factory/`: `factory.yaml`, `tasks/*.yaml`, `prompts/*.md`. The orchestrator reads `.factory/` from the default branch only, so a change to it takes effect only after Accept. Unknown fields are an error. The schema version is in `apiVersion`.
+
+**Protected paths.** `.factory/**` (except for `onboard`, which may change nothing else) and the acceptance path (except for `acceptance`) are always protected. `factory.yaml` `protectedPaths` adds to them and defaults to `.github/**`, so a change to CI configuration fails the run. A repository may remove `.github/**` from that list and put it under `riskPaths.security` instead. No path may appear both in a protected list and in `riskPaths`; validation rejects that. A task's `protectedPaths` adds to all of these.
 
 ```yaml
 apiVersion: factory.openagentix.org/v1alpha1
@@ -358,11 +379,11 @@ spec:
   pollInterval: 1m
   acceptancePath: acceptance
   start: "make run"               # optional, lets Try it start the application
+  protectedPaths: [".github/**"]  # the default
   riskPaths:
     contract: ["api/**"]
     security: ["internal/auth/**"]
     dependencies: ["go.mod", "go.sum"]
-    ci: [".github/**"]
     documents: ["docs/**", "*.md"]
 ```
 
@@ -376,21 +397,19 @@ spec:
     issueLabeled: { label: "factory:ready" }
     throttle: { maxPerDay: 5 }
   worker: { harness: claude-code, model: "" }   # claude-code, codex or stub; empty model means the default
-  method: builtin
+  method: builtin                               # builtin, plugin:<name>, or a prompt file
   prompt: prompts/implement.md
   permissions:
     commands: ["go build ./...", "go test ./..."]
-  protectedPaths:                 # added to .factory/** and the acceptance path
-    - ".github/**"
   checks:
     - { name: test, run: "go test ./..." }
-  limits: { deadline: 30m, maxCostUSD: 5, maxAttempts: 3 }   # cost: metered only; attempts: work-stage starts per ticket
+  limits: { deadline: 30m, maxCostUSD: 5, maxAttempts: 3 }   # cost: metered only; attempts per ticket, shared with fix-ci
   autonomy: { ceiling: 2 }
   outputs: { pullRequest: { draft: true }, comment: true }
   concurrencyKey: "issue-{{ .Number }}"
 ```
 
-Machine settings (installed harnesses, the two tokens, the listen address, thresholds) live in the person's home directory, never in the repository. Secrets come from the environment or a file, never from a task file, and are never written to the database.
+Machine settings (installed harnesses, the listen address, thresholds, the claim expiry) live in the person's home directory, never in the repository. The two tokens and the login token are kept in the operating system's credential store, never in a task file, never in a plain file, never in the database.
 
 ## Stack
 
@@ -404,24 +423,26 @@ OpenAgentix Software Factory, decided by the owner. The site and the API group a
 
 Left to the first real runs, and not designed further here:
 
-- Every threshold: the trajectory values above, the trust count and window, the size limit in the risk rules.
+- Every threshold: the trajectory values, the trust count and window, the size limit in the risk rules, the claim expiry.
 - The exact harness flags that give a no-prompt permission policy.
 - How well "exercised" can be computed.
 - How staging rebuilds behave on a large repository, in time and in checks run, and how the staging claim passes between machines.
 - Whether subscription terms allow unattended runs started by another program. If they do not, unattended runs need an API key, and take the wheel remains for subscription users.
-- Whether a workflow plugin can be started and driven in a run with no terminal. Read from their text only. Not tried.
+- Whether a workflow plugin can be started and driven in a run with no terminal. Not tried.
 - How the factory should choose a lane.
 
 ## Limits
 
 - Nothing here has been run. Every rule is unmeasured, including its false alarms and misses. The whole weight is on the factory's own checking, the least proven part of this field. "Working" is only as strong as its check. A check can pass for the wrong reason, and a builder can change the code a check calls.
-- Local mode has no container. The agent runs as the person, on their machine. Removing credentials from its environment is best effort.
+- Local mode has no container. The worker runs as the same user as `oxf` and can read what that user can read, including the home directory. The factory gives it no credential, but cannot wall the machine off.
+- Try it runs code no person has read on the person's machine, inside the checks' sandbox.
 - Usage is what the harness reports. Nothing is enforced locally. Outbound network is open.
 - A review can be steered by text in the change. With one harness installed it shares the builder's blind spots.
 - The agent chooses which files it touches, so it can keep a change in a low-risk class. `riskPaths` and the size limit reduce this. They do not remove it.
-- With one maintainer, the same person approves the spec, accepts and switches a class on. The record is honest, but not independent.
+- With one maintainer, the same person plans, accepts and switches a class on. The record is honest, but not independent.
 - One staging branch means goals in flight are accepted together. A person who wants only part uses Undo first.
-- A red build after Accept counts against every change in that Accept, which is coarse. Try it needs a start command from the project. Otherwise the outcome view shows the acceptance list alone.
+- A red build after Accept counts against every change in that Accept, which is coarse. Try it needs a start command from the project; otherwise the outcome view shows the acceptance list alone.
+- The web app has no user accounts. Anyone with the login token can press Accept.
 - The accept token is a stronger credential than proposing needs. It is optional and held by the publish step only.
 - Two harnesses from the start keep the contract honest, at the cost of two adapters. Polling adds delay before a run starts.
 

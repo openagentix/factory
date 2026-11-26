@@ -20,6 +20,8 @@ type stubEnv struct {
 func newStubEnv(t *testing.T) stubEnv {
 	t.Helper()
 	d := t.TempDir()
+	// The hostile behaviours may act only under this directory.
+	t.Setenv("OXF_STUB_ATTACK_ROOT", filepath.Dir(d))
 	e := stubEnv{ws: filepath.Join(d, "work"), out: filepath.Join(d, "out")}
 	for _, p := range []string{e.ws, e.out, filepath.Join(e.ws, "old")} {
 		if err := os.MkdirAll(p, 0o755); err != nil {

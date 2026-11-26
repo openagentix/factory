@@ -73,6 +73,20 @@ type StubScript struct {
 	WriteIn bool `json:"writeIn,omitempty"`
 	// DumpEnv reports every environment variable the stub saw.
 	DumpEnv bool `json:"dumpEnv,omitempty"`
+	// SwapRunDir moves the run directory (the parent of the workspace) away
+	// and puts a link in its place. Mode "link" keeps the real directory
+	// beside it as <run>.moved and leaves the link. Mode "away" moves it to
+	// MoveTo. Mode "loop" swaps and restores it again and again for LoopMs
+	// milliseconds and ends with the real directory back in place.
+	SwapRunDir *StubSwap `json:"swapRunDir,omitempty"`
+}
+
+// StubSwap is the swap of the run directory.
+type StubSwap struct {
+	Mode   string `json:"mode"`
+	Target string `json:"target"`
+	MoveTo string `json:"moveTo,omitempty"`
+	LoopMS int    `json:"loopMs,omitempty"`
 }
 
 // StubChild is a background process the stub leaves behind.
@@ -138,6 +152,9 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 		return stubUsageExit, fmt.Errorf("stub out directory: %w", err)
 	}
 	if err := sc.check(); err != nil {
+		return stubUsageExit, err
+	}
+	if err := sc.checkAttackRoot(opts); err != nil {
 		return stubUsageExit, err
 	}
 	// Resolve every target before acting, so a bad path changes nothing.
@@ -444,6 +461,9 @@ type stubLine struct {
 type Stub struct {
 	// Program is the program that has the stub-harness subcommand.
 	Program string
+	// AttackRoot, when set, is passed as OXF_STUB_ATTACK_ROOT. The hostile
+	// behaviours of the stub act only under that directory.
+	AttackRoot string
 }
 
 // NewStub returns the stub adapter. program is usually the path of oxf.
@@ -470,6 +490,9 @@ func (s *Stub) Command(sp Spec) (Command, error) {
 		// The subcommand refuses to run without this variable.
 		Env: append(sp.env(), "OXF_ALLOW_STUB=1"),
 		Dir: sp.Workspace,
+	}
+	if s.AttackRoot != "" {
+		cmd.Env = append(cmd.Env, "OXF_STUB_ATTACK_ROOT="+s.AttackRoot)
 	}
 	if err := checkForbidden(cmd); err != nil {
 		return Command{}, err

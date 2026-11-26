@@ -124,7 +124,9 @@ The same for every runner and every harness.
   "schemaVersion": 1,
   "status": "succeeded | failed | needs_human | no_change",
   "summary": "what was done, in plain words",
-  "claims": ["Added retry to fetch()", "Added a test for timeout"],
+  "claims": [ { "text": "Added retry to fetch()", "files": ["internal/fetch/fetch.go"] } ],
+  "criteria": [ { "id": 1, "status": "met", "check": "test" } ],
+  "rulings": [],
   "questions": [],
   "usage": { "billing": "metered | plan | unknown", "costUSD": 0.42, "inputTokens": 12000, "outputTokens": 3400 },
   "harness": { "name": "claude-code", "version": "2.1.326", "model": "..." }
@@ -167,7 +169,7 @@ Rules:
 - A change to a protected path fails the run.
 - A change to any test file raises the risk level and is shown first to the reviewer.
 - `usage.enforced` is `false` on rungs 1 and 2. The UI says "reported, not enforced". It is `true` only when a governance provider enforced the limit.
-- Risk in v0.1 is rule based: test files changed, protected area near, diff size, new dependency files. No model judges risk.
+- Risk is rule based. No model sets the level. The rules are in Decision 13, which replaces the first list given here.
 
 The pull request body has three parts, after Matt Pocock's `pr` skill: Summary, Evidence, Merge danger.
 
@@ -242,9 +244,9 @@ Added after the design review on 2026-11-26. `brainstorm`, `decompose` and `revi
 | `result.json` `questions` | Questions for a person | One comment on the trigger issue |
 | commits in `/workspace` | A code or document change | Push a branch named `factory/<run id>`, open a draft pull request |
 | `issues.json` | Ticket proposals from `decompose`: title, body, acceptance criteria, `dependsOn` by index | Create at most twelve issues as sub-issues of the goal, label `factory:planned`, write dependencies into each body in a fixed, machine-read block |
-| `review.md` | A review from `review` | One comment on the pull request |
+| `review.json` | A review from `review`, with the schema of Decision 13 | One comment on the pull request, rendered from the file, and the completed decision card |
 
-`issues.json` and `review.md` are part of the worker contract and are parsed strictly.
+`issues.json` and `review.json` are part of the worker contract and are parsed strictly.
 
 **Agent pull requests** are known by the branch prefix `factory/` and the label `factory:agent`. `fix-ci` may push only to such a branch. Its input includes the failed check's log, cut to a fixed size. `review` gets a checkout of the pull request head. Pull requests from forks are not reviewed in v0.1.
 
@@ -331,9 +333,90 @@ A worker writes a ruling when its method would have asked a person and the choic
 
 **Questions are batched.** A run that ends with questions adds them to the inbox. Nothing else waits on them.
 
-**Attention record.** The trust ledger also counts, per task: gate actions by a person per merged pull request, questions asked, rulings made, and rulings overturned. A ruling is counted as overturned when a person marks it so in the web app, or reverts the commit.
+**Attention record.** The trust ledger also counts, per task: gate actions by a person per merged pull request, questions asked, rulings made, and rulings overturned. A ruling is counted as overturned when a person marks it so in the web app. A revert is counted once, as a bad outcome (Decision 13).
 
 **Take the wheel.** The Model Context Protocol tools of Decision 11 stay, under that name. Claiming a ticket by hand is an action on a ticket, not a dial level. The run record keeps `mode` with the values `unattended` and `wheel`.
+
+## Decision 13: the review gate is a decision, not a button
+
+Added on 2026-11-26. It replaces the risk rules of Decision 6 and the words "locked in v0.1" for dial level 3 in Decision 12. An independent review of the first draft of this decision disagreed with it on twelve points. This text is the corrected one.
+
+**What happened.** Pull request 10, the first one in this repository, changed 17 files, a contract on paper and the threat model. It was merged 85 seconds after it was opened, and its owner said it was merged without reading. Moving the "yes" from a prompt to a merge button solves nothing. Green checks show that the code builds. They do not show that the change is right.
+
+**Structured inputs.** The card must be computed, not written by a model. So the contracts gain structure:
+
+- Each claim in the result file lists the files it covers: `{ "text": "...", "files": ["..."] }`.
+- A ticket the factory creates has numbered acceptance criteria. The result file reports each one: `{ "id": 2, "status": "met | not_met | unverified", "check": "name of the check that shows it, or empty" }`.
+- The review task writes `review.json`, not free text: `{ "verdict": "agrees | concerns | disagrees", "points": [ { "severity": "...", "text": "...", "file": "..." } ], "criteria": [ { "id": 2, "status": "..." } ] }`.
+- `factory.yaml` lists `riskPaths`: which paths are public contracts, which are security-relevant, which are dependency manifests, which are documents. `onboard` proposes the lists.
+
+**The decision card.** The orchestrator writes it from these inputs. The agent does not write it.
+
+| Part | Content | Computed from |
+|---|---|---|
+| You are approving | Changed paths that fall under `riskPaths` (contract, security, dependencies), changed test files, and each acceptance criterion | Diff, `riskPaths`, ticket |
+| Decided for you | The rulings, each with an overturn action | Result file |
+| Not verified | Changed files that no claim lists. Criteria with status `unverified` or with no check named. Criteria where builder and reviewer differ. Anything the policy denied | Diff against claims, result file against `review.json` |
+| Independent review | The verdict and its points | `review.json` |
+| Risk | Low, medium or high, with reasons | Rules below |
+
+The card is written twice. When the pull request opens it shows "review pending". When the review run ends it is completed. A gate action in the web app is possible only on a completed card. A ticket written by a person without numbered criteria gets a card that says "no acceptance criteria".
+
+**Risk rules.** These replace the list in Decision 6. Risk is computed after the review and stored in the evidence bundle with the review verdict and the criteria results.
+
+The rules are tried in this order. The first that matches wins.
+
+| Order | Risk | When |
+|---|---|---|
+| 1 | High | A contract, security, dependency or CI path from `riskPaths` changed. Or an existing test file was changed or deleted. Or the review verdict is `disagrees`. Or any criterion is `not_met` |
+| 2 | Low | Only paths listed as documents changed |
+| 3 | Low | The review `agrees` and came from a different harness than the builder, every criterion is `met` with a check named, every changed file is covered by a claim, and the diff is under a size limit from the settings |
+| 4 | Medium | Everything else. This includes a ticket with no numbered criteria, a criterion that is `unverified`, and a review by the same harness as the builder |
+
+New test files do not raise the risk. They are listed on the card. Changing or deleting a test that already existed does, because that is how a change makes itself pass.
+
+The evidence bundle is built in the verify stage, as in Decision 6. The review verdict, the criteria results and the risk level are added to it when the review run ends.
+
+A change to a protected path fails the run before any card exists, so it is not a risk reason.
+
+**Risk sets the effort.** Low: one action. Medium: open the completed card. High: a separate confirmation for each item under "You are approving", in the web app, with no single button.
+
+**What the factory can and cannot see.** Only actions in the web app count as engagement. A merge made on the git host with no action in the web app is recorded as a merge without engagement, with the name the git host gives for who merged. The factory cannot stop that merge. The confirmations are not enforced by the git host.
+
+**Trust.** The ledger keeps three records apart, per class of change:
+
+| Record | Meaning | Evidence of trust |
+|---|---|---|
+| Merge | Someone merged it | No. The act of merging is never evidence, with or without engagement |
+| Engaged review | A completed card was opened and, for high risk, each item confirmed | Weak. It can be clicked through |
+| Outcome | What happened after the merge | Yes, when the change was exercised |
+
+An outcome is **bad** when the change is reverted, or a later fix names it, or the default branch turns red on this merge commit and stays red when the same commit is run again. It is **good** only when none of that happened inside the window **and** the change was exercised: a check on the default branch ran tests that cover the changed files, as far as the project's test tool can tell, or, later, the change was deployed. Otherwise it is **silent**. A silent outcome counts for nothing. Silence is not success.
+
+A documents-only change has nothing to exercise. For that kind alone, a good outcome is: no revert and no correcting change inside the window. That is weaker evidence, for a change with less at stake.
+
+A revert is counted once, as a bad outcome. An overturned ruling is a ruling a person marked as wrong in the web app.
+
+**A class of change** is: the task, the risk level, and the kind of paths touched (documents, tests, code, contract, security, dependencies, from `riskPaths`). The orchestrator assigns the class from the diff. When a diff touches more than one kind, the class takes the most serious one, in this order: security, contract, dependencies, CI, code, tests, documents.
+
+**The dial and automatic merge.** A person sets the dial per task at levels 0 to 2. Level 3 is not a position for a whole task. It is a switch per class, under a task whose ceiling allows 3.
+
+- Only a class at low risk can be eligible. A medium or high class always goes to a person. The per-item confirmation for high risk can never be switched off.
+- A class is **eligible** when, inside a window, it has at least a set number of good outcomes, no bad outcome, and a review verdict of `agrees` each time, from a different harness than the builder. The count and the window are settings with no default yet. They will be chosen from real runs.
+- The factory proposes an eligible class and shows the record. A person switches it on. The switch is stored by the orchestrator beside the dial level, and every change to it is logged.
+- If a person keeps merging one class without engagement and its outcomes are good, the factory says so and proposes the switch. That is consistent with the rule above: the outcomes are the evidence, not the merges.
+- A bad outcome switches the class off. It becomes eligible again only after a fresh, full count of good outcomes.
+- In v0.1 the ledger computes eligibility and shows it. The merge stays with a person. Automatic merge needs a credential that the local product does not hold.
+
+**Limits.**
+
+- With one maintainer, the same person engages, merges and switches a class on. There is no second person. The record is honest but the check is not independent.
+- The review run reads untrusted text and can be steered. With one harness installed it is the same model as the builder and shares its blind spots. Such a review does not count for eligibility.
+- The agent chooses which files it touches, so it can keep a change inside a low-risk class. The size limit and `riskPaths` reduce this. They do not remove it.
+- Outcomes can be caused by other commits. A red build is counted only on the merge commit itself, which misses late failures.
+- "Exercised" is an estimate from which tests ran. It does not prove the changed lines ran.
+- Criteria status from the builder is self-reported. The reviewer's status is a second opinion, not a proof.
+- The rules have never been run. Their false alarms and misses are unmeasured.
 
 ## Name
 

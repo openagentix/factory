@@ -13,6 +13,7 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ### Added
 
+- Design: the review gate as a decision card, effort set by risk, trust from outcomes and not from merges, and automatic merge per class of change. Decision 13 in decision record 0001.
 - Design: permission policy per run, rulings in the result file, batched questions, an attention record in the trust ledger, and "take the wheel".
 
 - Design document for OpenAgentix Software Factory (`docs/superpowers/specs/2026-11-26-openagentix-factory-design.md`), a draft. Nothing in it is proven by a run.

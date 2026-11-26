@@ -85,7 +85,7 @@ func TestRunChecks_CleanCheckoutOfHead(t *testing.T) {
 	if _, err := os.Stat(dir); err == nil {
 		t.Errorf("checkout %s was not removed", dir)
 	}
-	if err := checkTrusted(context.Background(), r.dir); err != nil {
+	if err := openTrusted(r.dir); err != nil {
 		t.Errorf("repository no longer passes the guard: %v", err)
 	}
 }
@@ -127,7 +127,7 @@ func TestRunChecks_DeadlineKillsTheProcessGroup(t *testing.T) {
 		// a background child holds the output pipe open, as a stuck test server would
 		{Name: "hang", Run: "sleep 60 & echo $! ; wait"},
 		{Name: "next", Run: "true"},
-	}, CheckOptions{Deadline: 500 * time.Millisecond})
+	}, CheckOptions{Deadline: 3 * time.Second}) // long enough for a slow shell to print the pid first
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestRunChecks_DeadlineKillsTheProcessGroup(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if err := checkTrusted(context.Background(), r.dir); err != nil {
+	if err := openTrusted(r.dir); err != nil {
 		t.Errorf("repository no longer passes the guard: %v", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestRunChecks_BadCommitLeavesNothing(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	if err := checkTrusted(context.Background(), r.dir); err != nil {
+	if err := openTrusted(r.dir); err != nil {
 		t.Errorf("repository no longer passes the guard: %v", err)
 	}
 }
@@ -179,7 +179,7 @@ func TestRunChecks_CancelledContextStillCleansUp(t *testing.T) {
 	if err == nil && (len(out) == 0 || out[0].Result.ExitCode == 0) {
 		t.Fatalf("a cancelled run must not look like a pass: %+v", out)
 	}
-	if err := checkTrusted(context.Background(), r.dir); err != nil {
+	if err := openTrusted(r.dir); err != nil {
 		t.Errorf("repository no longer passes the guard: %v", err)
 	}
 }

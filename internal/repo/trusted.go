@@ -1,4 +1,4 @@
-package verify
+package repo
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"strings"
 )
 
-// The verify package works only on a repository whose configuration the
-// factory wrote itself: a bare repository made by InitTrustedRepository, where
-// the orchestrator imports the files of a run. The agent's workspace is a
-// plain directory with no .git. Git reads many settings from a repository that
-// make it start programs, and a list of settings to switch off can never be
-// complete. So the package checks that the repository holds nothing but a
-// short list of harmless settings, and refuses anything else.
+// This package works only on a repository whose configuration the factory
+// wrote itself: a bare repository made by Init, where the orchestrator imports
+// the files of a run. The agent's workspace is a plain directory with no .git.
+// Git reads many settings from a repository that make it start programs, and a
+// list of settings to switch off can never be complete. So the package checks
+// that the repository holds nothing but a short list of harmless settings, and
+// refuses anything else.
 
 // trustedConfigKeys are the configuration keys a trusted repository may have.
 // Git writes them in lower case. There is no prefix or wildcard: a key is on
@@ -38,22 +38,24 @@ var trustedConfigKeys = map[string]bool{
 // directory (commondir, gitdir, a linked objects directory) and cannot find
 // state from an unfinished operation (rebase-*, MERGE_*, lock files).
 //
-// "index" is there because the import into the repository uses --work-tree,
-// which makes git write an index in the repository directory.
+// There is no "index": the factory never uses an index, because Import writes
+// objects itself.
 var trustedLayout = map[string]bool{ // true means a directory
 	"HEAD": false, "config": false, "description": false, "packed-refs": false,
-	"FETCH_HEAD": false, "ORIG_HEAD": false, "index": false,
+	"FETCH_HEAD": false, "ORIG_HEAD": false,
 	"objects": true, "refs": true, "info": true, "hooks": true, "branches": true, "logs": true,
 }
 
-// InitTrustedRepository creates an empty bare repository in dir, which must
+// Init creates an empty bare repository in dir, which must
 // not exist or must be empty. It copies no template files, so it has no hooks.
 // With an empty template, git init creates only HEAD, config, objects and
 // refs, which are all on the layout list. If a git version made another
-// entry, it would not be on the list and InitTrustedRepository would fail
+// entry, it would not be on the list and Init would fail
 // rather than allow it, and the list would be reviewed. The result passes the
-// guard. The orchestrator uses it, and so do tests.
-func InitTrustedRepository(dir string) error {
+// guard. The object format is sha1, which Import relies on to write objects
+// itself, and the guard refuses a repository that says otherwise (see
+// checkTrusted). The orchestrator uses Init, and so do tests.
+func Init(dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
@@ -64,41 +66,40 @@ func InitTrustedRepository(dir string) error {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return err
 	}
-	if _, err := runGit(context.Background(), "", "init", "--bare", "--quiet", "--template=", abs); err != nil {
+	if _, err := runGit(context.Background(), "", "init", "--bare", "--quiet", "--template=", "--object-format=sha1", abs); err != nil {
 		return err
 	}
 	return checkTrusted(context.Background(), abs)
 }
 
-// checkTrusted is the guard. Every exported function of this package that
-// uses git calls it first. It runs nothing from the repository. It looks at
-// the layout of the repository directory without starting git, then reads the
-// configuration file as a list of keys, with includes switched off. It fails
-// closed. The error names what it found.
-//
-// The guard detects a repository that was tampered with, at the start of each
-// call. It cannot stop a process that runs as the same user from changing the
-// repository between two calls.
-func checkTrusted(ctx context.Context, dir string) error {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return err
-	}
-	if err := checkLayout(abs); err != nil {
+// checkTrustedOnce is one pass of the guard. Entries named in ignore (paths
+// below the repository) are skipped: they are lock files that checkTrusted has
+// dealt with.
+func checkTrustedOnce(ctx context.Context, abs string, ignore map[string]bool) error {
+	if err := checkLayout(abs, ignore); err != nil {
 		return err
 	}
 	out, err := runGit(ctx, "", "config", "--file", filepath.Join(abs, "config"), "--no-includes", "--list", "-z")
 	if err != nil {
 		return fmt.Errorf("cannot read the repository configuration: %w", err)
 	}
+	version := ""
 	for _, rec := range strings.Split(string(out), "\x00") {
 		if rec == "" {
 			continue
 		}
-		key, _, _ := strings.Cut(rec, "\n")
+		key, val, _ := strings.Cut(rec, "\n")
 		if !trustedConfigKeys[strings.ToLower(key)] {
-			return fmt.Errorf("repository is not trusted: the configuration key %q is not allowed", visible(key, 100))
+			return fmt.Errorf("repository is not trusted: the configuration key %q is not allowed", Visible(key, 100))
 		}
+		if strings.EqualFold(key, "core.repositoryformatversion") {
+			version = val
+		}
+	}
+	// Version 1 is what a repository needs to name another object format or
+	// any extension. Import writes sha1 objects, so only version 0 is allowed.
+	if version != "0" {
+		return untrusted("core.repositoryformatversion is %q, not 0", Visible(version, 20))
 	}
 	return nil
 }
@@ -114,7 +115,7 @@ func lstatKind(abs, rel string) (fs.FileInfo, error) {
 
 // checkLayout checks the names, types and contents of the repository
 // directory. See trustedLayout.
-func checkLayout(abs string) error {
+func checkLayout(abs string, ignore map[string]bool) error {
 	if fi, err := os.Lstat(abs); err != nil || !fi.IsDir() {
 		return fmt.Errorf("%s is not a git repository directory", abs)
 	}
@@ -123,10 +124,13 @@ func checkLayout(abs string) error {
 		return err
 	}
 	for _, e := range ents {
+		if ignore[e.Name()] {
+			continue
+		}
 		isDir, known := trustedLayout[e.Name()]
 		switch {
 		case !known:
-			return untrusted("%q is not an allowed entry", visible(e.Name(), 100))
+			return untrusted("%q is not an allowed entry", Visible(e.Name(), 100))
 		case e.Type()&fs.ModeSymlink != 0:
 			return untrusted("%s is a symbolic link", e.Name())
 		case isDir != e.IsDir() || (!isDir && !e.Type().IsRegular()):
@@ -138,8 +142,8 @@ func checkLayout(abs string) error {
 			return fmt.Errorf("%s is not a bare git repository: no %s", abs, need)
 		}
 	}
-	for _, f := range []func(string) error{checkObjects, checkRefs, checkInfo, checkHooks} {
-		if err := f(abs); err != nil {
+	for _, f := range []func(string, map[string]bool) error{checkObjects, checkRefs, checkInfo, checkHooks} {
+		if err := f(abs, ignore); err != nil {
 			return err
 		}
 	}
@@ -158,14 +162,17 @@ func dirEntries(abs, rel string) ([]fs.DirEntry, error) {
 // checkObjects: objects and every directory directly under it are real
 // directories, and there are no alternates. Packs and objects/info entries
 // are not links.
-func checkObjects(abs string) error {
+func checkObjects(abs string, ignore map[string]bool) error {
 	ents, err := dirEntries(abs, "objects")
 	if err != nil {
 		return err
 	}
 	for _, e := range ents {
+		if ignore["objects/"+e.Name()] {
+			continue
+		}
 		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 {
-			return untrusted("objects/%s is not a plain directory", visible(e.Name(), 100))
+			return untrusted("objects/%s is not a plain directory", Visible(e.Name(), 100))
 		}
 	}
 	for _, sub := range []string{"objects/info", "objects/pack"} {
@@ -175,7 +182,7 @@ func checkObjects(abs string) error {
 		}
 		for _, e := range ents {
 			if e.Type()&fs.ModeSymlink != 0 {
-				return untrusted("%s/%s is a symbolic link", sub, visible(e.Name(), 100))
+				return untrusted("%s/%s is a symbolic link", sub, Visible(e.Name(), 100))
 			}
 			if sub == "objects/info" && (e.Name() == "alternates" || e.Name() == "http-alternates") {
 				return untrusted("it has %s/%s", sub, e.Name())
@@ -188,7 +195,7 @@ func checkObjects(abs string) error {
 // checkRefs walks refs. A link is refused, and so is anything under
 // refs/replace, which would make git show other content than the commit id
 // names. A packed replace ref is refused too.
-func checkRefs(abs string) error {
+func checkRefs(abs string, _ map[string]bool) error {
 	root := filepath.Join(abs, "refs")
 	var bad error
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -199,9 +206,9 @@ func checkRefs(abs string) error {
 		rel = filepath.ToSlash(rel)
 		switch {
 		case err != nil:
-			bad = untrusted("cannot read %s", visible(rel, 100))
+			bad = untrusted("cannot read %s", Visible(rel, 100))
 		case d.Type()&fs.ModeSymlink != 0:
-			bad = untrusted("%s is a symbolic link", visible(rel, 100))
+			bad = untrusted("%s is a symbolic link", Visible(rel, 100))
 		case rel == "refs/replace" || strings.HasPrefix(rel, "refs/replace/"):
 			if !d.IsDir() || rel != "refs/replace" {
 				bad = untrusted("it has refs/replace/ entries")
@@ -225,7 +232,7 @@ func checkRefs(abs string) error {
 // checkInfo: info may hold only exclude, and an empty attributes file.
 // Attributes name drivers, so a file with content is refused. There must be
 // no grafts.
-func checkInfo(abs string) error {
+func checkInfo(abs string, _ map[string]bool) error {
 	ents, err := dirEntries(abs, "info")
 	if err != nil {
 		return err
@@ -242,7 +249,7 @@ func checkInfo(abs string) error {
 				return untrusted("info/attributes is not empty")
 			}
 		default:
-			return untrusted("info/%s is not allowed", visible(e.Name(), 100))
+			return untrusted("info/%s is not allowed", Visible(e.Name(), 100))
 		}
 	}
 	return nil
@@ -250,7 +257,7 @@ func checkInfo(abs string) error {
 
 // checkHooks: hooks may hold only plain files that are not executable, and
 // files that end in ".sample". No links.
-func checkHooks(abs string) error {
+func checkHooks(abs string, _ map[string]bool) error {
 	root := filepath.Join(abs, "hooks")
 	var bad string
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -273,7 +280,7 @@ func checkHooks(abs string) error {
 		return nil
 	})
 	if bad != "" {
-		return untrusted("%s", visible(bad, 200))
+		return untrusted("%s", Visible(bad, 200))
 	}
 	return nil
 }

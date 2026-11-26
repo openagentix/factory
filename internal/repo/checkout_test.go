@@ -1,4 +1,4 @@
-package verify
+package repo
 
 import (
 	"context"
@@ -47,7 +47,7 @@ func TestMaterialize(t *testing.T) {
 	head := r.git("rev-parse", "HEAD")
 
 	dest := t.TempDir()
-	notes, err := materialize(context.Background(), r.dir, head, dest, limits{DefaultMaxTotalBytes, DefaultMaxFileBytes, DefaultMaxEntries})
+	notes, err := materialize(context.Background(), r.dir, head, dest, Limits{MaxTotalBytes: DefaultMaxTotalBytes, MaxFileBytes: DefaultMaxFileBytes, MaxEntries: DefaultMaxEntries})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,8 +121,8 @@ func TestMaterialize_SameFileTwiceAndLinkParent(t *testing.T) {
 }
 
 // TestOnlyGitCommandStartsGit parses the package and checks that the git
-// program is started in one place (gitCommand in git.go), and that the only
-// other program started is sh, for the checks.
+// program is started in one place (gitCommand in git.go), and that nothing
+// else is started.
 func TestOnlyGitCommandStartsGit(t *testing.T) {
 	files, _ := filepath.Glob("*.go")
 	fset := token.NewFileSet()
@@ -164,7 +164,7 @@ func TestOnlyGitCommandStartsGit(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := []string{"checks.go:sh", "git.go:git"}
+	want := []string{"git.go:git"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("programs started: %v, want %v", got, want)
 	}
@@ -205,7 +205,7 @@ func TestGitEnvIsAnAllowlist(t *testing.T) {
 func TestGitCommandIsHardened(t *testing.T) {
 	cmd := gitCommand(context.Background(), ".", "status")
 	args := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"core.fsmonitor=false", "core.hooksPath=/dev/null", "core.pager=cat", "diff.external=", "protocol.ext.allow=never", "--no-replace-objects", "--git-dir="} {
+	for _, want := range []string{"core.fsmonitor=false", "core.hooksPath=/dev/null", "core.pager=cat", "diff.external=", "protocol.ext.allow=never", "maintenance.auto=false", "gc.auto=0", "--no-replace-objects", "--git-dir="} {
 		if !strings.Contains(args, want) {
 			t.Errorf("git command lacks -c %s: %s", want, args)
 		}

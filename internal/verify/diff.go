@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/openagentix/factory/internal/repo"
 )
 
 // Status is how a path changed.
@@ -84,23 +86,15 @@ func ChangedFiles(ctx context.Context, dir, base, head string) (*ChangeSet, erro
 }
 
 func changedFiles(ctx context.Context, dir, base, head string) (*ChangeSet, error) {
-	if err := checkTrusted(ctx, dir); err != nil {
-		return nil, err
-	}
-	b, err := resolveCommit(ctx, dir, base)
+	r, err := repo.Open(dir)
 	if err != nil {
 		return nil, err
 	}
-	h, err := resolveCommit(ctx, dir, head)
+	statusOut, err := r.NameStatus(ctx, base, head)
 	if err != nil {
 		return nil, err
 	}
-	common := []string{"diff", "-z", "-M", "--no-ext-diff", "--no-textconv", "--no-color"}
-	statusOut, err := runGit(ctx, dir, append(append([]string{}, common...), "--name-status", b, h, "--")...)
-	if err != nil {
-		return nil, err
-	}
-	numOut, err := runGit(ctx, dir, append(append([]string{}, common...), "--numstat", b, h, "--")...)
+	numOut, err := r.NumStat(ctx, base, head)
 	if err != nil {
 		return nil, err
 	}

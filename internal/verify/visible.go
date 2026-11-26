@@ -1,49 +1,9 @@
 package verify
 
-import (
-	"fmt"
-	"strings"
-	"unicode"
-	"unicode/utf8"
-)
+import "github.com/openagentix/factory/internal/repo"
 
-// suspicious reports whether text holds a control character, an invisible
-// character (zero width, or a bidirectional override or mark) or bytes that
-// are not valid UTF-8. Look-alike letters from other scripts are not found
-// here, and case folding does not unify them.
-func suspicious(s string) bool {
-	if !utf8.ValidString(s) {
-		return true
-	}
-	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.In(r, unicode.Zl, unicode.Zp) {
-			return true
-		}
-	}
-	return false
-}
+// suspicious and visible are the helpers of package repo, which shows
+// untrusted text safely.
+func suspicious(s string) bool { return repo.Suspicious(s) }
 
-// visible makes untrusted text printable. Each suspicious character becomes
-// <U+XXXX> and each bad byte <0xXX>. The text is cut to max runes.
-func visible(s string, max int) string {
-	var b strings.Builder
-	n := 0
-	for i := 0; i < len(s); {
-		if n == max {
-			b.WriteString("...")
-			break
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		switch {
-		case r == utf8.RuneError && size == 1:
-			fmt.Fprintf(&b, "<0x%02X>", s[i])
-		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.In(r, unicode.Zl, unicode.Zp):
-			fmt.Fprintf(&b, "<U+%04X>", r)
-		default:
-			b.WriteRune(r)
-		}
-		i += size
-		n++
-	}
-	return b.String()
-}
+func visible(s string, max int) string { return repo.Visible(s, max) }

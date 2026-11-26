@@ -2,6 +2,7 @@ package verify
 
 import (
 	"github.com/openagentix/factory/internal/api"
+	"github.com/openagentix/factory/internal/repo"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,31 +10,34 @@ import (
 	"testing"
 )
 
-// testRepo is a trusted bare repository, made with InitTrustedRepository, and
+// testRepo is a trusted bare repository, made with repo.Init, and
 // a separate work tree for the files. The git identity comes from environment
 // variables set here, never from global git config.
 type testRepo struct {
-	t   *testing.T
-	dir string // the bare repository: what the package under test is given
-	wt  string // the work tree, where tests write files
+	t     *testing.T
+	dir   string // the bare repository: what the package under test is given
+	wt    string // the work tree, where tests write files
+	index string // the index, outside the repository: the guard allows none in it
 }
 
 func newTestRepo(t *testing.T) *testRepo {
 	t.Helper()
-	r := &testRepo{t: t, dir: filepath.Join(t.TempDir(), "repo.git"), wt: t.TempDir()}
-	if err := InitTrustedRepository(r.dir); err != nil {
-		t.Fatalf("InitTrustedRepository: %v", err)
+	r := &testRepo{t: t, dir: filepath.Join(t.TempDir(), "repo.git"), wt: t.TempDir(), index: filepath.Join(t.TempDir(), "index")}
+	if err := repo.Init(r.dir); err != nil {
+		t.Fatalf("repo.Init: %v", err)
 	}
 	return r
 }
 
 func (r *testRepo) git(args ...string) string {
 	r.t.Helper()
-	full := append([]string{"--git-dir=" + r.dir, "--work-tree=" + r.wt, "-c", "core.bare=false"}, args...)
+	// git commit would start background maintenance, which leaves
+	// objects/maintenance.lock for a moment, and the guard refuses that.
+	full := append([]string{"--git-dir=" + r.dir, "--work-tree=" + r.wt, "-c", "core.bare=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)
 	cmd := exec.Command("git", full...)
 	cmd.Dir = r.wt
 	cmd.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_INDEX_FILE="+r.index,
 		"GIT_AUTHOR_NAME=Test Author", "GIT_AUTHOR_EMAIL=author@example.invalid",
 		"GIT_COMMITTER_NAME=Test Author", "GIT_COMMITTER_EMAIL=author@example.invalid",
 	)
@@ -50,6 +54,8 @@ func (r *testRepo) git(args ...string) string {
 // write creates or replaces a file.
 func (r *testRepo) write(name, content string) {
 	r.t.Helper()
+	// git commit would start background maintenance, which leaves
+	// objects/maintenance.lock for a moment, and the guard refuses that.
 	full := filepath.Join(r.wt, filepath.FromSlash(name))
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		r.t.Fatal(err)
@@ -88,4 +94,10 @@ func toClaims(in []claimLike) []api.Claim {
 		out = append(out, api.Claim{Text: c.text, Files: c.files})
 	}
 	return out
+}
+
+// openTrusted runs the guard of package repo on dir.
+func openTrusted(dir string) error {
+	_, err := repo.Open(dir)
+	return err
 }

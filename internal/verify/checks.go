@@ -14,6 +14,14 @@ import (
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
+	"github.com/openagentix/factory/internal/repo"
+)
+
+// Default limits of a checkout, the same as those of package repo.
+const (
+	DefaultMaxTotalBytes = repo.DefaultMaxTotalBytes
+	DefaultMaxFileBytes  = repo.DefaultMaxFileBytes
+	DefaultMaxEntries    = repo.DefaultMaxEntries
 )
 
 // RanByOrchestrator is the value of CheckResult.RanBy for checks run here.
@@ -73,18 +81,8 @@ func AllPassed(outcomes []CheckOutcome) bool {
 	return true
 }
 
-func (o CheckOptions) limits() limits {
-	l := limits{o.MaxTotalBytes, o.MaxFileBytes, o.MaxEntries}
-	if l.maxTotal <= 0 {
-		l.maxTotal = DefaultMaxTotalBytes
-	}
-	if l.maxFile <= 0 {
-		l.maxFile = DefaultMaxFileBytes
-	}
-	if l.maxEntries <= 0 {
-		l.maxEntries = DefaultMaxEntries
-	}
-	return l
+func (o CheckOptions) limits() repo.Limits {
+	return repo.Limits{MaxTotalBytes: o.MaxTotalBytes, MaxFileBytes: o.MaxFileBytes, MaxEntries: o.MaxEntries}.WithDefaults()
 }
 
 // containmentNotes are put on every outcome. They say what the checks are
@@ -106,8 +104,8 @@ const trustLimit = "the repository guard detects a repository that was tampered 
 
 // RunChecks runs each check on a clean checkout of commit.
 //
-// The repository must pass the guard (see checkTrusted) before anything else
-// happens. The checkout is built by reading git objects only (see materialize) into a
+// The repository must pass the guard (see package repo) before anything else
+// happens. The checkout is built by reading git objects only (see repo.Repo.Export) into a
 // new temporary directory outside the repository. It has no .git, so a check
 // has no path back to the repository, and no git filter or hook runs. The
 // directory is removed before RunChecks returns, also when a check fails,
@@ -126,10 +124,7 @@ const trustLimit = "the repository guard detects a repository that was tampered 
 // configured command. That is the only place in this package that uses a
 // shell. If ctx ends, RunChecks returns the outcomes so far and the error.
 func RunChecks(ctx context.Context, repoDir, commit string, checks []api.Check, opts CheckOptions) ([]CheckOutcome, error) {
-	if err := checkTrusted(ctx, repoDir); err != nil {
-		return nil, err
-	}
-	sha, err := resolveCommit(ctx, repoDir, commit)
+	r, err := repo.Open(repoDir)
 	if err != nil {
 		return nil, err
 	}
@@ -139,10 +134,7 @@ func RunChecks(ctx context.Context, repoDir, commit string, checks []api.Check, 
 	}
 	defer removeAll(tmp)
 	checkout := filepath.Join(tmp, "checkout")
-	if err := os.Mkdir(checkout, 0o700); err != nil {
-		return nil, err
-	}
-	notes, err := materialize(ctx, repoDir, sha, checkout, opts.limits())
+	notes, err := r.Export(ctx, commit, checkout, opts.limits())
 	if err != nil {
 		return nil, err
 	}

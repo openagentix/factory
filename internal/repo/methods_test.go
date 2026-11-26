@@ -23,6 +23,7 @@ func allMethods(t *testing.T, tr *trapRepo) map[string]error {
 	_, out["NameStatus"] = r.NameStatus(ctx, tr.base, tr.head)
 	_, out["NumStat"] = r.NumStat(ctx, tr.base, tr.head)
 	_, out["Export"] = r.Export(ctx, tr.head, filepath.Join(t.TempDir(), "x"), Limits{})
+	_, _, out["Import"] = r.Import(ctx, t.TempDir(), tr.head, "m", testAuthor, ImportOptions{})
 	out["SetRef"] = r.SetRef(ctx, "refs/heads/factory/run1", tr.head)
 	out["SetDefaultMirror"] = r.SetDefaultMirror(ctx, tr.head)
 	_, out["Open"] = Open(tr.dir)

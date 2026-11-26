@@ -22,6 +22,7 @@ var hardenedGitConfig = []string{
 	"-c", "core.pager=cat",
 	"-c", "diff.external=",
 	"-c", "protocol.ext.allow=never",
+	"-c", "commit.gpgsign=false",
 }
 
 // gitEnvAllowlist names the variables git may take from this process.
@@ -56,6 +57,19 @@ func gitEnv() []string {
 // repository, and replace objects are off. An empty gitDir is for the few
 // commands that need no repository: they run in the temporary directory.
 func gitCommand(ctx context.Context, gitDir string, args ...string) *exec.Cmd {
+	return gitCommandEnv(ctx, gitDir, nil, args...)
+}
+
+// identityEnv names the only extra variables a caller may add to the git
+// environment: the identity and time of a commit.
+var identityEnv = map[string]bool{
+	"GIT_AUTHOR_NAME": true, "GIT_AUTHOR_EMAIL": true, "GIT_AUTHOR_DATE": true,
+	"GIT_COMMITTER_NAME": true, "GIT_COMMITTER_EMAIL": true, "GIT_COMMITTER_DATE": true,
+}
+
+// gitCommandEnv is gitCommand with extra variables, each in NAME=value form
+// and each named in identityEnv. A name that is not on the list is dropped.
+func gitCommandEnv(ctx context.Context, gitDir string, extra []string, args ...string) *exec.Cmd {
 	full := append([]string{}, hardenedGitConfig...)
 	dir := os.TempDir()
 	if gitDir != "" {
@@ -68,12 +82,30 @@ func gitCommand(ctx context.Context, gitDir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
+	for _, kv := range extra {
+		if name, _, ok := strings.Cut(kv, "="); ok && identityEnv[name] {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
 	return cmd
 }
 
 // runGit runs git and returns its standard output.
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := gitCommand(ctx, dir, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, gitError(args, err, stderr.String())
+	}
+	return stdout.Bytes(), nil
+}
+
+// runGitIn runs git with a reader as standard input and extra identity
+// variables, and returns its standard output.
+func runGitIn(ctx context.Context, dir string, stdin io.Reader, extraEnv []string, args ...string) ([]byte, error) {
+	cmd := gitCommandEnv(ctx, dir, extraEnv, args...)
+	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

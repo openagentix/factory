@@ -13,6 +13,7 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ### Added
 
+- Design: built for the person who will not review. An outcome view in plain words, a machine gate with an independent review loop, a staging branch with Accept and Undo, and trajectory per goal. Decision 14 in decision record 0001.
 - Design: the review gate as a decision card, effort set by risk, trust from outcomes and not from merges, and automatic merge per class of change. Decision 13 in decision record 0001.
 - Design: permission policy per run, rulings in the result file, batched questions, an attention record in the trust ledger, and "take the wheel".
 

@@ -1,6 +1,6 @@
 # OpenAgentix Software Factory: design
 
-Date: 2026-11-26. Revision 4: a local-first product with an autonomy dial, gates in place of prompts, and a review gate that is a decision. Status: working draft, published for comment. Nothing here is proven by a run.
+Date: 2026-11-26. Revision 5: a local-first product designed for the person who will not review. Outcome view, a machine gate, staging and accept, and trajectory. Status: working draft, published for comment. Nothing here is proven by a run.
 
 Lines marked **(owner)** were decided by the owner. Lines marked **(call)** are the assistant's choices and can be changed.
 
@@ -13,6 +13,10 @@ A solo founder or a small team states a business goal. The factory turns it into
 **The factory does not own the agents. It owns the work.** People keep the Claude Code and Codex they already have, with the logins they already pay for, on their own machine. The factory orchestrates: it holds the pipeline, hands out work, checks results, records evidence and shows it all. **(owner)**
 
 **The value in one line: as little interaction as possible, with a reliable way to judge the result.** **(owner)** People who use coding agents and workflow methods today spend the day answering "yes" to prompts. That is the problem this product removes. A factory that needs a person at every step is not a factory.
+
+**Designed for the person who will not review.** Twice on the first day, the owner merged a change unread, and was right to: a founder cannot judge code and should not have to. So the factory does the judging with checks and an independent review, combines passing work on a staging branch, and shows the person outcomes in plain words: what works, what does not, what could not be confirmed. The person decides three things: what they want, whether this is what they meant, and whether to accept it. Detail in decision record 0001, Decision 14.
+
+**Trajectory matters most.** **(owner)** Work on a good course tends to stay good. Work on a bad course is hard to steer back. So planning and verification get the most care, and the factory watches the course of each goal and stops early.
 
 Why now: tools that turn one ticket into one pull request are free. The pain has moved to what surrounds that step. Reviewers are overloaded. Agents edit tests to pass them. Cost per outcome is unknown. There is no basis for deciding how far to trust an agent. Hosted app builders go from idea to a deployed app, but they are closed, they hold the code and the hosting, and they verify little.
 
@@ -238,7 +242,24 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 
 Stack: the OpenAgentix console stack, so it can later mount in the console. Svelte 5 with runes, SvelteKit as a single-page app, Tailwind 4 with theme tokens, no component kit, strict content security policy, embedded in the binary. Live updates by server-sent events.
 
-Principle: **a place to act, not a dashboard.** The first screen answers "what needs me" and "what is happening".
+Principle: **outcomes first, detail on demand.** The default is the **outcome view**. It hides pull requests, merges and reviews. The **engineering view** shows everything, for developers who want to steer. **(owner)**
+
+```
+ Let customers reschedule bookings              ON COURSE
+
+  ok  A customer can move a booking to another day
+  ok  A booking that already started cannot be moved
+  ok  The customer gets a confirmation email
+  ..  Old bookings still show the old time        being fixed
+  ?   Works on a phone                    could not confirm
+
+  [ Try it ]      [ Accept ]      [ Undo last change ]
+
+ ONE QUESTION FOR YOU
+  Should a customer be able to move a booking more than once?
+```
+
+The engineering view, for those who want it:
 
 ```
 + Goal: Let customers reschedule bookings ---------------------+
@@ -267,7 +288,8 @@ Screens in v0.1:
 
 | Screen | Shows | Actions |
 |---|---|---|
-| Home | Each goal as a pipeline strip. The inbox. Live runs | New goal. Answer. Open |
+| Outcomes (default) | Each goal with its acceptance list in three states, its trajectory, and plain questions | New goal. Answer. Try it. Accept. Undo |
+| Home (engineering) | Each goal as a pipeline strip. The inbox. Live runs | Open |
 | Goal | Phases, the spec, tickets with state, runs, usage | Answer questions. Open the spec pull request |
 | Run | Live transcript, stage, evidence bundle with rulings and denials, usage, limits | Cancel. Take the wheel |
 | Review | The decision card for one pull request: approving, decided for you, not verified, independent review, risk | Confirm items. Overturn a ruling. Open on GitHub |

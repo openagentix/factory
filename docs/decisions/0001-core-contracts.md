@@ -418,6 +418,79 @@ A revert is counted once, as a bad outcome. An overturned ruling is a ruling a p
 - Criteria status from the builder is self-reported. The reviewer's status is a second opinion, not a proof.
 - The rules have never been run. Their false alarms and misses are unmeasured.
 
+## Decision 14: design for the person who will not review
+
+Added on 2026-11-26. It changes Decision 3 ("it never merges") and narrows the human gates of Decisions 12 and 13.
+
+**What happened.** Pull request 11 carried a decision card with five items to confirm, a table of rulings and a reviewer's verdict. It was merged unread, like pull request 10. The owner's words: a solo founder "would have no clue what you are talking about" and would "focus on outcome and expect everything else to have been taken care of". All the real judgment on that pull request came from the independent review, which found fifteen problems in two rounds before a person saw it.
+
+So the product is designed for a person who will not read a change, and who is right not to.
+
+**Three moments for a person.** Nothing else is asked of them.
+
+| Moment | The factory asks, in plain words | It never asks |
+|---|---|---|
+| What do you want? | Questions about the business and the outcome | Anything about code |
+| Is this what you meant? | "Here is what works and what does not. Try it" | To read a change |
+| Accept it? | "Everything you asked for works. Accept?" | To approve a merge |
+
+**The acceptance list.** The most important question at the spec stage is "how will you know it worked?". The answers, in the person's own words, become the numbered acceptance criteria of Decision 13. At the end the person sees the same list. Each line has one of three states, and no other:
+
+| State | Meaning |
+|---|---|
+| Working | A check that the builder could not change shows it |
+| Not working yet | A check fails, or the builder says it is not done |
+| Could not confirm | No check covers it. It is never shown as working |
+
+**The machine gate.** Before a person hears of a change:
+
+1. The checks run outside the builder (Decision 3).
+2. An independent review runs, on a different harness where one is installed.
+3. If the review does not agree, the builder gets its points and tries again. At most two rounds.
+4. A change passes the gate when: the checks pass, the review agrees, and the risk rules of Decision 13 do not rate it high.
+
+A change that passes is combined into a **staging branch**, `factory/staging`, by the publish step. A change that does not pass after two rounds is an exception.
+
+**Exceptions are the only interruptions.** An exception reaches the person as one plain question about what they want, or as a plain statement: "this part is not working yet". A high-risk change is an exception. For a person who is not an engineer it is put as a consequence, for example "this changes how other programs talk to yours", not as a diff.
+
+**Staging and accept.** This replaces "it never merges" in Decision 3.
+
+- The worker still never holds a credential. The publish step still does every write.
+- The publish step may push to `factory/staging`. That name has the `factory/` prefix, so the publish rule of the threat model already allows it.
+- The default branch moves only when a person chooses **Accept** in the web app. The factory then merges staging into the default branch for them. That needs a token that can merge. A person who does not grant one gets a pull request to merge themselves.
+- **Undo** takes a change back out of staging, or reverts it on the default branch after Accept. Every change must be cheap to take back. Undo is a first-class action because a person who cannot judge code can still say "that broke something".
+- Automatic Accept, with no person, is the per-class switch of Decision 13 and follows its rules.
+
+**Two views of one factory.**
+
+- **Outcome view**, the default: goals, the acceptance list with its three states, plain questions, Try it where a preview exists, Accept, Undo, and trajectory. The words pull request, merge, diff and review do not appear.
+- **Engineering view**, one action away: runs, evidence bundles, decision cards, pull requests. A developer can take the wheel on a ticket, or set the dial to guided and approve each step, while the factory keeps building the rest.
+
+**Trajectory.** Work that goes off course is hard to steer back, so the factory watches the course of each goal and stops early.
+
+| Signal | Reading |
+|---|---|
+| Acceptance lines working, over time | Rising is good. Flat or falling is bad |
+| Review rounds needed per change | Rising is bad |
+| The same files changed again and again | Churn. Bad |
+| Fix attempts on one acceptance line | A third failed attempt means off course |
+| Changes taken back | Each one counts against the course |
+
+Three states: **on course**, **drifting**, **off course**. They are computed by rules, not judged by a model.
+
+- Drifting: the factory keeps working and says so in the outcome view.
+- Off course: the factory stops building on that goal. It does not stack another fix. It goes back to the **last good point**, which is the last accepted state or the last staging state where every earlier line was working, and it plans again from there. If the plan is not the problem and the intent is unclear, it asks one plain question.
+
+**Plans get the same gate as code.** A spec and a plan pass an independent review before any building starts. A weak plan is the cheapest place to stop a bad course.
+
+**Limits.**
+
+- This puts the whole weight on the factory's own checking. In this field that is the least proven part. Where the factory could not confirm something it must say so, in plain words, and never tick the line.
+- "Working" is only as strong as the check behind it. A weak check gives a false tick. Checks that the builder cannot touch, written from the acceptance list by a separate run, were planned for a later release. This decision makes them part of the first one.
+- "Try it" needs the factory to run the person's application. The first release can do that only where a project gives a command to start it. Otherwise the outcome view shows the acceptance list alone.
+- The trajectory rules are untested. Their thresholds are settings to be chosen from real runs.
+- A token that can merge is a stronger credential than the first design allowed. It is held by the publish step only, used only on a person's Accept or an earned per-class switch, and never given to a worker.
+
 ## Name
 
 The first working name, "AgentFleet", is used by other projects in the same field, so it was dropped.

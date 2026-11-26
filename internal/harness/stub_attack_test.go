@@ -234,3 +234,90 @@ func TestStubScriptRejectsBadAttackFields(t *testing.T) {
 	}
 	_ = json.Valid
 }
+
+// Each hostile behaviour that touches the disk outside the stub's own
+// directories needs OXF_STUB_ATTACK_ROOT, and only acts under it.
+func TestStubHostileBehavioursNeedTheAttackRoot(t *testing.T) {
+	other := t.TempDir()
+	scripts := map[string]string{
+		"outAsLink":        `{"outAsLink":"` + other + `"}`,
+		"replaceWorkspace": `{"replaceWorkspace":"remove"}`,
+		"writeIn":          `{"writeIn":true}`,
+		"swapRunDir":       `{"swapRunDir":{"mode":"link","target":"` + other + `"}}`,
+	}
+	for name, script := range scripts {
+		t.Run(name+" unset", func(t *testing.T) {
+			e := newStubEnv(t)
+			t.Setenv("OXF_STUB_ATTACK_ROOT", "")
+			t.Setenv("FACTORY_IN", e.out)
+			code, _, err := e.run(t, script)
+			if err == nil || code == 0 {
+				t.Errorf("code=%d err=%v", code, err)
+			}
+			if _, err := os.Lstat(e.ws); err != nil {
+				t.Errorf("the workspace was touched: %v", err)
+			}
+			if fi, err := os.Lstat(e.out); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+				t.Errorf("out was touched: %v", err)
+			}
+		})
+		t.Run(name+" outside the root", func(t *testing.T) {
+			e := newStubEnv(t)
+			t.Setenv("OXF_STUB_ATTACK_ROOT", t.TempDir())
+			t.Setenv("FACTORY_IN", e.out)
+			code, _, err := e.run(t, script)
+			if err == nil || code == 0 {
+				t.Errorf("code=%d err=%v", code, err)
+			}
+			if _, err := os.Lstat(e.ws); err != nil {
+				t.Errorf("the workspace was touched: %v", err)
+			}
+		})
+	}
+}
+
+func TestStubSwapsTheRunDirectory(t *testing.T) {
+	e := newStubEnv(t)
+	run := filepath.Dir(e.ws)
+	other := t.TempDir()
+	script := `{"swapRunDir":{"mode":"link","target":"` + other + `"},"result":` + goodResult + `}`
+	if code, _, err := e.run(t, script); err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if dest, err := os.Readlink(run); err != nil || dest != other {
+		t.Errorf("run dir must be a link to the other directory: %q %v", dest, err)
+	}
+	if _, err := os.Stat(run + ".moved"); err != nil {
+		t.Errorf("the real directory must be kept beside it: %v", err)
+	}
+}
+
+func TestStubSwapLoopEndsRestored(t *testing.T) {
+	e := newStubEnv(t)
+	run := filepath.Dir(e.ws)
+	other := t.TempDir()
+	script := `{"swapRunDir":{"mode":"loop","target":"` + other + `","loopMs":100},"result":` + goodResult + `}`
+	if code, _, err := e.run(t, script); err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if fi, err := os.Lstat(run); err != nil || !fi.IsDir() {
+		t.Errorf("the run directory must be back: %v %v", fi, err)
+	}
+}
+
+func TestStubCommandPassesTheAttackRoot(t *testing.T) {
+	s := &Stub{Program: "/bin/oxf", AttackRoot: "/tmp/root"}
+	cmd, err := s.Command(Spec{Workspace: "/work", OutDir: "/out", StubScript: "/s.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, kv := range cmd.Env {
+		if kv == "OXF_STUB_ATTACK_ROOT=/tmp/root" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("env = %v", cmd.Env)
+	}
+}

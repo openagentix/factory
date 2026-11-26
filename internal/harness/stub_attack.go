@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/openagentix/factory/internal/api"
 )
@@ -44,6 +45,23 @@ func (sc StubScript) checkAttacks() error {
 	}
 	if sc.EventsLink != "" && !filepath.IsAbs(sc.EventsLink) {
 		return errors.New("stub script: eventsLink must be an absolute path")
+	}
+	if w := sc.SwapRunDir; w != nil {
+		switch w.Mode {
+		case "link", "loop":
+		case "away":
+			if !filepath.IsAbs(w.MoveTo) {
+				return errors.New("stub script: swapRunDir away needs an absolute moveTo")
+			}
+		default:
+			return fmt.Errorf("stub script: swapRunDir mode %q is not known", w.Mode)
+		}
+		if !filepath.IsAbs(w.Target) {
+			return errors.New("stub script: swapRunDir needs an absolute target")
+		}
+		if w.Mode == "loop" && w.LoopMS <= 0 {
+			return errors.New("stub script: swapRunDir loop needs loopMs")
+		}
 	}
 	if sc.Child != nil && sc.Child.SleepSeconds <= 0 {
 		return errors.New("stub script: child.sleepSeconds must be more than zero")
@@ -111,6 +129,107 @@ func makeResultAs(outRoot, as, target string, size int64) error {
 	return fmt.Errorf("stub script: resultAs %q is not known", as)
 }
 
+// checkAttackRoot refuses a behaviour that acts outside the stub's own
+// directories unless every path it touches lies under the directory named in
+// OXF_STUB_ATTACK_ROOT. With the variable unset they are all refused. The
+// runner tests set it. Nothing is changed before this check.
+func (sc StubScript) checkAttackRoot(opts StubOptions) error {
+	var paths []string
+	if sc.WriteIn {
+		paths = append(paths, os.Getenv("FACTORY_IN"))
+	}
+	if sc.OutAsLink != "" {
+		paths = append(paths, opts.OutDir, opts.OutDir+".moved", sc.OutAsLink)
+	}
+	switch sc.ReplaceWorkspace {
+	case "remove":
+		paths = append(paths, opts.Workspace)
+	case "link":
+		paths = append(paths, opts.Workspace, opts.Workspace+".moved", sc.WorkspaceTarget)
+	}
+	if w := sc.SwapRunDir; w != nil {
+		run := filepath.Dir(opts.Workspace)
+		paths = append(paths, run, run+".moved", w.Target)
+		if w.MoveTo != "" {
+			paths = append(paths, w.MoveTo)
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	root := os.Getenv("OXF_STUB_ATTACK_ROOT")
+	if root == "" {
+		return errors.New("stub script: a hostile behaviour needs OXF_STUB_ATTACK_ROOT, which is not set")
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil || !filepath.IsAbs(realRoot) {
+		return errors.New("stub script: OXF_STUB_ATTACK_ROOT is not a usable directory")
+	}
+	for _, p := range paths {
+		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+			return fmt.Errorf("stub script: %q is not an absolute, clean path", p)
+		}
+		// Resolve the deepest part that exists, then add the rest.
+		existing, rest := p, ""
+		for {
+			if _, err := os.Lstat(existing); err == nil {
+				break
+			}
+			next := filepath.Dir(existing)
+			if next == existing {
+				break
+			}
+			rest = filepath.Join(filepath.Base(existing), rest)
+			existing = next
+		}
+		// A link at the path itself is judged by where its parent is.
+		if fi, err := os.Lstat(existing); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			existing, rest = filepath.Dir(existing), filepath.Join(filepath.Base(existing), rest)
+		}
+		real, err := filepath.EvalSymlinks(existing)
+		if err != nil {
+			return err
+		}
+		if !inside(realRoot, filepath.Join(real, rest)) {
+			return fmt.Errorf("stub script: %q is outside OXF_STUB_ATTACK_ROOT", p)
+		}
+	}
+	return nil
+}
+
+// swapRunDir moves the run directory away and puts a link in its place.
+func swapRunDir(w StubSwap, workspace string) error {
+	run := filepath.Dir(workspace)
+	swap := func(moved string) error {
+		if err := os.Rename(run, moved); err != nil {
+			return err
+		}
+		return os.Symlink(w.Target, run)
+	}
+	switch w.Mode {
+	case "link":
+		return swap(run + ".moved")
+	case "away":
+		return swap(w.MoveTo)
+	}
+	// loop: swap and restore until the time is up, and end restored.
+	end := time.Now().Add(time.Duration(w.LoopMS) * time.Millisecond)
+	for time.Now().Before(end) {
+		if err := swap(run + ".moved"); err != nil {
+			return err
+		}
+		time.Sleep(time.Millisecond)
+		if err := os.Remove(run); err != nil {
+			return err
+		}
+		if err := os.Rename(run+".moved", run); err != nil {
+			return err
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return nil
+}
+
 // tamper acts after the outputs are written, as a worker that attacks the
 // runner's view of them does.
 func (sc StubScript) tamper(outRoot string, opts StubOptions) error {
@@ -138,6 +257,11 @@ func (sc StubScript) tamper(outRoot string, opts StubOptions) error {
 			return err
 		}
 		if err := os.Symlink(sc.WorkspaceTarget, opts.Workspace); err != nil {
+			return err
+		}
+	}
+	if sc.SwapRunDir != nil {
+		if err := swapRunDir(*sc.SwapRunDir, opts.Workspace); err != nil {
 			return err
 		}
 	}

@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"github.com/openagentix/factory/internal/api"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,4 +67,17 @@ func lines(n int, prefix string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+type claimLike struct {
+	text  string
+	files []string
+}
+
+func toClaims(in []claimLike) []api.Claim {
+	var out []api.Claim
+	for _, c := range in {
+		out = append(out, api.Claim{Text: c.text, Files: c.files})
+	}
+	return out
 }

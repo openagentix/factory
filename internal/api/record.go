@@ -35,6 +35,9 @@ type CheckResult struct {
 	ExitCode        int    `json:"exitCode"`
 	DurationSeconds int    `json:"durationSeconds"`
 	RanBy           string `json:"ranBy"`
+	// TimedOut is true when the deadline stopped the check. The exit code is
+	// then -1.
+	TimedOut bool `json:"timedOut,omitempty"`
 }
 
 // RunLimits are the limits a run had.

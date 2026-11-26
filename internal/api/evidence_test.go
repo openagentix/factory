@@ -282,3 +282,19 @@ func TestTriggerKinds(t *testing.T) {
 		t.Errorf("run started by a person: %v", err)
 	}
 }
+
+func TestCheckResult_TimedOut(t *testing.T) {
+	b, err := json.Marshal(CheckResult{Name: "t", ExitCode: -1, DurationSeconds: 600, RanBy: "orchestrator", TimedOut: true})
+	if err != nil || !strings.Contains(string(b), `"timedOut":true`) {
+		t.Fatalf("json = %s, err %v", b, err)
+	}
+	b, _ = json.Marshal(CheckResult{Name: "t", RanBy: "orchestrator"})
+	if strings.Contains(string(b), "timedOut") {
+		t.Errorf("timedOut must be left out when false: %s", b)
+	}
+	in := strings.Replace(evidenceJSON, `"ranBy": "orchestrator"`, `"ranBy": "orchestrator", "timedOut": true`, 1)
+	e, err := ParseEvidence([]byte(in))
+	if err != nil || !e.Checks[0].TimedOut {
+		t.Fatalf("parse: %v %+v", err, e)
+	}
+}

@@ -1,0 +1,11 @@
+apiVersion: factory.openagentix.org/v1alpha1
+kind: Factory
+metadata:
+  name: main
+spec:
+  repository: acme/widgets
+  defaultWorker:
+    harness: claude-code
+  # The review capacity brake. New pull request runs are held above this.
+  maxOpenAgentPullRequests: 3
+  pollInterval: 1m

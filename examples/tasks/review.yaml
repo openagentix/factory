@@ -1,0 +1,17 @@
+apiVersion: factory.openagentix.org/v1alpha1
+kind: Task
+metadata:
+  name: review
+spec:
+  description: Read a new pull request and leave review comments. Never changes code.
+  trigger:
+    pullRequestOpened: {}
+  worker:
+    harness: codex
+  prompt: prompts/review.md
+  limits:
+    deadline: 15m
+    maxCostUSD: 2
+  outputs:
+    comment: true
+  concurrencyKey: "pr-{{ .Number }}"

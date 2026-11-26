@@ -1,0 +1,26 @@
+apiVersion: factory.openagentix.org/v1alpha1
+kind: Task
+metadata:
+  name: fix-ci
+spec:
+  description: Propose a fix when a check fails on a pull request.
+  trigger:
+    checkFailed: {}
+    throttle: { maxPerDay: 3 }
+  worker:
+    harness: claude-code
+  prompt: prompts/fix-ci.md
+  protectedPaths:
+    - "**/*_test.go"
+    - ".github/**"
+  checks:
+    - { name: test, run: "go test ./..." }
+    - { name: vet, run: "go vet ./..." }
+  limits:
+    deadline: 20m
+    maxCostUSD: 3
+    maxAttempts: 1
+  outputs:
+    pullRequest: { draft: true }
+    comment: true
+  concurrencyKey: "pr-{{ .Number }}-fix"

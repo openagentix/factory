@@ -1,0 +1,25 @@
+apiVersion: factory.openagentix.org/v1alpha1
+kind: Task
+metadata:
+  name: implement
+spec:
+  description: Turn a ready ticket into a draft pull request.
+  trigger:
+    issueLabeled: { label: ready-for-agent }
+    throttle: { maxPerDay: 5 }
+  worker:
+    harness: claude-code
+  prompt: prompts/implement.md
+  protectedPaths:
+    - "**/*_test.go"
+    - ".github/**"
+  checks:
+    - { name: test, run: "go test ./..." }
+  limits:
+    deadline: 30m
+    maxCostUSD: 5
+    maxAttempts: 2
+  outputs:
+    pullRequest: { draft: true }
+    comment: true
+  concurrencyKey: "issue-{{ .Number }}"

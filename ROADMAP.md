@@ -27,7 +27,7 @@ There is a useful product after step 2 if later steps slip.
 
 ## v0.2
 
-A deep lane for large builds, if a trial with a workflow plugin supports it. Scenarios the builder never sees. A learning loop from changes that were taken back. A container runner that uses an API key. A starter template for new projects.
+A deep lane for large builds. It is not designed yet, and depends on a trial with a workflow plugin. Scenarios the builder never sees. A learning loop from changes that were taken back. A container runner that uses an API key. A starter template for new projects.
 
 ## v0.3
 

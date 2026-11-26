@@ -41,10 +41,10 @@ This is the sketch of what you would see. It is a design, not a screenshot.
 - **Checks are written from your list before any building**, by a separate run. The builder cannot change them. A line with no check shows as "could not confirm", never as working.
 - **Building is unattended.** No prompts. A permission policy decides what a run may do. Small choices are made and written down. Real questions wait for you in one place.
 - **The factory judges the work**, with those checks and an independent review by a second agent. Passing work collects on a staging branch. Your project changes only when you accept.
-- **Undo is always there.** You cannot judge code, but you can say "that broke something".
+- **Undo any change.** You cannot judge code, but you can say "that broke something". After you accept, taking a change back needs the same permission as accepting, or a developer.
 - **It watches the course of each goal.** Work that goes off course is hard to steer back, so it stops early and plans again with you.
 - **The process fits the job.** A quick lane for small things, a standard lane for a feature. Checking is the same in both.
-- **Keep your method.** If you use superpowers, Open GSD or your own prompts, the factory uses what you have installed, by name. It ships none of their text.
+- **Keep your method.** If you use superpowers, Open GSD or your own prompts, the factory is designed to use what you have installed, by name. One trial run did this with one plugin. It ships none of their text.
 - **Developers can still steer.** An engineering view shows every run, change and review. A developer can take over a piece of work, or approve each step.
 
 An autonomy dial per task sets where the factory stops for a person. A trust record shows what happened after each accepted change. Both are described in the [design](docs/design.md).

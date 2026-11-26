@@ -1,6 +1,6 @@
 # 0001. Core contracts for the single-machine factory
 
-- Status: proposed, 2026-11-26. The owner approved the scope and the positioning. Nothing in this record has been run. Every rule below is a design, not a result.
+- Status: proposed, 2026-11-26. The owner approved the scope and the positioning. Four small trial runs by hand tested the unattended start (see "What runs have shown"). Apart from that, nothing in this record has been run. Every rule below is a design, not a result.
 - Scope: the local product, on a laptop or a dedicated machine, using the Claude Code and Codex already installed there. Every contract is shaped so that a container runner, Kubernetes and OpenAgentix need no schema change.
 - Product: OpenAgentix Software Factory. Command `oxf`. API group `factory.openagentix.org`.
 
@@ -33,7 +33,7 @@ Task, trigger, run, runner, worker, ticket tracker, git host and orchestrator ar
 
 After the plan is approved, at the default dial level, nothing else reaches the person except exceptions. An **exception** is one plain question about what they want, or a plain statement that a line is not working yet. It is never a request to read a change. A high-risk change is put as its consequence: "this changes how other programs talk to yours. Is that what you want?".
 
-**Try it** starts the project's start command in the same sandbox and scrubbed environment as the checks. The person is told that it runs code the factory wrote and no person has read.
+**Try it** starts the project's start command the same way the checks are run (see the verify stage). The person is told that it runs code the factory wrote and no person has read.
 
 **Outcome view**, the default: goals, the acceptance list with its three states, plain questions, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit. **Engineering view**, one action away: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. A developer can take the wheel on a ticket or set the dial to guided, while the factory builds the rest.
 
@@ -80,13 +80,13 @@ Durable state lives in the git host and the orchestrator's store. An unattended 
 | Task | Started by | Writes | Passes when | Attempts |
 |---|---|---|---|---|
 | `onboard` | A repository is added | A change inside `.factory/` only, with a readiness report | Its review agrees. It takes effect after Accept | Per repository. When used up, a plain statement that setup did not finish |
-| `acceptance` | The plan is approved | One check per criterion and a manifest, under the acceptance path only | Its review agrees | Per goal. When used up, every criterion without an agreed check is "could not confirm", the person is told, and building goes ahead |
+| `acceptance` | The plan is approved | One check per criterion and a manifest, under the acceptance path only | Its review agrees | Per goal. When used up, every criterion without an agreed check is "could not confirm", the person is told, and building goes ahead. The manifest is then put into staging as it is, with those criteria marked as having no check, so the tickets can become ready |
 | `implement` | A ticket is ready | One change | The machine gate | Per ticket, shared with `fix-ci` |
 | `fix-ci` | A required check on the git host failed on an open agent pull request | A fix commit on that pull request's branch | The machine gate, again | Per ticket, shared with `implement` |
 | `review` | A spec, plan, set of checks or change is ready | `review.json` | Never gated. It is the opinion others use | None |
 
 - `maxAttempts` (default 3: one first try and two rework rounds) is one setting. It counts work-stage starts, including a person's take-the-wheel submission. A run cut off by sleep or a restart does not use up an attempt.
-- A ticket becomes `factory:ready` when the acceptance checks of its goal are in staging, every ticket it depends on is in staging, and the cap on open agent pull requests (`maxOpenAgentPullRequests`) allows it. Otherwise it stays `factory:planned` and the web app shows why.
+- A ticket becomes `factory:ready` when the acceptance manifest of its goal is in staging (with or without a check for every criterion), every ticket it depends on is in staging, and the cap on open agent pull requests (`maxOpenAgentPullRequests`) allows it. Otherwise it stays `factory:planned` and the web app shows why.
 - At dial level 1 a person also approves each output before it is combined (see The dial).
 - When both harnesses are installed, `review` uses the one that did not write the subject.
 - A fix run's own failure triggers nothing. Pull requests from forks are not reviewed in the first release.
@@ -94,7 +94,7 @@ Durable state lives in the git host and the orchestrator's store. An unattended 
 ## A run and its three stages
 
 1. **Work.** The worker gets a checkout of the current staging state on a new branch (for `review`, of its subject), the input files and a prompt. The factory gives it no git host credential. It edits files. It does not commit. After the work stage the orchestrator makes one commit from the worktree, under the factory's own author name. A trial showed that one harness's sandbox blocks writes to git's own files, and this way no run needs git in its policy.
-2. **Verify.** The orchestrator computes the change, checks protected paths, and runs the task's checks and the acceptance checks on a clean checkout of the commit, with no model access. The checks run code the worker wrote, so they run with the same scrubbed environment and the same sandbox as the worker, never with the tokens in their environment. Then it builds the evidence bundle.
+2. **Verify.** The orchestrator computes the change, checks protected paths, and runs the task's checks and the acceptance checks on a clean checkout of the commit, with no model access. The checks run code the worker wrote, so they are run as the worker is run: with the same scrubbed environment, never with the tokens in their environment, and inside an operating system sandbox that limits writes to the checkout. The orchestrator starts that sandbox itself, because the harness sandbox covers only the harness. Which sandbox tool is used on each system is not settled, and until it is, checks and Try it run with the scrubbed environment only. That is a stated limit. Then it builds the evidence bundle.
 3. **Publish.** The publish step performs the actions the output files ask for, from a fixed list (see Credentials).
 
 An unattended run never asks a person. Each run has a **permission policy**: the commands it may run (`spec.permissions.commands`) and the paths it may write, which are the worktree only. The adapter turns it into the harness's own settings. A request outside the policy is denied and recorded. A harness is never started in a mode that asks a person during an unattended run, and never in a mode that skips all permission checks.
@@ -176,9 +176,9 @@ The same for every runner and every harness. Paths are shown as in a container. 
   "criteria": [ { "id": 1, "opinion": "met", "note": "" } ] }
 ```
 
-`/factory/out/events.jsonl`: one JSON object per line for the live view, of kind `message`, `tool`, `status` or `denied`. Never a secret. Also: commits on the branch in `/workspace`, and the raw harness log on standard output and error.
+`/factory/out/events.jsonl`: one JSON object per line for the live view, of kind `message`, `tool`, `status` or `denied`. Never a secret. Also: the changed files in `/workspace`, which the orchestrator commits, and the raw harness log on standard output and error.
 
-**Harness adapters** are thin Go code that build the command line for one program (`claude -p --output-format stream-json`, `codex exec --json`) and read its event stream. These flags were seen in Claude Code 2.1.326 and Codex CLI 0.170.0 on 2026-11-26, not run under this contract. **A stub harness** makes fixed edits from a script, for tests and demo mode. No paid model calls in tests.
+**Harness adapters** are thin Go code that build the command line for one program (`claude -p --output-format stream-json`, `codex exec --json`) and read its event stream. These flags were used in the trial runs with Claude Code 2.1.326 and Codex CLI 0.170.0 on 2026-11-26. No adapter code exists yet. **A stub harness** makes fixed edits from a script, for tests and demo mode. No paid model calls in tests.
 
 ## Acceptance checks
 
@@ -194,7 +194,7 @@ The person's answers to "how will you know it worked?" become the spec's numbere
 - The manifest is not configuration. The orchestrator reads it from the staging state under test. The protected-path rule keeps a change from altering it.
 - The checks pass their own independent review, which compares each check with the person's wording, before they are combined into staging. If the review does not agree, its points go back to `acceptance` while the goal's attempts last.
 - The orchestrator runs each command in the verify stage of every change and on every staging rebuild. A check that already passes before any building is flagged in the engineering view.
-- A check may be changed only by a new `acceptance` run that passes its own review. When a builder or reviewer says a check is wrong, that is recorded, and the orchestrator may start such a run. `implement` never changes a check.
+- A check may be changed only by a new `acceptance` run that passes its own review. When a builder or reviewer says a check is wrong, that is recorded, and the orchestrator may start such a run. `implement` never changes a check. Such a run uses the goal's `acceptance` attempts.
 
 The state of each criterion is computed only by the orchestrator, from the checks. There are three states and no others. The outcome view may add a note such as "being worked on" beside a line that is not working yet; a note is not a state.
 
@@ -237,7 +237,7 @@ There is one staging branch per repository, `factory-staging`. It is not under t
 
 **Staging is rebuilt, never patched.** The orchestrator keeps the list of passed changes, in the order they passed. Staging is the current default branch plus each change on the list, one commit per change. On any event (a change passes, a change is undone, the default branch moves), the orchestrator rebuilds staging from the default branch and the list, and runs the task checks and the acceptance checks on the result.
 
-- A change that no longer applies cleanly, or whose addition makes a task check or a working acceptance check fail, is taken out. The orchestrator finds the first such change in order, takes it out and rebuilds again. The change goes back to its ticket and is built again on the new staging, which uses an attempt.
+- A change that no longer applies cleanly, or whose addition makes a task check or a working acceptance check fail, is taken out. The orchestrator finds the first such change in order, takes it out and rebuilds again. The change goes back to its ticket and is built again on the new staging, which uses an attempt. If the ticket has no attempt left, the goal is off course.
 - A change already contained in the default branch drops off the list.
 - If the default branch alone fails a task check, staging stops at the default branch. The outcome view says the project's own checks are failing and a developer is needed.
 - Each staging state is recorded: its commit, the default branch commit it was built on, its changes in order, and the state of every criterion.
@@ -286,7 +286,7 @@ The **attention record**, per task: touches per accepted goal, questions asked, 
 
 Each goal has a course, computed by rules, never by a model. The thresholds are settings. These starting values are untested.
 
-- **Off course** when any of these happens: a ticket of the goal uses all its attempts; the same criterion stops working on two rebuilds, counted even when the change that caused it was taken out; two changes of the goal are undone.
+- **Off course** when any of these happens: a ticket of the goal uses all its attempts; the same criterion stops working on two rebuilds, counted even when the change that caused it was taken out; a person undoes changes of the goal twice. One Undo counts once, however many dependent changes go with it.
 - **Drifting** when a criterion stopped working on one rebuild, or one change of the goal was undone, or no criterion of the goal became working over its last three changes. **On course** otherwise. Drifting: the factory keeps working and says so in the outcome view.
 
 The **last good point** of a goal is the most recent staging state in which every criterion of that goal that had ever been working was working. It never goes back past accepted work.
@@ -356,7 +356,7 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 
 - It starts the official `claude` or `codex` program in place. It never reads, copies or forwards a login token. It is designed to need no API key; whether subscription terms allow this is not checked (see Not settled).
 - It removes git host credentials from the process environment: no token variables, no credential helper, no agent socket. This does not stop the agent reading the home directory (see Credentials, local mode limit).
-- It uses the strictest sandbox setting of the harness that still lets the task run. A deadline always applies, and the process group is killed at it. Runs are safe to repeat.
+- It uses the strictest sandbox setting of the harness that still lets the task run. A deadline always applies, and the process group is killed at it. Runs are designed to be safe to repeat. No trial has cut a run off part way to show it.
 - A cost limit applies only to metered usage. The orchestrator reads usage from the event stream and cancels the run past the limit. This lags, so the web app says "best effort".
 - **Toolchain.** Locally the stages use the compilers on the machine. The container runner names a base image in `factory.yaml` (`image:`). Outbound network is open in both stages.
 - **Demo mode.** A fake git host with a seeded repository and a scripted story, a fake runner and the stub harness. No login, no token. Every screen says it is a demo.
@@ -438,7 +438,7 @@ Left to the first real runs, and not designed further here:
 
 ## Limits
 
-- Nothing here has been run. Every rule is unmeasured, including its false alarms and misses. The whole weight is on the factory's own checking, the least proven part of this field. "Working" is only as strong as its check. A check can pass for the wrong reason, and a builder can change the code a check calls.
+- Apart from four small trial runs of the unattended start, nothing here has been run. Every rule is unmeasured, including its false alarms and misses. The whole weight is on the factory's own checking, the least proven part of this field. "Working" is only as strong as its check. A check can pass for the wrong reason, and a builder can change the code a check calls.
 - Local mode has no container. The worker runs as the same user as `oxf` and can read what that user can read, including the home directory. The factory gives it no credential, but cannot wall the machine off.
 - Try it runs code no person has read on the person's machine, inside the checks' sandbox.
 - Usage is what the harness reports. Nothing is enforced locally. Outbound network is open.

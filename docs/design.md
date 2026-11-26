@@ -261,7 +261,7 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 - The binary carries default tasks and prompts.
 - Machine settings (which harnesses are installed, the listen address, thresholds) live in the user's home directory, never in the repository. The GitHub tokens and the login token are kept in the operating system's credential store.
 - GitHub access in v0.1 is a fine-grained personal access token limited to the repository, as the propose token, and optionally a second one as the accept token. Branch protection must stop the propose token's user from updating the default branch. For `factory-staging`, restrict who may push; do not forbid force pushes, which every rebuild needs. A GitHub App comes later. **(call)**
-- On a dedicated machine `oxf` installs as a service and the web app can listen on the local network behind a login token. On a laptop it listens on localhost. The web app has no accounts, so Accept and Undo always need the login token, on localhost too. Runs are safe to repeat, so sleep or a restart loses only the run in flight. **(call)**
+- On a dedicated machine `oxf` installs as a service and the web app can listen on the local network behind a login token. On a laptop it listens on localhost. The web app has no accounts, so Accept and Undo always need the login token, on localhost too. Runs are designed to be safe to repeat, so sleep or a restart loses only the run in flight. **(call)**
 
 ## 10. The web app
 

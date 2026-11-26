@@ -21,3 +21,14 @@ const (
 	KindTask    = "Task"
 	KindFactory = "Factory"
 )
+
+// Task names the decision record uses. A task file may use any valid name.
+const (
+	TaskOnboard    = "onboard"
+	TaskAcceptance = "acceptance"
+	TaskImplement  = "implement"
+	TaskFixCI      = "fix-ci"
+	TaskReview     = "review"
+	TaskBrainstorm = "brainstorm"
+	TaskDecompose  = "decompose"
+)

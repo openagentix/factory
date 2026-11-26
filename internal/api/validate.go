@@ -13,8 +13,17 @@ import (
 const (
 	DefaultConcurrencyKey = "{{ .Kind }}-{{ .Number }}"
 	DefaultDeadline       = "30m"
-	DefaultMaxAttempts    = 2
+	DefaultMaxAttempts    = 3
 	MaxMaxAttempts        = 5
+	// DefaultCeiling is the highest dial level when a task sets none. Level 3
+	// is shown but not active in the first release.
+	DefaultCeiling = LevelAutopilot
+)
+
+// Method values. A method may also be plugin:<name> or a relative file path.
+const (
+	MethodBuiltin      = "builtin"
+	MethodPluginPrefix = "plugin:"
 )
 
 // Harness names a coding agent program a worker can launch.
@@ -100,8 +109,14 @@ func (t Trigger) Kind() string {
 	if t.IssueLabeled != nil {
 		kinds = append(kinds, "issueLabeled")
 	}
+	if t.IssueCommented != nil {
+		kinds = append(kinds, "issueCommented")
+	}
 	if t.PullRequestOpened != nil {
 		kinds = append(kinds, "pullRequestOpened")
+	}
+	if t.PullRequestMerged != nil {
+		kinds = append(kinds, "pullRequestMerged")
 	}
 	if t.CheckFailed != nil {
 		kinds = append(kinds, "checkFailed")
@@ -126,6 +141,13 @@ func (t *Task) ApplyDefaults() {
 	if t.Spec.ConcurrencyKey == "" {
 		t.Spec.ConcurrencyKey = DefaultConcurrencyKey
 	}
+	if t.Spec.Method == "" {
+		t.Spec.Method = MethodBuiltin
+	}
+	if t.Spec.Autonomy.Ceiling == nil {
+		c := DefaultCeiling
+		t.Spec.Autonomy.Ceiling = &c
+	}
 }
 
 // Validate checks the task. It returns nil or a ValidationErrors value.
@@ -142,6 +164,18 @@ func (t *Task) Validate() error {
 		p.add("spec.prompt", "must be set")
 	} else if !relativeNoParent(s.Prompt) {
 		p.add("spec.prompt", "must be a relative path without ..")
+	}
+
+	if !validMethod(s.Method) {
+		p.add("spec.method", "must be builtin, plugin:<name>, or a relative file path without ..")
+	}
+	for i, c := range s.Permissions.Commands {
+		if blank(c) {
+			p.add(fmt.Sprintf("spec.permissions.commands[%d]", i), "must not be empty")
+		}
+	}
+	if c := s.Autonomy.Ceiling; c != nil && !c.Valid() {
+		p.add("spec.autonomy.ceiling", "must be 0 to 3")
 	}
 
 	for i, g := range s.ProtectedPaths {
@@ -212,4 +246,18 @@ func relativeNoParent(p string) bool {
 		}
 	}
 	return true
+}
+
+var pluginName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validMethod checks a method value: builtin, plugin:<name> or a relative
+// file path with no .. part.
+func validMethod(m string) bool {
+	switch {
+	case m == MethodBuiltin:
+		return true
+	case strings.HasPrefix(m, MethodPluginPrefix):
+		return pluginName.MatchString(strings.TrimPrefix(m, MethodPluginPrefix))
+	}
+	return m != "" && relativeNoParent(m)
 }

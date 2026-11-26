@@ -16,7 +16,11 @@ spec:
     throttle: { maxPerDay: 5 }
   worker:
     harness: claude-code
+  method: plugin:superpowers
   prompt: prompts/implement.md
+  permissions:
+    commands: ["go build ./...", "go test ./..."]
+  autonomy: { ceiling: 1 }
   protectedPaths:
     - "**/*_test.go"
   checks:
@@ -47,6 +51,12 @@ func TestParseTask_Valid(t *testing.T) {
 	}
 	if task.Spec.Outputs.PullRequest == nil || !task.Spec.Outputs.PullRequest.Draft {
 		t.Errorf("outputs not parsed")
+	}
+	if task.Spec.Method != "plugin:superpowers" || len(task.Spec.Permissions.Commands) != 2 {
+		t.Errorf("method or permissions not parsed: %+v", task.Spec)
+	}
+	if c := task.Spec.Autonomy.Ceiling; c == nil || *c != LevelGuided {
+		t.Errorf("ceiling = %v", c)
 	}
 	if task.Spec.ConcurrencyKey != "issue-{{ .Number }}" {
 		t.Errorf("concurrencyKey = %q", task.Spec.ConcurrencyKey)

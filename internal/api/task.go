@@ -15,22 +15,42 @@ type Task struct {
 
 // TaskSpec is the body of a Task.
 type TaskSpec struct {
-	Description    string   `json:"description,omitempty" yaml:"description,omitempty"`
-	Trigger        Trigger  `json:"trigger" yaml:"trigger"`
-	Worker         Worker   `json:"worker" yaml:"worker"`
-	Prompt         string   `json:"prompt" yaml:"prompt"`
-	ProtectedPaths []string `json:"protectedPaths,omitempty" yaml:"protectedPaths,omitempty"`
-	Checks         []Check  `json:"checks,omitempty" yaml:"checks,omitempty"`
-	Limits         Limits   `json:"limits" yaml:"limits"`
-	Outputs        Outputs  `json:"outputs" yaml:"outputs"`
+	Description string  `json:"description,omitempty" yaml:"description,omitempty"`
+	Trigger     Trigger `json:"trigger" yaml:"trigger"`
+	Worker      Worker  `json:"worker" yaml:"worker"`
+	// Method is how the agent works inside a run: builtin, plugin:<name> or
+	// a relative path to a prompt file. Empty means builtin.
+	Method string `json:"method,omitempty" yaml:"method,omitempty"`
+	Prompt string `json:"prompt" yaml:"prompt"`
+	// Permissions is the permission policy. Deny by default.
+	Permissions    Permissions `json:"permissions,omitempty" yaml:"permissions,omitempty"`
+	ProtectedPaths []string    `json:"protectedPaths,omitempty" yaml:"protectedPaths,omitempty"`
+	Checks         []Check     `json:"checks,omitempty" yaml:"checks,omitempty"`
+	Limits         Limits      `json:"limits" yaml:"limits"`
+	Autonomy       Autonomy    `json:"autonomy,omitempty" yaml:"autonomy,omitempty"`
+	Outputs        Outputs     `json:"outputs" yaml:"outputs"`
 	// ConcurrencyKey is a template that stops two runs doing the same work.
 	ConcurrencyKey string `json:"concurrencyKey,omitempty" yaml:"concurrencyKey,omitempty"`
+}
+
+// Permissions is the permission policy of a run.
+type Permissions struct {
+	// Commands are the commands the run may use. Anything else is denied.
+	Commands []string `json:"commands,omitempty" yaml:"commands,omitempty"`
+}
+
+// Autonomy sets the highest dial level of a task.
+type Autonomy struct {
+	// Ceiling is nil when unset, so that an explicit 0 can be told apart.
+	Ceiling *Level `json:"ceiling,omitempty" yaml:"ceiling,omitempty"`
 }
 
 // Trigger says what starts a task. Exactly one kind must be set.
 type Trigger struct {
 	IssueLabeled      *IssueLabeledTrigger      `json:"issueLabeled,omitempty" yaml:"issueLabeled,omitempty"`
+	IssueCommented    *IssueCommentedTrigger    `json:"issueCommented,omitempty" yaml:"issueCommented,omitempty"`
 	PullRequestOpened *PullRequestOpenedTrigger `json:"pullRequestOpened,omitempty" yaml:"pullRequestOpened,omitempty"`
+	PullRequestMerged *PullRequestMergedTrigger `json:"pullRequestMerged,omitempty" yaml:"pullRequestMerged,omitempty"`
 	CheckFailed       *CheckFailedTrigger       `json:"checkFailed,omitempty" yaml:"checkFailed,omitempty"`
 	Schedule          *ScheduleTrigger          `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 	// Throttle is optional and applies to any trigger kind.
@@ -41,6 +61,14 @@ type Trigger struct {
 type IssueLabeledTrigger struct {
 	Label string `json:"label" yaml:"label"`
 }
+
+// IssueCommentedTrigger fires when a comment is added to an issue. The record
+// gives it no options.
+type IssueCommentedTrigger struct{}
+
+// PullRequestMergedTrigger fires when a pull request is merged. The record
+// gives it no options.
+type PullRequestMergedTrigger struct{}
 
 // PullRequestOpenedTrigger fires when a pull request is opened. It has no options.
 type PullRequestOpenedTrigger struct{}

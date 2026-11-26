@@ -127,7 +127,7 @@ func TestRunChecks_DeadlineKillsTheProcessGroup(t *testing.T) {
 		// a background child holds the output pipe open, as a stuck test server would
 		{Name: "hang", Run: "sleep 60 & echo $! ; wait"},
 		{Name: "next", Run: "true"},
-	}, CheckOptions{Deadline: 500 * time.Millisecond})
+	}, CheckOptions{Deadline: 3 * time.Second}) // long enough for a slow shell to print the pid first
 	if err != nil {
 		t.Fatal(err)
 	}

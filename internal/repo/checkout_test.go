@@ -205,7 +205,7 @@ func TestGitEnvIsAnAllowlist(t *testing.T) {
 func TestGitCommandIsHardened(t *testing.T) {
 	cmd := gitCommand(context.Background(), ".", "status")
 	args := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"core.fsmonitor=false", "core.hooksPath=/dev/null", "core.pager=cat", "diff.external=", "protocol.ext.allow=never", "--no-replace-objects", "--git-dir="} {
+	for _, want := range []string{"core.fsmonitor=false", "core.hooksPath=/dev/null", "core.pager=cat", "diff.external=", "protocol.ext.allow=never", "maintenance.auto=false", "gc.auto=0", "--no-replace-objects", "--git-dir="} {
 		if !strings.Contains(args, want) {
 			t.Errorf("git command lacks -c %s: %s", want, args)
 		}

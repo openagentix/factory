@@ -23,6 +23,10 @@ var hardenedGitConfig = []string{
 	"-c", "diff.external=",
 	"-c", "protocol.ext.allow=never",
 	"-c", "commit.gpgsign=false",
+	// No command may start background maintenance: it makes lock files in
+	// objects/ that the guard rightly refuses while they exist.
+	"-c", "maintenance.auto=false",
+	"-c", "gc.auto=0",
 }
 
 // gitEnvAllowlist names the variables git may take from this process.

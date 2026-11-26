@@ -294,10 +294,16 @@ func TestRunGitKillsTheProcessGroupWhenTheContextEnds(t *testing.T) {
 	if pid == 0 {
 		t.Fatal("the child did not start")
 	}
-	time.Sleep(200 * time.Millisecond)
-	if err := syscall.Kill(pid, 0); err == nil {
-		t.Errorf("the child process %d is still running", pid)
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+	// The child is killed with the group, but it stays visible until its
+	// parent process reaps it, which can take a moment under load.
+	gone := time.Now().Add(10 * time.Second)
+	for syscall.Kill(pid, 0) == nil {
+		if time.Now().After(gone) {
+			t.Errorf("the child process %d is still running", pid)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

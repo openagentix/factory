@@ -31,7 +31,9 @@ func newTestRepo(t *testing.T) *testRepo {
 
 func (r *testRepo) git(args ...string) string {
 	r.t.Helper()
-	full := append([]string{"--git-dir=" + r.dir, "--work-tree=" + r.wt, "-c", "core.bare=false"}, args...)
+	// git commit would start background maintenance, which leaves
+	// objects/maintenance.lock for a moment, and the guard refuses that.
+	full := append([]string{"--git-dir=" + r.dir, "--work-tree=" + r.wt, "-c", "core.bare=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)
 	cmd := exec.Command("git", full...)
 	cmd.Dir = r.wt
 	cmd.Env = append(os.Environ(),
@@ -52,6 +54,8 @@ func (r *testRepo) git(args ...string) string {
 // write creates or replaces a file.
 func (r *testRepo) write(name, content string) {
 	r.t.Helper()
+	// git commit would start background maintenance, which leaves
+	// objects/maintenance.lock for a moment, and the guard refuses that.
 	full := filepath.Join(r.wt, filepath.FromSlash(name))
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		r.t.Fatal(err)

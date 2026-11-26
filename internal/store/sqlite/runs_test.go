@@ -179,3 +179,50 @@ func TestUpdateRunStoresNewFields(t *testing.T) {
 		t.Errorf("got %+v want %+v", got, r)
 	}
 }
+
+func TestTerminalRunsNeverChange(t *testing.T) {
+	ctx := context.Background()
+	for _, phase := range []api.Phase{api.PhaseSucceeded, api.PhaseFailed, api.PhaseNeedsHuman, api.PhaseCancelled} {
+		t.Run(string(phase), func(t *testing.T) {
+			s := openTemp(t)
+			r := newRun("r1", 1)
+			r.Phase = phase
+			if err := s.CreateRun(ctx, r); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := s.CountAttempts(ctx, 1)
+			edit := *r
+			start, end := t0.Add(time.Minute), t0.Add(2*time.Minute)
+			edit.StartedAt, edit.FinishedAt = &start, &end
+			edit.Outputs.Branch = "rewritten"
+			if err := s.UpdateRun(ctx, &edit); !errors.Is(err, store.ErrBadTransition) {
+				t.Fatalf("UpdateRun error = %v, want ErrBadTransition", err)
+			}
+			got, _ := s.GetRun(ctx, "r1")
+			if !reflect.DeepEqual(got, r) {
+				t.Errorf("a terminal run was rewritten: %+v", got)
+			}
+			if n, _ := s.CountAttempts(ctx, 1); n != before {
+				t.Errorf("attempts changed from %d to %d", before, n)
+			}
+		})
+	}
+}
+
+func TestEvidenceAttachedWhenRunTurnsTerminal(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	r := newRun("r1", 1)
+	r.Phase = api.PhasePublishing
+	start := t0.Add(time.Minute)
+	r.StartedAt = &start
+	if err := s.CreateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	end := t0.Add(5 * time.Minute)
+	r.Phase, r.FinishedAt = api.PhaseSucceeded, &end
+	r.Outputs.PullRequest = "#7"
+	if err := s.UpdateRun(ctx, r); err != nil {
+		t.Fatalf("outputs with the terminal change: %v", err)
+	}
+}

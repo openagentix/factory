@@ -107,7 +107,8 @@ func decodeRun(body string) (*api.Run, error) {
 }
 
 // UpdateRun replaces a stored run. The phase may stay or follow an allowed
-// transition. Task, goal, ticket and creation time stay as they were.
+// transition. A run in a terminal phase never changes, so evidence and
+// outputs must come in the update that ends the run. Task, goal, ticket and creation time stay as they were.
 func (s *Store) UpdateRun(ctx context.Context, r *api.Run) error {
 	body, p, err := encodeRun(r)
 	if err != nil {
@@ -134,7 +135,9 @@ func (s *Store) UpdateRun(ctx context.Context, r *api.Run) error {
 	if task != p.Task || ticket != p.Ticket || goal != p.Goal || created != formatTime(p.CreatedAt) {
 		return fmt.Errorf("store: run %q: task, goal, ticket and createdAt cannot change", p.ID)
 	}
-	if from := api.Phase(phase); from != p.Phase && !api.CanTransition(from, p.Phase) {
+	if from := api.Phase(phase); from.IsTerminal() {
+		return fmt.Errorf("%w: run %q has ended (%s) and never changes", store.ErrBadTransition, p.ID, from)
+	} else if from != p.Phase && !api.CanTransition(from, p.Phase) {
 		return fmt.Errorf("%w: run %q from %s to %s", store.ErrBadTransition, p.ID, from, p.Phase)
 	}
 	_, err = tx.ExecContext(ctx,

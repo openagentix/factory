@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -166,3 +167,16 @@ func runDirs(f *fixture) []string {
 }
 
 func repoLimits() repo.Limits { return repo.Limits{} }
+
+type runtimeMem struct{ total uint64 }
+
+// read records the total bytes allocated so far.
+func (m *runtimeMem) read() {
+	var s runtime.MemStats
+	runtime.ReadMemStats(&s)
+	m.total = s.TotalAlloc
+}
+
+type apiEvent = api.Event
+
+func testCtx() context.Context { return context.Background() }

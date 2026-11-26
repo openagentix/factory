@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -34,11 +37,15 @@ type run struct {
 	out  string
 	sha  string
 
-	cmd    *exec.Cmd
-	evFile *os.File
-	stdout *os.File
-	stderr *os.File
-	events chan api.Event
+	cmd        *exec.Cmd
+	evFile     *os.File
+	errFile    *os.File
+	evBytes    int64
+	forced     atomic.Bool
+	stderrHead []byte
+	stdout     *os.File
+	stderr     *os.File
+	events     chan api.Event
 
 	cancelOnce sync.Once
 	cancelCh   chan struct{}
@@ -79,6 +86,8 @@ func checkSpec(s Spec) error {
 		return errors.New("runner: Deadline is required")
 	case s.Commit == "":
 		return errors.New("runner: Commit is required")
+	case strings.TrimSpace(s.Author.Name) == "" || strings.TrimSpace(s.Author.Email) == "":
+		return errors.New("runner: Author needs a name and an address")
 	}
 	if len(s.TriggerJSON) > 0 && !json.Valid(s.TriggerJSON) {
 		return errors.New("runner: TriggerJSON is not valid JSON")
@@ -171,12 +180,20 @@ func (r *run) launch() error {
 		defer f.Close()
 		cmd.Stdin = f
 	}
-	// The events file is made before the process, in the out directory.
-	ef, err := os.Create(filepath.Join(r.out, "events.jsonl"))
+	// The runner's own events file and error log live in the run directory,
+	// not in out: the agent controls everything under out. Each is made new,
+	// so a link in its place is never followed.
+	ef, err := os.OpenFile(r.eventsPath(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
 	r.evFile = ef
+	sf, err := os.OpenFile(r.stderrPath(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		ef.Close()
+		return err
+	}
+	r.errFile = sf
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		return err
@@ -224,14 +241,20 @@ func (r *run) Cancel(ctx context.Context) error {
 	}
 }
 
+func (r *run) eventsPath() string { return filepath.Join(r.dir, "events.jsonl") }
+func (r *run) stderrPath() string { return filepath.Join(r.dir, "stderr.log") }
+
 func (r *run) supervise(ctx context.Context) {
 	defer close(r.done)
 	o := &r.outcome
 	waited := make(chan error, 1)
 	go func() { waited <- r.cmd.Wait() }()
-	readDone := make(chan struct{})
-	go func() { defer close(readDone); r.readStdout(o) }()
-	go r.readStderr()
+	var readers sync.WaitGroup
+	readers.Add(2)
+	go func() { defer readers.Done(); r.readStdout(o) }()
+	go func() { defer readers.Done(); r.readStderr() }()
+	readersDone := make(chan struct{})
+	go func() { readers.Wait(); close(readersDone) }()
 
 	timer := time.NewTimer(r.spec.Deadline)
 	defer timer.Stop()
@@ -249,13 +272,27 @@ func (r *run) supervise(ctx context.Context) {
 		werr = r.stop(waited)
 	}
 	o.ExitCode = exitCode(werr)
-	<-readDone
+	// Whatever the agent started in its group must not outlive the run.
+	signalGroup(r.cmd, true)
+	select {
+	case <-readersDone:
+	case <-time.After(r.lim.PipeWait):
+		// Something outside the group still holds the output pipes open.
+		r.forced.Store(true)
+		r.stdout.Close()
+		r.stderr.Close()
+		<-readersDone
+		r.note("a process outside the process group still held the output pipes after the run; it may still be running. The runner cannot reach it without an operating system sandbox")
+	}
+	r.evFile.Close()
+	r.errFile.Close()
 	r.finish(ctx, o)
 }
 
-// stop ends the process: the terminating signal, then the kill.
+// stop ends the process group: the terminating signal, then, after the
+// grace time, the kill.
 func (r *run) stop(waited chan error) error {
-	signalProcess(r.cmd, false)
+	signalGroup(r.cmd, false)
 	grace := r.spec.Grace
 	if grace <= 0 {
 		grace = DefaultGrace
@@ -265,7 +302,7 @@ func (r *run) stop(waited chan error) error {
 		return err
 	case <-time.After(grace):
 	}
-	signalProcess(r.cmd, true)
+	signalGroup(r.cmd, true)
 	return <-waited
 }
 
@@ -280,46 +317,76 @@ func exitCode(err error) int {
 	return -1
 }
 
+// readStdout hands the stream to the adapter, bounded. What is past the
+// limit is read and thrown away, so the agent never blocks on a full pipe.
 func (r *run) readStdout(o *Outcome) {
-	sum, err := r.spec.Adapter.Read(r.stdout, func(e api.Event) { r.emit(o, e) })
-	if err != nil {
+	defer close(r.events)
+	lr := &io.LimitedReader{R: r.stdout, N: r.lim.MaxStdoutBytes}
+	sum, err := r.spec.Adapter.Read(lr, func(e api.Event) { r.emit(o, e) })
+	if err != nil && !r.forced.Load() {
 		r.note("reading standard output stopped: %v", err)
 	}
 	o.Summary = sum
-	close(r.events)
+	if lr.N <= 0 {
+		n, _ := io.Copy(io.Discard, r.stdout)
+		r.note("standard output went over %d bytes. The rest (%d bytes or more) was thrown away", r.lim.MaxStdoutBytes, n)
+	}
 }
 
 func (r *run) emit(o *Outcome, e api.Event) {
 	o.EventCount++
-	b, _ := json.Marshal(e)
-	r.evFile.Write(append(b, '\n'))
+	b, err := json.Marshal(e)
+	if err == nil {
+		b = append(b, '\n')
+		if r.evBytes+int64(len(b)) <= r.lim.MaxEventsBytes {
+			if _, err := r.evFile.Write(b); err == nil {
+				r.evBytes += int64(len(b))
+			}
+		} else {
+			o.EventsDropped++
+		}
+	}
 	if r.spec.OnEvent != nil {
 		r.spec.OnEvent(e)
 	}
 	select {
 	case r.events <- e:
 	default:
-		o.EventsDropped++
 	}
 }
 
+const stderrHeadBytes = 4 << 10
+
+// readStderr keeps standard error in the log file up to its size limit,
+// keeps the first bytes in memory, and throws the rest away.
 func (r *run) readStderr() {
-	f, err := os.Create(filepath.Join(r.dir, "stderr.log"))
-	if err != nil {
-		io.Copy(io.Discard, r.stderr)
-		return
+	buf := make([]byte, 32<<10)
+	var written int64
+	for {
+		n, err := r.stderr.Read(buf)
+		if n > 0 {
+			if len(r.stderrHead) < stderrHeadBytes {
+				r.stderrHead = append(r.stderrHead, buf[:min(n, stderrHeadBytes-len(r.stderrHead))]...)
+			}
+			if room := r.lim.MaxStderrBytes - written; room > 0 {
+				w, _ := r.errFile.Write(buf[:min(int64(n), room)])
+				written += int64(w)
+			}
+		}
+		if err != nil {
+			return
+		}
 	}
-	defer f.Close()
-	io.Copy(f, r.stderr)
 }
 
 func (r *run) finish(ctx context.Context, o *Outcome) {
+	o.StderrHead = repo.Visible(string(r.stderrHead), 2000)
 	defer func() {
 		o.Notes = append(o.Notes, r.notes...)
-		if !(o.Failed && r.spec.KeepFailed) {
-			r.removeDir()
+		if o.Failed && r.spec.KeepFailed {
+			o.RunDir, o.EventsPath, o.StderrPath = r.dir, r.eventsPath(), r.stderrPath()
 		} else {
-			o.RunDir = r.dir
+			r.removeDir()
 		}
 	}()
 	fail := func(format string, a ...any) { o.Failed, o.Reason = true, fmt.Sprintf(format, a...) }
@@ -334,7 +401,7 @@ func (r *run) finish(ctx context.Context, o *Outcome) {
 		fail("the agent exited with code %d", o.ExitCode)
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(r.out, "result.json"))
+	data, err := readResult(r.dir, r.lim.MaxResultBytes)
 	if err != nil {
 		fail("no usable result.json: %v", err)
 		return
@@ -344,7 +411,6 @@ func (r *run) finish(ctx context.Context, o *Outcome) {
 		fail("result.json is not valid: %v", err)
 		return
 	}
-	o.Result = res
 	msg := r.spec.Message
 	if msg == "" {
 		msg = "factory: work stage of a run"
@@ -355,13 +421,23 @@ func (r *run) finish(ctx context.Context, o *Outcome) {
 		fail("import of the workspace refused: %v", err)
 		return
 	}
-	o.Commit, o.Changed = commit, changed
+	o.Result, o.Commit, o.Changed = res, commit, changed
 }
 
+// removeDir removes the run directory. The agent may have made directories
+// it cannot enter, and the in directory is read-only, so modes are opened
+// first. A link is removed, never followed.
 func (r *run) removeDir() {
 	if r.dir == "" {
 		return
 	}
-	os.Chmod(r.in, 0o700)
-	os.RemoveAll(r.dir)
+	filepath.WalkDir(r.dir, func(p string, d fs.DirEntry, err error) error {
+		if d != nil && d.IsDir() {
+			os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	if err := os.RemoveAll(r.dir); err != nil {
+		r.outcome.Notes = append(r.outcome.Notes, fmt.Sprintf("the run directory could not be removed: %v", err))
+	}
 }

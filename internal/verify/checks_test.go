@@ -183,3 +183,40 @@ func TestRunChecks_CancelledContextStillCleansUp(t *testing.T) {
 		t.Errorf("worktree left behind after cancel:\n%s", wl)
 	}
 }
+
+func TestRunChecks_FreshHomeForEachCheck(t *testing.T) {
+	r, head := repoWithHead(t)
+	out, err := RunChecks(context.Background(), r.dir, head, []api.Check{
+		{Name: "a", Run: `echo "$HOME"; echo "$TMPDIR"; ls -A "$HOME" | wc -l; touch "$HOME/cache"`},
+		{Name: "b", Run: `echo "$HOME"; ls -A "$HOME" | wc -l`},
+	}, CheckOptions{Deadline: 20 * time.Second, Environ: hostileEnviron()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	la := strings.Fields(out[0].Output)
+	lb := strings.Fields(out[1].Output)
+	if len(la) != 3 || len(lb) != 2 {
+		t.Fatalf("outputs: %q %q", out[0].Output, out[1].Output)
+	}
+	if strings.Contains(out[0].Output, "someone") {
+		t.Errorf("the real HOME reached the check: %q", out[0].Output)
+	}
+	if la[0] != la[1] {
+		t.Errorf("TMPDIR %q must be the same fresh directory as HOME %q", la[1], la[0])
+	}
+	if la[2] != "0" || lb[1] != "0" {
+		t.Errorf("HOME must start empty: %q %q", la[2], lb[1])
+	}
+	if la[0] == lb[0] {
+		t.Errorf("each check needs its own HOME, both had %s", la[0])
+	}
+	if _, err := os.Stat(la[0]); err == nil {
+		t.Errorf("HOME %s was not removed", la[0])
+	}
+	notes := strings.Join(out[0].Notes, "\n")
+	for _, want := range []string{"cold", "sandbox", "setsid"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes lack %q: %s", want, notes)
+		}
+	}
+}

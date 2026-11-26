@@ -4,44 +4,100 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 )
 
-// gitEnv is the environment of every git call the verify stage makes. It
-// drops the caller's GIT_ variables, so that nothing redirects git to another
-// repository, and it ignores the user and system git config, so that no
-// setting can run a program on our behalf.
+// hardenedGitConfig is put before every git command. The repository's own
+// configuration is not trusted: a worker or a check may have changed it.
+// These settings switch off what can start a program: the file system
+// monitor, hooks, a pager, an external diff and the ext transport.
+var hardenedGitConfig = []string{
+	"-c", "core.fsmonitor=false",
+	"-c", "core.hooksPath=/dev/null",
+	"-c", "core.pager=cat",
+	"-c", "diff.external=",
+	"-c", "protocol.ext.allow=never",
+}
+
+// gitEnvAllowlist names the variables git may take from this process.
+var gitEnvAllowlist = []string{"PATH", "LANG", "LC_ALL", "TMPDIR"}
+
+// gitEnv is the environment of every git command. It is built from an
+// allowlist and never copies the process environment, so a token in the
+// orchestrator's environment cannot reach git, or a program git starts. The
+// user and system git config are ignored.
 func gitEnv() []string {
 	var env []string
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "GIT_") {
-			env = append(env, kv)
+	for _, name := range gitEnvAllowlist {
+		if v, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+v)
 		}
 	}
 	return append(env,
-		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_OPTIONAL_LOCKS=0",
 	)
 }
 
-// runGit runs git with an argument list in dir. There is no shell.
-func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+// gitCommand builds every git command of this package. It is the only place
+// that starts the git program, and a test keeps it that way. There is no
+// shell: args is an argument list.
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	full := append(append([]string{}, hardenedGitConfig...), args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
+	return cmd
+}
+
+// runGit runs git and returns its standard output.
+func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	cmd := gitCommand(ctx, dir, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.Join(strings.Fields(stderr.String()), " ")
-		if len(msg) > 300 {
-			msg = msg[:300] + "..."
-		}
-		return nil, fmt.Errorf("git %s: %w: %s", subcommand(args), err, msg)
+		return nil, gitError(args, err, stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+func gitError(args []string, err error, stderr string) error {
+	msg := strings.Join(strings.Fields(stderr), " ")
+	if len(msg) > 300 {
+		msg = msg[:300] + "..."
+	}
+	return fmt.Errorf("git %s: %w: %s", args[0], err, msg)
+}
+
+// runGitStream runs git with a reader as standard input and a function that
+// reads standard output while the command runs.
+func runGitStream(ctx context.Context, dir string, stdin io.Reader, read func(io.Reader) error, args ...string) error {
+	cmd := gitCommand(ctx, dir, args...)
+	cmd.Stdin = stdin
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return gitError(args, err, "")
+	}
+	readErr := read(out)
+	_, _ = io.Copy(io.Discard, out)
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return readErr
+	}
+	if waitErr != nil {
+		return gitError(args, waitErr, stderr.String())
+	}
+	return nil
 }
 
 // resolveCommit turns a revision into a full commit id. A revision that
@@ -55,17 +111,4 @@ func resolveCommit(ctx context.Context, dir, rev string) (string, error) {
 		return "", fmt.Errorf("revision %q is not a commit", rev)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// subcommand names the git subcommand in an argument list that may start
-// with "-c name=value" pairs.
-func subcommand(args []string) string {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-c" {
-			i++
-			continue
-		}
-		return args[i]
-	}
-	return ""
 }

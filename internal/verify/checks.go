@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -45,6 +47,9 @@ type CheckOutcome struct {
 	Output string
 	// Err is set when the check could not be started.
 	Err string
+	// Notes say what was left out of the checkout and what the check is not
+	// protected from. They are the same for every check of one run.
+	Notes []string
 }
 
 // Passed reports whether the check ran to the end and exited with 0.
@@ -62,14 +67,31 @@ func AllPassed(outcomes []CheckOutcome) bool {
 	return true
 }
 
+// containmentNotes are put on every outcome. They say what the checks are
+// not protected from. This package does not provide an operating system
+// sandbox.
+var containmentNotes = []string{
+	"HOME and TMPDIR are a fresh empty directory for each check, so tool caches are cold",
+	"writes outside the checkout are not prevented: there is no operating system sandbox here",
+	"a check that leaves its process group, for example with setsid, is not contained or killed",
+}
+
 // RunChecks runs each check on a clean checkout of commit.
 //
-// The checkout is a detached git worktree in a new temporary directory. It
-// is removed before RunChecks returns, also when a check fails, times out or
-// the context is cancelled. Each check runs with its own deadline, with the
-// scrubbed environment (see ScrubEnv) and in its own process group, and the
-// whole group is killed at the deadline. Checks run one after the other, and
-// a failing check does not stop the next one.
+// The checkout is built by reading git objects only (see materialize) into a
+// new temporary directory outside the repository. It has no .git, so a check
+// has no path back to the repository, and no git filter or hook runs. The
+// directory is removed before RunChecks returns, also when a check fails,
+// times out or the context is cancelled. Each check runs with its own
+// deadline, with the scrubbed environment (see ScrubEnv), with a fresh empty
+// directory as HOME and TMPDIR that is removed after the check, and in its own
+// process group, and the whole group is killed at the deadline. Checks run one
+// after the other, and a failing check does not stop the next one.
+//
+// Limits, also listed in the Notes of each outcome: tool caches are cold
+// because HOME is empty; writes outside the checkout are not prevented, since
+// that needs an operating system sandbox; and a check that leaves its process
+// group with setsid is not contained.
 //
 // The command line is run with "sh -c", because it is the repository's own
 // configured command. That is the only place in this package that uses a
@@ -83,11 +105,16 @@ func RunChecks(ctx context.Context, repoDir, commit string, checks []api.Check, 
 	if err != nil {
 		return nil, fmt.Errorf("make a temporary directory: %w", err)
 	}
+	defer removeAll(tmp)
 	checkout := filepath.Join(tmp, "checkout")
-	defer removeWorktree(repoDir, checkout, tmp)
-	if _, err := runGit(ctx, repoDir, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", "--force", checkout, sha); err != nil {
+	if err := os.Mkdir(checkout, 0o700); err != nil {
 		return nil, err
 	}
+	notes, err := materialize(ctx, repoDir, sha, checkout)
+	if err != nil {
+		return nil, err
+	}
+	notes = append(notes, containmentNotes...)
 
 	deadline := opts.Deadline
 	if deadline <= 0 {
@@ -104,7 +131,8 @@ func RunChecks(ctx context.Context, repoDir, commit string, checks []api.Check, 
 		if err := ctx.Err(); err != nil {
 			return outcomes, err
 		}
-		o := runOne(ctx, checkout, c, deadline, env)
+		o := runOne(ctx, checkout, tmp, c, deadline, env)
+		o.Notes = notes
 		if err := ctx.Err(); err != nil {
 			return append(outcomes, o), err
 		}
@@ -113,7 +141,22 @@ func RunChecks(ctx context.Context, repoDir, commit string, checks []api.Check, 
 	return outcomes, nil
 }
 
-func runOne(parent context.Context, dir string, c api.Check, deadline time.Duration, env []string) CheckOutcome {
+func runOne(parent context.Context, dir, tmp string, c api.Check, deadline time.Duration, base []string) CheckOutcome {
+	home, herr := os.MkdirTemp(tmp, "home-")
+	if herr != nil {
+		return CheckOutcome{Result: api.CheckResult{Name: c.Name, ExitCode: -1, RanBy: RanByOrchestrator}, Err: herr.Error()}
+	}
+	defer removeAll(home)
+	// The scrubbed environment, with HOME and TMPDIR replaced. No real home
+	// path is passed on.
+	var env []string
+	for _, kv := range base {
+		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "TMPDIR=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "HOME="+home, "TMPDIR="+home)
+
 	ctx, cancel := context.WithTimeout(parent, deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", c.Run)
@@ -150,18 +193,24 @@ func runOne(parent context.Context, dir string, c api.Check, deadline time.Durat
 	}
 	if o.TimedOut {
 		o.Result.ExitCode = -1
+		o.Result.TimedOut = true
 	}
 	return o
 }
 
-// removeWorktree removes the checkout and its git bookkeeping. It uses its
-// own context, because the caller's may be cancelled.
-func removeWorktree(repoDir, checkout, tmp string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_, _ = runGit(ctx, repoDir, "worktree", "remove", "--force", checkout)
-	_ = os.RemoveAll(tmp)
-	_, _ = runGit(ctx, repoDir, "worktree", "prune")
+// removeAll removes a directory tree, also when a check made parts of it
+// read-only.
+func removeAll(dir string) {
+	if os.RemoveAll(dir) == nil {
+		return
+	}
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	_ = os.RemoveAll(dir)
 }
 
 // cappedBuffer keeps the first max bytes written and drops the rest.

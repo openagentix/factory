@@ -1,6 +1,6 @@
 # Governance
 
-This page says how OpenAgentix Factory is run. It is a minimum: enough to work with one maintainer today, and to grow into a project with maintainers from several organisations. It follows the same rules as the sibling project, [OpenAgentix](https://github.com/openagentix/openagentix), so the two feel like one family.
+This page says how OpenAgentix Software Factory is run. It is a minimum: enough to work with one maintainer today, and to grow into a project with maintainers from several organisations. It follows the same rules as the sibling project, [OpenAgentix](https://github.com/openagentix/openagentix), so the two feel like one family.
 
 ## Honest starting point
 
@@ -103,7 +103,7 @@ These rules protect the project from being steered by one company. This includes
 1. **The roadmap is decided in the open by the maintainers** (the TSC). It is not set by a company's product plan. Companies can propose, with the same standing as any contributor.
 2. **No feature in this repository may depend on a commercial product.** Nothing here checks a licence key, phones home to a vendor, or stops working without a paid component. Optional adapters for commercial systems are fine when the project works without them.
 3. **Community stays community.** What is in this repository stays under the Apache-2.0 licence. Security is never reserved for a paid edition. Nothing moves from community to a paid edition later.
-4. **Same rules for the name.** The project name and logos may be used by anyone under the same trademark rules. A commercial product does not carry the project name as its own name. The accepted form is "`<company or product name>` for OpenAgentix Factory".
+4. **Same rules for the name.** The project name and logos may be used by anyone under the same trademark rules. A commercial product does not carry the project name as its own name. The accepted form is "`<company or product name>` for OpenAgentix Software Factory".
 5. **Extension points, not forks.** If a vendor needs a change in the core, it is proposed as a general extension point, and it lands here first.
 6. **Declare interests.** A maintainer says in a pull request when a change helps their employer, and the other maintainers decide it.
 7. **No single-organisation control.** Once there are three or more maintainers, no one organisation may have more than half of the maintainer votes.

@@ -53,11 +53,14 @@ In v0.1 the work stage is a process on the person's own machine, started with th
 | L2 | The agent reads or changes files outside the worktree | The harness sandbox limits writes to the worktree where the harness supports it | Depends on the harness. Not verified by a run |
 | L3 | The agent leaks private files to the network | No control | Open. Outbound network is not restricted |
 | L4 | The factory mishandles a login token | It never reads, copies or forwards one. It only starts the official program. A test asserts the factory code never opens the harness credential stores | None known |
-| L5 | Someone on the local network reaches the web app or the co-pilot endpoint | Both listen on localhost by default. Another address needs a login token | No user accounts |
+| L5 | Someone on the local network reaches the web app or the take-the-wheel endpoint | Both listen on localhost by default. Another address needs a login token | No user accounts |
 | L6 | Two machines work the same ticket | Claim by label and marker comment, earliest wins | A short window of double work, ended at the claim check |
-| L7 | A person's co-pilot session submits unreviewed work | The same verify stage and evidence bundle as autopilot. The pull request is a draft | None beyond the usual limits of verify |
+| L7 | A person who took the wheel submits unreviewed work | The same verify stage and evidence bundle as autopilot. The pull request is a draft | None beyond the usual limits of verify |
 
-Never start a harness with a flag that skips all permission checks on a person's own machine.
+| L8 | With no prompts, the agent runs a harmful command that a person would have refused | A permission policy per run: an allowlist of tools and commands, writes limited to the worktree. Outside the policy is denied and recorded | The policy is only as good as its list, and depends on each harness honouring it. Not verified by a run |
+| L9 | The agent makes a wrong choice where it used to ask | Rulings are recorded and shown at the gate. The verify stage is outside the agent | A wrong ruling that passes the checks reaches the reviewer |
+
+Never start a harness with a flag that skips all permission checks on a person's own machine. No prompts must come from a policy, not from switching checks off.
 
 ## Honest summary
 

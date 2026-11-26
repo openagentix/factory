@@ -1,6 +1,6 @@
 # Adopters
 
-This file lists organisations and people who run OpenAgentix Factory and agree to be named. It helps new users see who else uses it, and it is one of the signals a foundation asks for.
+This file lists organisations and people who run OpenAgentix Software Factory and agree to be named. It helps new users see who else uses it, and it is one of the signals a foundation asks for.
 
 **Today the list is empty.** The project has no release yet and nothing in it has been proven by a run. We will not list anyone who has not asked to be listed.
 

@@ -1,6 +1,6 @@
 # Maintainers
 
-The maintainers decide what goes into OpenAgentix Factory. How people become maintainers, and how they leave, is in [GOVERNANCE.md](GOVERNANCE.md). The project has one maintainer today and is looking for more, especially from other organisations.
+The maintainers decide what goes into OpenAgentix Software Factory. How people become maintainers, and how they leave, is in [GOVERNANCE.md](GOVERNANCE.md). The project has one maintainer today and is looking for more, especially from other organisations.
 
 | Name | GitHub ID | Organisation | Areas |
 |---|---|---|---|

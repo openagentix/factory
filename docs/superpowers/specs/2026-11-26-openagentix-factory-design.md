@@ -1,6 +1,6 @@
-# OpenAgentix Factory: design
+# OpenAgentix Software Factory: design
 
-Date: 2026-11-26. Revision 2, a local-first product with an autonomy dial. Status: working draft, published for comment. Nothing here is proven by a run.
+Date: 2026-11-26. Revision 3: a local-first product with an autonomy dial, and gates in place of prompts. Status: working draft, published for comment. Nothing here is proven by a run.
 
 Lines marked **(owner)** were decided by the owner. Lines marked **(call)** are the assistant's choices and can be changed.
 
@@ -12,16 +12,19 @@ A solo founder or a small team states a business goal. The factory turns it into
 
 **The factory does not own the agents. It owns the work.** People keep the Claude Code and Codex they already have, with the logins they already pay for, on their own machine. The factory orchestrates: it holds the pipeline, hands out work, checks results, records evidence and shows it all. **(owner)**
 
+**The value in one line: as little interaction as possible, with a reliable way to judge the result.** **(owner)** People who use coding agents and workflow methods today spend the day answering "yes" to prompts. That is the problem this product removes. A factory that needs a person at every step is not a factory.
+
 Why now: tools that turn one ticket into one pull request are free. The pain has moved to what surrounds that step. Reviewers are overloaded. Agents edit tests to pass them. Cost per outcome is unknown. There is no basis for deciding how far to trust an agent. Hosted app builders go from idea to a deployed app, but they are closed, they hold the code and the hosting, and they verify little.
 
 What makes this product different:
 
 1. **Your agents, your logins, your repository, your machines.** Open source, Apache-2.0. No API key needed to start.
-2. **An autonomy dial per task.** From "I drive" to "the factory drives". Visible, and moved by a person.
-3. **Evidence for every change.** The factory, not the agent, records what changed, what was checked and what it used.
-4. **A trust ledger** that shows whether a higher dial setting has been earned.
-5. **Verification from the spec.** Acceptance criteria are written before the code, and the builder cannot edit the checks.
-6. **One engine from laptop to cluster.** A laptop, a dedicated machine, Kubernetes, and OpenAgentix where limits are enforced. **(owner)**
+2. **Gates, not prompts.** No run stops to ask for a yes. A person decides at a few fixed gates, in one pass.
+3. **An autonomy dial per task.** It sets how many gates there are. Visible, and moved by a person.
+4. **Evidence for every change.** The factory, not the agent, records what changed, what was checked and what it used.
+5. **A trust ledger** that shows whether a higher dial setting has been earned, and how much of a person's attention the factory used.
+6. **Verification from the spec.** Acceptance criteria are written before the code, and the builder cannot edit the checks.
+7. **One engine from laptop to cluster.** A laptop, a dedicated machine, Kubernetes, and OpenAgentix where limits are enforced. **(owner)**
 
 Positioning line: **the software factory that earns its autonomy.** Tagline: "Runs on your laptop. Governed on OpenAgentix." **(owner approved the positioning; tagline is a call)**
 
@@ -46,7 +49,8 @@ An existing repository starts with an **onboard** run that reads the repository,
 
 - Works with the Claude Code and Codex already installed and logged in. No API key, no Docker, no cluster.
 - A person types a goal in the web app and sees: questions to answer, a spec to approve, tickets appear, pull requests appear with evidence.
-- Two ways to work, on one engine: **autopilot** and **co-pilot** (section 6).
+- No run waits at a prompt. People decide at gates (section 6).
+- Any workflow method can be used inside a run: superpowers, Open GSD, the user's own. **(owner)**
 - An autonomy dial per task in the web app, with the trust ledger beside it.
 - First run within ten minutes of download. A demo mode needs no login and no GitHub token.
 - A web app good enough to be the reason someone tries the product. **(owner: the visual interface is very important)**
@@ -68,6 +72,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 - Trying it needs an API key, a cluster, a database server or a public endpoint.
 - It copies or moves a person's login tokens anywhere.
 - The web app is a wall of charts instead of a place to act.
+- A person has to sit and approve steps for the work to move.
 
 ## 4. Constraints
 
@@ -80,9 +85,9 @@ An existing repository starts with an **onboard** run that reads the repository,
 - Ticket and pull request text is untrusted input.
 - Test first. A decision record comes before a new public contract.
 - Docs in plain English. Public claims only for what a run has proven.
-- Name: OpenAgentix Factory. Site and API group: `factory.openagentix.org`. Language: Go. **(owner)** Command: `oxf` **(call)**.
+- Name: OpenAgentix Software Factory. Site and API group: `factory.openagentix.org`. Language: Go. **(owner)** Command: `oxf` **(call)**.
 
-**To check before any public claim:** whether the terms of Claude and Codex subscriptions allow unattended runs started by another program. Not checked. If they do not, autopilot on a subscription is dropped, co-pilot remains for subscription users, and autopilot needs an API key.
+**To check before any public claim:** whether the terms of Claude and Codex subscriptions allow unattended runs started by another program. Not checked. If they do not, unattended runs on a subscription are dropped, taking the wheel remains for subscription users, and unattended runs need an API key.
 
 ## 5. Approaches
 
@@ -98,40 +103,51 @@ How agents connect, considered:
 
 - *Spawn only*: the factory starts the local agent program. A real factory, but nothing for the person who wants to drive.
 - *Pull only*: a person's session pulls work. Safe and familiar, but it is one more task queue for agents, a crowded field.
-- **Both, on one run model. (owner)** Autopilot is built first because it forces the whole engine to exist and it has the shape of an OpenAgentix run. Co-pilot follows in the same release.
+- **Both, on one run model. (owner)** Unattended runs are the product. They are built first because they force the whole engine to exist and have the shape of an OpenAgentix run. Pulling work into a person's own session stays as an action called "take the wheel", not as the normal way of working.
 
-## 6. Autopilot, co-pilot and the dial
+## 6. Gates, not prompts, and the dial
 
-Every piece of work is a **run** with three stages: work, verify, publish. Only the work stage differs.
+Every piece of work is a **run** with three stages: work, verify, publish. Every run is unattended.
 
-| Mode | Who does the work stage |
+**Why people press yes all day, and what replaces it**
+
+| Interruption today | What the factory does instead |
 |---|---|
-| **Autopilot** | `oxf` starts the installed `claude` or `codex` with no terminal, in a fresh git worktree |
-| **Co-pilot** | A person's own Claude Code or Codex session claims the ticket, works on it and hands it back |
+| A permission prompt: "may I run this command?" | **Policy decides.** The run has an allowlist and a sandboxed worktree. Inside the policy it runs. Outside, it is denied and recorded. Nobody is asked |
+| A checkpoint: "approve this plan?", "continue?" | **The agent rules, the factory records.** If the choice can be undone and is inside the ticket, the agent decides and writes a ruling: what, why, and the cost if wrong. The verify stage is the real approval |
+| A real question that only the person can answer | **It goes to the inbox.** The run ends. Other work goes on. The person answers a batch in one sitting, and the answer starts the next run |
 
-Verify, evidence, publish and the trust ledger are the same in both. Work a person drives by hand still leaves evidence.
+The rule: **people decide at gates, never at prompts.**
 
-**The autonomy dial.** One setting per task.
+**The autonomy dial.** One setting per task. It sets how many gates there are.
 
-| Level | Name | Meaning |
+| Level | Name | The factory stops for a person at |
 |---|---|---|
 | 0 | Off | The task does not run |
-| 1 | Co-pilot | Work waits until a person's session claims it |
-| 2 | Autopilot | The factory starts runs. A person reviews every pull request |
-| 3 | Autopilot with merge | Low-risk changes merge without a person. **Locked in v0.1** |
+| 1 | Guided | Every phase gate: the spec, the plan, and every pull request |
+| 2 | Autopilot | The pull request only |
+| 3 | Autopilot with merge | Nothing, for low-risk changes. **Locked in v0.1** |
 
-Defaults **(call)**: `brainstorm` at 1, because a spec needs the person. `decompose`, `implement`, `review` and `fix-ci` at 2.
+Defaults **(call)**: every task at 1 for a new repository. A person turns a task up when its record supports it.
 
 Rules for the dial:
 
 - The repository configuration sets a **ceiling** per task. Changing it is a pull request, so it is shared and has a history.
 - In the web app a person moves the dial at or below the ceiling. It takes effect at once and the change is logged.
-- The trust ledger sits beside the dial: runs, merged, reworked, reverted, per task and harness. In v0.1 it informs. It does not move the dial.
+- The trust ledger sits beside the dial. In v0.1 it informs. It does not move the dial.
 - On OpenAgentix the platform policy sets the ceiling and enforces it. Policy can only tighten. Same dial, stronger hand.
 
-**Co-pilot mechanics.** `oxf` serves a Model Context Protocol endpoint. A small plugin for Claude Code and a configuration entry for Codex add it. Tools: list ready work, claim a ticket (which makes a worktree and a branch and returns the brief), ask a question (posted to the ticket), submit (ends the work stage and starts verify). **(call)**
+**The attention record.** The trust ledger counts what a person feels: touches per merged pull request, questions asked, rulings made, rulings a person overturned. Many overturned rulings say turn the dial down. Few say it can go up.
 
-**Bring your own method. (owner)** A task names a method: the built-in prompts, or a prompt file of the user's own. Because the agent is the user's own install, their skills are present, so a method file can say "use superpowers" or "use GSD". The factory judges the result contract, not the route. v0.1 ships the built-in method and documented recipes for superpowers and Open GSD. **(call)**
+**Bring your own method. (owner)** A task names a method: the built-in prompts, or a prompt file of the user's own. The agent is the user's own install, so their skills are present, and a method file can say "use superpowers" or "use Open GSD". Nobody is made to give up the method they use.
+
+The factory puts one **unattended contract** in front of any method:
+
+> You run unattended. Never ask for confirmation. Where your method says to ask a person: if the choice can be undone and is inside the ticket, decide and record a ruling. Otherwise write the question to the result and stop.
+
+Changing how a method behaves in this way is accepted. **(owner)** A method with its own phases, such as Open GSD, may own a whole phase: one run yields the spec and the tickets, and the factory builds them. The factory judges the result contract, not the route. v0.1 ships the built-in method and documented recipes for superpowers and Open GSD. **(call)**
+
+**Take the wheel.** A person can claim any ticket into their own Claude Code or Codex session and hand the result back. `oxf` serves a Model Context Protocol endpoint for this: list ready work, claim a ticket (which makes a worktree and a branch and returns the brief), ask a question, submit. Verify, evidence and publish are the same. This is also the fallback if subscription terms do not allow unattended runs. **(call)**
 
 **Several machines.** State is in GitHub, so each teammate can run `oxf` on their own machine. A run claims its ticket with a label and a marker comment, reads back, and the earliest claim wins. No shared server is needed. **(call)**
 
@@ -165,7 +181,7 @@ Where things live:
 
 Rules **(calls)**:
 
-- `brainstorm` in autopilot asks at most a few questions per round and at most three rounds, then writes the spec with its open points listed. In co-pilot the person and their session talk it through directly.
+- `brainstorm` asks its questions in batches: at most a few per round and at most three rounds. Then it writes the spec with its open points listed. A person who prefers to talk it through can take the wheel.
 - `decompose` proposes at most twelve tickets per spec.
 - The **review cap**: at most three open agent pull requests waiting for a person by default. Above it, tickets stay planned and the web app shows why.
 - Cross-model review: when both harnesses are present, `review` uses the one that did not write the change.
@@ -179,11 +195,11 @@ Rules **(calls)**:
 
 ## 8. Inside one run
 
-1. **Work.** Autopilot: `oxf` makes a worktree, writes the input files, and starts the harness with no terminal, a deadline, and its strictest workable sandbox setting. Co-pilot: the person's session works in the worktree.
+1. **Work.** `oxf` makes a worktree, writes the input files, and starts the harness with no terminal, a deadline, a permission policy and its strictest workable sandbox setting. When a person takes the wheel, their session works in the worktree instead.
 2. **Verify.** `oxf` computes the diff, fails the run on a change to a protected path, runs the task's checks on a clean checkout of the commit with no model access, and builds the evidence bundle with a rule-based risk level.
 3. **Publish.** `oxf` pushes a branch, opens a draft pull request, comments, labels or creates tickets, with a GitHub token that can read and propose. A fixed list of actions. It never merges and never pushes to the default branch.
 
-The evidence bundle is rendered in the pull request body as Summary, Evidence and Merge danger, and in the web app.
+The evidence bundle is rendered in the pull request body as Summary, Evidence and Merge danger, and in the web app. It lists the **rulings** the agent made ("decisions made for you") and anything the policy denied, so a person can judge them in one pass at the gate.
 
 **Usage has three states**, never a guess:
 
@@ -216,7 +232,7 @@ Principle: **a place to act, not a dashboard.** The first screen answers "what n
 | ? Can a booking move after it started?           [answer]    |
 | * PR 14 ready, risk low, evidence                [review]    |
 + LIVE --------------------------------------------------------+
-| > 9 reschedule API, claude, autopilot, 4m, running tests     |
+| > 9 reschedule API, claude, 4m, running tests                |
 +--------------------------------------------------------------+
 ```
 
@@ -224,9 +240,11 @@ The dial, one per task:
 
 ```
  implement                                  ceiling: autopilot
-   off     co-pilot    [AUTOPILOT]    merge (locked)
+   off      guided     [AUTOPILOT]    merge (locked)
     o---------o------------O- - - - - - - x
  last 30 days: 14 runs, 11 merged, 2 reworked, 0 reverted
+ your attention: 1.2 touches per merged pull request
+ 4 questions, 31 rulings, 2 overturned
  merge is locked: needs an enforced rung and a longer record
 ```
 
@@ -236,9 +254,9 @@ Screens in v0.1:
 |---|---|---|
 | Home | Each goal as a pipeline strip. The inbox. Live runs | New goal. Answer. Open |
 | Goal | Phases, the spec, tickets with state, runs, usage | Answer questions. Open the spec pull request |
-| Run | Live transcript, stage, mode, evidence bundle, usage, limits | Cancel |
-| Inbox | Questions, specs to approve, pull requests to review, work waiting for a co-pilot, runs that need a person, held tickets with the reason | Answer. Open on GitHub |
-| Autonomy | A dial per task with its ceiling, the trust ledger beside each | Move a dial. Pause all |
+| Run | Live transcript, stage, evidence bundle with rulings and denials, usage, limits | Cancel. Take the wheel |
+| Inbox | Everything that waits at a gate, batched: questions, specs and plans to approve, pull requests to review, runs that need a person, held tickets with the reason | Answer. Open on GitHub |
+| Autonomy | A dial per task with its ceiling, the trust ledger and the attention record beside each | Move a dial. Pause all |
 | Tasks | Each task as a card: trigger, reads and writes, next step, where a person re-enters, what stops double work, method | View the file |
 | Settings | Repository, harnesses found, review cap, readiness report | Edit machine settings |
 
@@ -260,7 +278,8 @@ One Go binary, `oxf`.
 | `governance` | Interface. v0.1: local, with usage as reported and the three usage states |
 | `verify` | Diff, protected paths with real glob matching, checks, risk rules, evidence bundle |
 | `orchestrator` | Polls, matches triggers to tasks, applies the dial, throttles, the review cap and claims, drives the three stages |
-| `copilot` | The Model Context Protocol endpoint: list, claim, ask, submit |
+| `policy` | The permission policy for a run: what is allowed, what is denied and recorded |
+| `wheel` | The Model Context Protocol endpoint for taking the wheel: list, claim, ask, submit |
 | `server` | JSON API, server-sent events, the embedded web app |
 | `web/` | The Svelte app |
 
@@ -281,17 +300,17 @@ Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 
 | Release | Content |
 |---|---|
-| v0.1 | Local runner with existing logins. Autopilot and co-pilot. The dial and trust ledger. Goal to spec to tickets to evidenced pull requests. Web app. Demo mode |
+| v0.1 | Local runner with existing logins. Unattended runs with gates. The dial, trust ledger and attention record. Take the wheel. Goal to spec to tickets to evidenced pull requests. Web app. Demo mode |
 | v0.2 | Checks from the spec that the builder cannot touch. Learning loop. Container runner with an API key. Starter template |
 | v0.3 | Ship phase. `oxf run --once`. Kubernetes Job runner |
 | v0.4 | Observe phase. OpenAgentix governance provider, as far as the platform allows then |
 
 Build order inside v0.1 **(call)**:
 
-1. Autopilot slice: a ready ticket, the local `claude` or `codex` in a worktree, verify, an evidenced draft pull request.
+1. Unattended slice: a ready ticket, the local `claude` or `codex` in a worktree under a permission policy, verify, an evidenced draft pull request.
 2. The web app on top: pipeline, inbox, live run, evidence, the dial.
-3. Co-pilot: the endpoint and the plugin.
-4. The front half: goal to spec to tickets.
+3. The front half: goal to spec to tickets, with batched questions.
+4. Take the wheel: the endpoint and the plugin.
 
 There is a useful product after step 2 if later steps slip.
 
@@ -303,7 +322,8 @@ There is a useful product after step 2 if later steps slip.
 - Building features with agents is the least proven use in the research. Maintenance work is where factories succeed today. Expect rework. The trust ledger exists to show it.
 - No research in hand covers teams of two to twenty. That audience is a bet.
 - Hosted app builders already serve founders who want a prototype. We serve people who want to own and trust the result.
-- Headless Claude Code and Codex are confirmed by flag, not by run.
+- Headless Claude Code and Codex are confirmed by flag, not by run. So is running them under a permission policy with no prompts.
+- An agent can make a wrong ruling. Rulings are shown, and the verify stage is outside the agent, but a bad choice that passes the checks reaches the reviewer.
 - This is a large v0.1 for one maintainer. The build order protects against that.
 
 ## 14. Settled after a builder's review

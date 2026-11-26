@@ -10,7 +10,7 @@ Every dependency that is built into `oxf`, with its licence. The project embeds 
 
 ## Programs that are started, not shipped
 
-OpenAgentix Factory starts these programs when they are installed on the user's machine. They are not part of this repository or of any build from it. Each has its own licence and terms.
+OpenAgentix Software Factory starts these programs when they are installed on the user's machine. They are not part of this repository or of any build from it. Each has its own licence and terms.
 
 | Program | Licence |
 |---|---|

@@ -1,6 +1,6 @@
-# Contributing to OpenAgentix Factory
+# Contributing to OpenAgentix Software Factory
 
-Thank you for looking. OpenAgentix Factory is a new project with one maintainer, and it wants more. This page says how to build it, how to send a change, and how you can become a maintainer.
+Thank you for looking. OpenAgentix Software Factory is a new project with one maintainer, and it wants more. This page says how to build it, how to send a change, and how you can become a maintainer.
 
 By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). How the project is run is in [GOVERNANCE.md](GOVERNANCE.md). Who the maintainers are is in [MAINTAINERS.md](MAINTAINERS.md).
 

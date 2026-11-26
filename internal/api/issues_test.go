@@ -44,7 +44,7 @@ func TestParseIssues_Invalid(t *testing.T) {
 	const head = `{"schemaVersion":1,"issues":[`
 	tests := []struct{ name, input, wantErr string }{
 		{"empty", "", "issues"},
-		{"unknown field", `{"schemaVersion":1,"issues":[],"x":1}`, "x"},
+		{"unknown field", `{"schemaVersion":1,"issues":[],"x":1}`, `unknown field "x"`},
 		{"wrong version", `{"schemaVersion":2,"issues":[{"title":"t"}]}`, "schemaVersion"},
 		{"no issues", `{"schemaVersion":1,"issues":[]}`, "issues: must hold"},
 		{"no title", head + `{"body":"b"}]}`, "issues[0].title"},

@@ -78,7 +78,7 @@ func TestParseResult_Invalid(t *testing.T) {
 	}{
 		{"empty", "", "result"},
 		{"not json", "{", "result"},
-		{"unknown field", head + `,"bogus":1}`, "bogus"},
+		{"unknown field", head + `,"bogus":1}`, `unknown field "bogus"`},
 		{"trailing data", head + `} {}`, "trailing"},
 		{"missing schema version", `{"status":"failed","summary":"x"}`, "schemaVersion"},
 		{"wrong schema version", `{"schemaVersion":2,"status":"failed","summary":"x"}`, "schemaVersion"},
@@ -89,7 +89,7 @@ func TestParseResult_Invalid(t *testing.T) {
 		{"claims as strings", head + `,"claims":["a"]}`, "claims"},
 		{"claim without text", head + `,"claims":[{"files":["a"]}]}`, "claims[0].text"},
 		{"claim empty file", head + `,"claims":[{"text":"a","files":[""]}]}`, "claims[0].files[0]"},
-		{"claim unknown field", head + `,"claims":[{"text":"a","x":1}]}`, "x"},
+		{"claim unknown field", head + `,"claims":[{"text":"a","x":1}]}`, `unknown field "x"`},
 		{"claim absolute file", head + `,"claims":[{"text":"a","files":["/etc/passwd"]}]}`, "claims[0].files[0]"},
 		{"claim parent file", head + `,"claims":[{"text":"a","files":["../x.go"]}]}`, "claims[0].files[0]"},
 		{"claim dot file", head + `,"claims":[{"text":"a","files":["./x.go"]}]}`, "claims[0].files[0]"},

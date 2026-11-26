@@ -41,7 +41,7 @@ func TestParseReview_Invalid(t *testing.T) {
 	const head = `{"schemaVersion":1,"subject":"spec","verdict":"concerns"`
 	tests := []struct{ name, input, wantErr string }{
 		{"empty", "", "review"},
-		{"unknown field", head + `,"x":1}`, "x"},
+		{"unknown field", head + `,"x":1}`, `unknown field "x"`},
 		{"wrong version", `{"schemaVersion":2,"subject":"spec","verdict":"agrees"}`, "schemaVersion"},
 		{"bad subject", `{"schemaVersion":1,"subject":"code","verdict":"agrees"}`, "subject"},
 		{"bad verdict", `{"schemaVersion":1,"subject":"spec","verdict":"yes"}`, "verdict"},

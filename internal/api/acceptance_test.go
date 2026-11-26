@@ -29,7 +29,7 @@ func TestParseManifest_Invalid(t *testing.T) {
 	const head = `{"schemaVersion":1,"goal":40,"criteria":[`
 	tests := []struct{ name, input, wantErr string }{
 		{"empty", "", "manifest"},
-		{"unknown field", head + `],"x":1}`, "x"},
+		{"unknown field", head + `],"x":1}`, `unknown field "x"`},
 		{"wrong version", `{"schemaVersion":2,"goal":40,"criteria":[{"id":1,"text":"t","run":"x"}]}`, "schemaVersion"},
 		{"no goal", `{"schemaVersion":1,"criteria":[{"id":1,"text":"t","run":"x"}]}`, "goal"},
 		{"no criteria", head + `]}`, "criteria: must hold"},

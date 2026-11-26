@@ -45,7 +45,7 @@ func TestParseFactory_Valid(t *testing.T) {
 
 func TestParseFactory_Strict(t *testing.T) {
 	_, err := ParseFactory([]byte(validFactoryYAML + "extra: 1\n"))
-	if err == nil || !strings.Contains(err.Error(), "extra") {
+	if err == nil || !strings.Contains(err.Error(), "field extra not found") {
 		t.Fatalf("err = %v", err)
 	}
 	_, err = ParseFactory(nil)

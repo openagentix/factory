@@ -39,7 +39,7 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 		if len(msg) > 300 {
 			msg = msg[:300] + "..."
 		}
-		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, msg)
+		return nil, fmt.Errorf("git %s: %w: %s", subcommand(args), err, msg)
 	}
 	return stdout.Bytes(), nil
 }
@@ -55,4 +55,17 @@ func resolveCommit(ctx context.Context, dir, rev string) (string, error) {
 		return "", fmt.Errorf("revision %q is not a commit", rev)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// subcommand names the git subcommand in an argument list that may start
+// with "-c name=value" pairs.
+func subcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-c" {
+			i++
+			continue
+		}
+		return args[i]
+	}
+	return ""
 }

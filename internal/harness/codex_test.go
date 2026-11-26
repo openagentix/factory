@@ -75,7 +75,7 @@ func TestCodexReadSandboxRun(t *testing.T) {
 		t.Errorf("harness = %+v", sum.Harness)
 	}
 	k := kinds(events)
-	if k[api.EventMessage] != 4 || k[api.EventTool] != 22 || k[api.EventStatus] < 3 {
+	if k[api.EventMessage] != 4 || k[api.EventTool] != 20 || k[api.EventStatus] < 3 {
 		t.Errorf("kinds = %v", k)
 	}
 	for _, e := range events {

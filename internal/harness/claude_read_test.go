@@ -82,6 +82,9 @@ func TestClaudeReadMeteredRunWithADenial(t *testing.T) {
 
 func TestClaudeReadPlanBillingKeepsNoDollarFigure(t *testing.T) {
 	sum, _ := readFixture(t, fixedClaude(), "claude-plan.jsonl")
+	if sum.Skipped != 0 {
+		t.Errorf("skipped = %d, want 0", sum.Skipped)
+	}
 	if sum.Usage.Billing != api.BillingPlan {
 		t.Errorf("billing = %q", sum.Usage.Billing)
 	}
@@ -90,10 +93,6 @@ func TestClaudeReadPlanBillingKeepsNoDollarFigure(t *testing.T) {
 	}
 	if sum.Usage.OutputTokens != 4 || sum.Turns != 1 || !sum.Complete {
 		t.Errorf("summary = %+v", sum)
-	}
-	// The rate limit event is a kind the adapter does not know.
-	if sum.Skipped != 1 {
-		t.Errorf("skipped = %d, want 1", sum.Skipped)
 	}
 }
 
@@ -201,5 +200,14 @@ func TestReadDropsAHugeLineAndKeepsGoing(t *testing.T) {
 	}
 	if sum.Skipped != 1 || len(events) != 1 || events[0].Text != "after" {
 		t.Errorf("skipped=%d events=%+v", sum.Skipped, events)
+	}
+}
+
+func TestClaudeReadCountsASyntheticUnknownEvent(t *testing.T) {
+	in := `{"type":"some_future_event","note":"synthetic"}` + "\n" +
+		`{"type":"result","subtype":"success","num_turns":1}` + "\n"
+	sum, _ := fixedClaude().Read(strings.NewReader(in), func(api.Event) {})
+	if sum.Skipped != 1 || !sum.Complete {
+		t.Errorf("summary = %+v", sum)
 	}
 }

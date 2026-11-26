@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "goal": 40,
+  "criteria": [
+    { "id": 1, "text": "A customer can move a booking to another day", "run": "go test ./acceptance/40 -run TestMoveBooking" },
+    { "id": 2, "text": "Works on a phone", "run": "", "reason": "No phone browser is available to the checks" }
+  ]
+}

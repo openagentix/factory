@@ -3,15 +3,19 @@ kind: Task
 metadata:
   name: review
 spec:
-  description: Read a new pull request and leave review comments. Never changes code.
+  description: Read a change and write review.json. Never changes code.
   trigger:
     pullRequestOpened: {}
   worker:
     harness: codex
+  method: builtin
   prompt: prompts/review.md
+  permissions:
+    commands: ["git diff", "go test ./..."]
   limits:
     deadline: 15m
     maxCostUSD: 2
+  autonomy: { ceiling: 2 }
   outputs:
     comment: true
   concurrencyKey: "pr-{{ .Number }}"

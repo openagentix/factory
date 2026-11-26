@@ -3,22 +3,29 @@ kind: Task
 metadata:
   name: implement
 spec:
-  description: Turn a ready ticket into a draft pull request.
+  description: Build one ready ticket as a change.
   trigger:
-    issueLabeled: { label: ready-for-agent }
+    issueLabeled: { label: "factory:ready" }
     throttle: { maxPerDay: 5 }
   worker:
     harness: claude-code
+  # builtin, plugin:<name>, or a prompt file in the repository.
+  method: builtin
   prompt: prompts/implement.md
+  # The commands the run may use. Anything else is denied.
+  permissions:
+    commands: ["go build ./...", "go test ./..."]
   protectedPaths:
     - "**/*_test.go"
-    - ".github/**"
   checks:
     - { name: test, run: "go test ./..." }
   limits:
     deadline: 30m
     maxCostUSD: 5
-    maxAttempts: 2
+    # Attempts per ticket, shared with fix-ci.
+    maxAttempts: 3
+  # The highest dial level: 0 off, 1 guided, 2 autopilot, 3 automatic accept.
+  autonomy: { ceiling: 2 }
   outputs:
     pullRequest: { draft: true }
     comment: true

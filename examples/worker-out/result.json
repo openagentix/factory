@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "status": "succeeded",
+  "summary": "Customers can move a booking to another day.",
+  "claims": [
+    { "text": "Added a move endpoint with a test", "files": ["internal/booking/move.go", "internal/booking/move_test.go"] }
+  ],
+  "criteria": [
+    { "id": 1, "opinion": "met", "note": "Covered by the new handler" }
+  ],
+  "rulings": [
+    { "decision": "Kept the old endpoint as an alias", "why": "Two callers still use it", "costIfWrong": "One extra route to remove later" }
+  ],
+  "questions": [],
+  "usage": { "billing": "plan", "inputTokens": 12000, "outputTokens": 3400 },
+  "harness": { "name": "claude-code", "version": "2.1.326", "model": "" }
+}

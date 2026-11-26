@@ -93,19 +93,41 @@ Durable state lives in the git host and the orchestrator's store. An unattended 
 
 ## A run and its three stages
 
-1. **Work.** The worker gets a checkout of the current staging state on a new branch (for `review`, of its subject), the input files and a prompt. The factory gives it no git host credential. It edits files. It does not commit. After the work stage the orchestrator makes one commit from the worktree, under the factory's own author name. A trial showed that one harness's sandbox blocks writes to git's own files, and this way no run needs git in its policy.
+1. **Work.** The worker gets a plain directory holding the files of the current staging state (for `review`, of its subject), the input files and a prompt. The directory has no `.git`. The factory gives it no git host credential. It edits files. It does not commit. After the work stage the orchestrator imports the directory's files into the factory's own repository and makes one commit there, under the factory's own author name. A trial showed that one harness's sandbox blocks writes to git's own files, and this way no run needs git in its policy.
 2. **Verify.** The orchestrator computes the change, checks protected paths, and runs the task's checks and the acceptance checks on a clean checkout of the commit, with no model access. The checks run code the worker wrote, so they are run as the worker is run: with the same scrubbed environment, never with the tokens in their environment, and inside an operating system sandbox that limits writes to the checkout. The orchestrator starts that sandbox itself, because the harness sandbox covers only the harness. Which sandbox tool is used on each system is not settled, and until it is, checks and Try it run with the scrubbed environment only. That is a stated limit. Then it builds the evidence bundle.
 3. **Publish.** The publish step performs the actions the output files ask for, from a fixed list (see Credentials).
 
-An unattended run never asks a person. Each run has a **permission policy**: the commands it may run (`spec.permissions.commands`) and the paths it may write, which are the worktree only. The adapter turns it into the harness's own settings. A request outside the policy is denied and recorded. A harness is never started in a mode that asks a person during an unattended run, and never in a mode that skips all permission checks.
+An unattended run never asks a person. Each run has a **permission policy**: the commands it may run (`spec.permissions.commands`) and the paths it may write, which are the workspace directory only. The adapter turns it into the harness's own settings. A request outside the policy is denied and recorded. A harness is never started in a mode that asks a person during an unattended run, and never in a mode that skips all permission checks.
 
 The **unattended contract** is a fixed text placed before any method in every run after the plan is approved: you run unattended; never ask for confirmation; where your method says to ask a person, if the choice can be undone and is inside the ticket, decide and record a ruling; otherwise write the question to the result and stop. The contract also lists what the run's policy allows, and says that a denied command is denied alone, so the agent must try an allowed way before it gives up. A trial run stopped wrongly after one denial because it was told neither.
 
-**Take the wheel.** A person can do a work stage, or a planning session, in their own session. `oxf` serves a Model Context Protocol endpoint with four tools, a public contract: `factory_list` (goals to plan and ready tickets), `factory_claim` (claims a goal or ticket, makes the worktree, returns the brief and paths), `factory_ask` (posts a question through the publish step), `factory_submit` (hands back a spec, a plan or a change). Verify, review, the machine gate and publish are unchanged.
+**Take the wheel.** A person can do a work stage, or a planning session, in their own session. `oxf` serves a Model Context Protocol endpoint with four tools, a public contract: `factory_list` (goals to plan and ready tickets), `factory_claim` (claims a goal or ticket, makes the workspace directory, returns the brief and paths), `factory_ask` (posts a question through the publish step), `factory_submit` (hands back a spec, a plan or a change). Verify, review, the machine gate and publish are unchanged.
 
 **Claims across machines.** A run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The earliest marker wins and the other run ends with no change. A claim expires after a set time, so a crashed machine does not hold a ticket for ever. The time is a setting with no default yet.
 
 **Triggers** act only on events from a user with write access, or from the factory itself. Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer or approval given in the web app is posted with an answer marker and counts as the person's. Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
+
+## The factory's own repository
+
+Git obeys settings stored in a repository: programs to run, addresses to rewrite, other places to read objects from. Packages of the first build were broken this way more than once, by a second agent told to attack them. One attack sent the propose token to another server. The pull requests of 2026-11-26 hold the record. So:
+
+- **The factory never runs a network git command, and never reads configuration, in a directory an agent or a check has worked in.** It keeps its own bare repository per project, which it creates itself, in its own data directory. Every judgement starts there.
+- **The agent's workspace is a plain directory with no `.git`.** The orchestrator writes the files out from its own repository before the run and imports them back after it. This step is designed and not built yet. It belongs to the runner. An agent that wants git commands has none. The harness's own file tools do not need them.
+- **A guard runs first in every function of the verify stage that uses git.** It fails closed unless every configuration key and every entry in the repository's layout is on a fixed list. It accepts known-good things. It does not hunt for known-bad ones. Creating the repository is the one git command that runs before it, on an empty directory.
+- **A push runs from a fresh temporary repository**, into which one commit is fetched from a directory the caller names. That fetch has hardened settings and no guard of its own, so the caller must name the factory's own repository. The remote address is built by the factory. The token is given only to that exact host over https, and only to the one step that pushes.
+- **Checks run on a copy written from git objects**, with no `.git`, an allowlisted environment and an empty home directory.
+
+The limit: the guard detects a repository that was tampered with, at the start of each call. It cannot stop a process running as the same user from changing the repository between calls. A check runs code the agent wrote, as that user. A separate operating system user for `oxf`, or a sandbox around checks, is what reduces this. Neither exists in the first release.
+
+## How changes to the factory itself are reviewed
+
+Every package of the first build passed its own tests. Most then failed a review by a second agent that was told to attack it. The findings are listed in the threat model. So for this project, and as the default for the `review` task on security-relevant paths:
+
+- The reviewer is told who the attacker is and what they control, and is asked to break the change with inputs of its own, not to read it for style.
+- A finding counts when the reviewer made it happen: a program ran, a token arrived somewhere, a file was written outside its place.
+- A fix is first a failing test that reproduces the finding.
+- When the same family of finding returns, the approach changes from refusing bad inputs to accepting only known-good ones.
+- Two rework rounds, then stop and decide. What remains is written on the change as a known limit and filed as a ticket.
 
 ## Credentials
 
@@ -118,7 +140,7 @@ The factory never gives a worker a credential for the git host. The publish step
 
 The git host must enforce the split. On GitHub a token that can push a branch can also merge, so the propose token's user must be one that branch protection does not allow to update the default branch. The factory checks the protection rules at start and shows a standing warning when they are missing. For `factory-staging`, restrict who may push to the propose token's user. Do not forbid force pushes: every rebuild needs one.
 
-**Local mode limit.** In local mode the worker runs as the same operating system user as `oxf`. The factory cannot stop it reading what that user can read, including the home directory. Controls: the tokens are kept in the operating system's credential store, not in a plain file; git host credentials are removed from the worker's environment; the harness sandbox limits reads outside the worktree where the harness supports it. Recommended setup on a dedicated machine, not built in the first release: run `oxf` under its own operating system user, apart from the user the agent runs as.
+**Local mode limit.** In local mode the worker runs as the same operating system user as `oxf`. The factory cannot stop it reading what that user can read, including the home directory. Controls: the tokens are kept in the operating system's credential store, not in a plain file; git host credentials are removed from the worker's environment; the harness sandbox limits reads outside the workspace directory where the harness supports it. Recommended setup on a dedicated machine, not built in the first release: run `oxf` under its own operating system user, apart from the user the agent runs as.
 
 ## The worker contract
 
@@ -128,7 +150,7 @@ The same for every runner and every harness. Paths are shown as in a container. 
 
 | Path or variable | Content |
 |---|---|
-| `/workspace` | A checkout of the staging state on a new branch. Read-write. No remote credential is given |
+| `/workspace` | The files of the staging state, as a plain directory with no `.git`. Read-write. No remote credential is given |
 | `/factory/in/task.json` | The resolved task, read-only |
 | `/factory/in/prompt.md` | Unattended contract, method, task prompt, trigger data. Ticket and comment text is marked as untrusted |
 | `/factory/in/trigger.json` | The trigger payload, and for rework the review points and the failure record |
@@ -347,7 +369,7 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 
 | Where | Runner | Governance |
 |---|---|---|
-| Local, first release | A process in a fresh git worktree | The person's own login, usage as reported |
+| Local, first release | A process in a fresh workspace directory | The person's own login, usage as reported |
 | Container, later | Docker, with a worker image built on the person's machine | An API key |
 | Kubernetes, later | A Job | Metered model access |
 | OpenAgentix, later | A Job, or platform runs when `AgentRun` and `Workspace` exist | A gateway key per run, an enforced budget, an audit record |
@@ -452,5 +474,7 @@ Left to the first real runs, and not designed further here:
 - Two harnesses from the start keep the contract honest, at the cost of two adapters. Polling adds delay before a run starts.
 
 ## History
+
+The sections on the factory's own repository and on how changes are reviewed were added on 2026-11-26 from what the first build showed.
 
 This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for a person who will not read a change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.

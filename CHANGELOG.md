@@ -8,6 +8,11 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ### Added
 
+- `internal/store`: run records and dial settings behind an interface, with a pure Go SQLite implementation. A finished run cannot be changed.
+- `internal/harness`: adapters that start Claude Code and Codex unattended under a permission policy and read their events, a prompt renderer with the unattended contract, and a stub agent for tests.
+- `internal/githost`: the fixed list of git host actions, with two tokens kept apart, a GitHub client and an in-memory fake.
+- `internal/verify`: reads a change, enforces protected paths, runs checks on a clean copy, rates risk by rules and builds the evidence bundle. It works only on a repository the factory created.
+- The core record now says how the factory keeps its own repository and how changes to the factory are reviewed, from what the first build showed.
 - Design document for OpenAgentix Software Factory (`docs/design.md`), a draft. Nothing in it is proven by a run.
 - Decision record 0001, core contracts, as one consolidated record: three moments for a person and an outcome view in plain words; acceptance checks written before building that the builder cannot change; a machine gate of verify, independent review and rule-based risk; a staging branch that is rebuilt on every event, with Accept and Undo; a propose token and an optional, separate accept token; interactive planning with no limit, then unattended work; quick and standard lanes; methods including installed plugins; the dial with autopilot as the default; trust from outcomes after Accept; trajectory per goal, with off course re-planned with the person. A proposal.
 - Decision record 0002, threat model for the single-machine factory, matching record 0001. A proposal.

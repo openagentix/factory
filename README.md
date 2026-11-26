@@ -62,7 +62,7 @@ go run ./cmd/oxf version
 
 | Where | Isolation and limits |
 |---|---|
-| A laptop or a dedicated machine. This is the first release | A git worktree and the agent's own sandbox. Best effort. The same trust as running the agent yourself |
+| A laptop or a dedicated machine. This is the first release | A workspace directory and the agent's own sandbox. Best effort. The same trust as running the agent yourself |
 | Kubernetes, later | A container per run |
 | [OpenAgentix](https://github.com/openagentix/openagentix), later | Enforced budgets, outbound rules and audit |
 

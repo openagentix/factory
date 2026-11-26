@@ -38,7 +38,7 @@ First: a small team with an existing codebase on GitHub, and solo founders. **(o
 
 | Where it runs | Who | Model access | Isolation |
 |---|---|---|---|
-| A laptop | One person, trying it or working with it | Existing Claude and Codex logins | A git worktree and the harness's own sandbox |
+| A laptop | One person, trying it or working with it | Existing Claude and Codex logins | A workspace directory and the harness's own sandbox |
 | A dedicated machine, such as a Mac mini | A founder or a small team that wants it always on | The same | The same |
 | Kubernetes | Larger teams | Metered: API key or gateway | A container per run |
 | OpenAgentix | Enterprises | Gateway key per run | Enforced budget, outbound rules, audit |
@@ -117,7 +117,7 @@ Planning is with the person and has no limit. After the plan is approved, every 
 
 | Interruption today | What the factory does instead |
 |---|---|
-| A permission prompt: "may I run this command?" | **Policy decides.** The run has an allowlist and a sandboxed worktree. Inside the policy it runs. Outside, it is denied and recorded. Nobody is asked |
+| A permission prompt: "may I run this command?" | **Policy decides.** The run has an allowlist and a sandboxed workspace directory. Inside the policy it runs. Outside, it is denied and recorded. Nobody is asked |
 | A checkpoint while the work is built: "continue?", "is this approach fine?" | **The agent rules, the factory records.** If the choice can be undone and is inside the ticket, the agent decides and writes a ruling: what, why, and the cost if wrong. The machine gate is the real approval |
 | A real question that only the person can answer | **It goes to the inbox.** The run ends. Other work goes on. The person answers a batch in one sitting, and the answer starts the next run |
 
@@ -169,7 +169,7 @@ After the plan is approved, the factory puts one **unattended contract** in fron
 
 Changing how a method behaves in this way is accepted for unattended runs. **(owner)** During planning a plugin's interactive steps are used as they are. The factory judges the result contract, not the route. **(call)**
 
-**Take the wheel.** A person can plan a goal, or claim any ticket, in their own Claude Code or Codex session and hand the result back. `oxf` serves a Model Context Protocol endpoint for this: list goals and ready work, claim one (which makes a worktree and a branch and returns the brief), ask a question, submit a spec, a plan or a change. Verify, the machine gate, evidence and publish are the same. This is also the fallback if subscription terms do not allow unattended runs. **(call)**
+**Take the wheel.** A person can plan a goal, or claim any ticket, in their own Claude Code or Codex session and hand the result back. `oxf` serves a Model Context Protocol endpoint for this: list goals and ready work, claim one (which makes a workspace directory and returns the brief), ask a question, submit a spec, a plan or a change. Verify, the machine gate, evidence and publish are the same. This is also the fallback if subscription terms do not allow unattended runs. **(call)**
 
 **Several machines.** State is in GitHub, so each teammate can run `oxf` on their own machine. A run claims its ticket with a label and a marker comment, reads back, and the earliest claim wins. A claim expires after a set time, so a crashed machine does not hold it for ever. One machine at a time holds the staging claim for a repository, by the same rule, and only it combines, rebuilds and accepts. No shared server is needed. **(call)**
 
@@ -232,7 +232,7 @@ Rules **(calls)**:
 
 ## 8. Inside one run, and staging
 
-1. **Work.** `oxf` makes a worktree from the current staging state, writes the input files, and starts the harness with no terminal, a deadline, a permission policy, its strictest workable sandbox setting and no git host credential in its environment. When a person takes the wheel, their session works in the worktree instead.
+1. **Work.** `oxf` writes the files of the current staging state into a plain workspace directory with no `.git`, writes the input files, and starts the harness with no terminal, a deadline, a permission policy, its strictest workable sandbox setting and no git host credential in its environment. When a person takes the wheel, their session works in the workspace directory instead.
 2. **Verify.** `oxf` computes the change, fails the run on a change to a protected path, runs the task's checks and the acceptance checks on a clean checkout of the commit with no model access, in the same scrubbed environment and sandbox as the worker, and builds the evidence bundle.
 3. **Publish.** `oxf` pushes a `factory/` branch, opens a draft pull request into staging, comments, labels or creates tickets, with a **propose token**. A fixed list of actions, none of which writes to the default branch.
 
@@ -339,7 +339,7 @@ One Go binary, `oxf`.
 | `api` | Shared types, strict parsing, validation. **Built.** |
 | `store` | SQLite: run records shaped like the planned OpenAgentix `AgentRun`, staging states, outcomes, dial settings and their log |
 | `githost` | Interface, a GitHub implementation and a fake. Polls, reads, and performs the fixed publish actions with the propose or accept token |
-| `runner` | Interface. v0.1: a **local** runner (a process in a worktree) and a fake. Later: container, Kubernetes Job |
+| `runner` | Interface. v0.1: a **local** runner (a process in a workspace directory) and a fake. Later: container, Kubernetes Job |
 | `harness` | Thin adapters that build the command line for `claude`, `codex` and the stub, and read their event streams |
 | `governance` | Interface. v0.1: local, with usage as reported and the three usage states |
 | `verify` | Diff, protected paths with real glob matching, checks, acceptance checks and criterion states, risk rules, the machine gate, evidence bundle |

@@ -54,14 +54,14 @@ In the first release the work stage is a process on the person's own machine, st
 
 | # | Threat | Control in the first release | What remains |
 |---|---|---|---|
-| L1 | Ticket text steers the agent to use the person's git credentials | Token variables, the credential helper and the agent socket are removed from the process environment. The harness sandbox limits reads outside the worktree where the harness supports it. Only users with write access trigger runs | The home directory is readable by the same user. A determined attack can find credentials there. This is the same exposure as running the agent by hand on an untrusted ticket. A separate operating system user for `oxf` narrows it and is recommended, not built |
-| L2 | The agent reads or changes files outside the worktree | The harness sandbox limits writes, and reads where supported, to the worktree | Depends on the harness. Not verified by a run |
+| L1 | Ticket text steers the agent to use the person's git credentials | Token variables, the credential helper and the agent socket are removed from the process environment. The harness sandbox limits reads outside the workspace directory where the harness supports it. Only users with write access trigger runs | The home directory is readable by the same user. A determined attack can find credentials there. This is the same exposure as running the agent by hand on an untrusted ticket. A separate operating system user for `oxf` narrows it and is recommended, not built |
+| L2 | The agent reads or changes files outside the workspace directory | The harness sandbox limits writes, and reads where supported, to the workspace directory | Depends on the harness. Not verified by a run |
 | L3 | The agent leaks private files to the network | No control | Open. Outbound network is not restricted |
 | L4 | The factory mishandles a login token | It never reads, copies or forwards one. It only starts the official program. A test asserts the factory code never opens the harness credential stores | None known |
 | L5 | Someone on the local network reaches the web app or the take-the-wheel endpoint | Both listen on localhost by default. Another address needs a login token | No user accounts |
 | L6 | Two machines work the same ticket, or a crashed machine holds it | Claim by label and marker comment, earliest wins. A claim expires after a set time | A short window of double work. The expiry time has no default yet |
 | L7 | A person who took the wheel submits weak work | The same verify stage, independent review and machine gate as an unattended run | None beyond the limits of the gate |
-| L8 | With no prompts, the agent runs a harmful command that a person would have refused | A permission policy per run: an allowlist of commands, writes limited to the worktree. Outside the policy is denied and recorded | The policy is only as good as its list, and depends on each harness honouring it. Not verified by a run |
+| L8 | With no prompts, the agent runs a harmful command that a person would have refused | A permission policy per run: an allowlist of commands, writes limited to the workspace directory. Outside the policy is denied and recorded | The policy is only as good as its list, and depends on each harness honouring it. Not verified by a run |
 | L9 | The agent makes a wrong choice where it used to ask | Rulings are recorded and shown in the engineering view. Verify and review are outside the agent | A wrong ruling that passes the gate reaches staging. The person sees its effect only through the acceptance list |
 | L10 | A person accepts without trying, and the factory takes that as trust | Accept is never evidence. Trust comes from outcomes after Accept, and only when the change was exercised | Outcomes take time and can be silent. With one maintainer there is no second person |
 | L11 | The review is steered by text in the change, or shares the builder's blind spot | The review writes a fixed schema. A change whose review did not agree is never combined, not even by a person. A same-harness review marks the change single-opinion, which never counts toward automatic Accept. High risk by content is always a question to the person | A steered review that says "agrees" lets a medium or low risk change into staging when its checks pass |
@@ -71,6 +71,20 @@ In the first release the work stage is a process on the person's own machine, st
 | L15 | A planning session is steered by ticket text or a plugin | Planning is a live conversation the person watches. A planning session in the web app writes only the spec, the plan and notes, under a permission policy. Its output still passes an independent review shown to the person | A person who approves a plan without reading it |
 
 Never start a harness with a flag that skips all permission checks on a person's own machine. No prompts in unattended runs must come from a policy, not from switching checks off.
+
+## Found during the first build
+
+A second agent, told to attack each package, made these happen before anything was merged. Each is fixed and kept as a test.
+
+| Found | Fix |
+|---|---|
+| Repository settings made the orchestrator's git run a program, outside any sandbox | The factory's own repository, a guard with fixed lists, a checkout written from objects |
+| Repository settings sent the propose token to another server during a push | A push from a fresh temporary repository, an address the factory builds, a credential only for that exact host |
+| A value that starts with a dash became a flag of the harness, including one that turns permission checks off | Every value validated and passed as `--flag=value`, with a test that allows only known flags. Run for real once, with Claude Code only |
+| The stub agent wrote and deleted outside its directories | Resolved paths, no links followed, runs only when switched on |
+| A finished run record could be rewritten | No update to a run in a terminal phase |
+| The run database was readable by other users of the machine | Directory 0700, files 0600 |
+| A path written in an odd form slipped past the acceptance path protection | One rule for every repository path |
 
 ## Honest summary
 

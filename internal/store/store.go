@@ -62,6 +62,23 @@ type LevelChange struct {
 	Level    api.Level
 }
 
+// ClampLevel returns the level cut down to the ceiling. A stored level can sit
+// above a ceiling that was lowered later, and a level that was never set is
+// the default, so read a level through this before you act on it. A negative
+// value counts as off.
+func ClampLevel(level, ceiling api.Level) api.Level {
+	if ceiling < api.LevelOff {
+		ceiling = api.LevelOff
+	}
+	if level < api.LevelOff {
+		return api.LevelOff
+	}
+	if level > ceiling {
+		return ceiling
+	}
+	return level
+}
+
 // Store is the run record and dial store. Every method is safe for use by
 // several goroutines in one process.
 type Store interface {
@@ -91,7 +108,10 @@ type Store interface {
 	FailInterrupted(ctx context.Context) (marked, damaged []string, err error)
 
 	// GetLevel returns the stored dial level of a task. When none was set it
-	// returns api.DefaultLevel and false.
+	// returns api.DefaultLevel and false. The stored level is not changed when
+	// a ceiling is lowered later, so it can sit above the ceiling. Pass it
+	// through ClampLevel with the current ceiling before you act on it. An
+	// empty task name is an error.
 	GetLevel(ctx context.Context, task string) (api.Level, bool, error)
 	// SetLevel stores the level, and logs the change. The ceiling comes from
 	// the task file or the platform. A level above it fails with

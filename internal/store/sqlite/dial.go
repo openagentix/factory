@@ -11,8 +11,13 @@ import (
 	"github.com/openagentix/factory/internal/store"
 )
 
+var errEmptyTask = errors.New("store: task name must not be empty")
+
 // GetLevel returns the dial level of a task, or the default when none is set.
 func (s *Store) GetLevel(ctx context.Context, task string) (api.Level, bool, error) {
+	if task == "" {
+		return 0, false, errEmptyTask
+	}
 	var level int
 	err := s.db.QueryRowContext(ctx, "SELECT level FROM dial_levels WHERE task = ?", task).Scan(&level)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -26,6 +31,9 @@ func (s *Store) GetLevel(ctx context.Context, task string) (api.Level, bool, err
 
 // SetLevel stores a level at or below the ceiling and logs the change.
 func (s *Store) SetLevel(ctx context.Context, task string, level, ceiling api.Level) error {
+	if task == "" {
+		return errEmptyTask
+	}
 	if err := api.CheckLevel(level, ceiling); err != nil {
 		if level.Valid() && ceiling.Valid() {
 			return fmt.Errorf("%w: task %q: %v", store.ErrAboveCeiling, task, err)
@@ -57,6 +65,9 @@ func (s *Store) SetLevel(ctx context.Context, task string, level, ceiling api.Le
 
 // LevelLog lists the changes to the level of a task, oldest first.
 func (s *Store) LevelLog(ctx context.Context, task string) ([]store.LevelChange, error) {
+	if task == "" {
+		return nil, errEmptyTask
+	}
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT at, previous, level FROM dial_log WHERE task = ? ORDER BY seq", task)
 	if err != nil {

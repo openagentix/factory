@@ -98,3 +98,17 @@ func TestLevelLog(t *testing.T) {
 		t.Errorf("log for an unknown task = %v", other)
 	}
 }
+
+func TestEmptyTaskNameRefused(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if err := s.SetLevel(ctx, "", api.LevelGuided, api.LevelAutopilot); err == nil {
+		t.Error("SetLevel accepted an empty task name")
+	}
+	if _, _, err := s.GetLevel(ctx, ""); err == nil {
+		t.Error("GetLevel accepted an empty task name")
+	}
+	if _, err := s.LevelLog(ctx, ""); err == nil {
+		t.Error("LevelLog accepted an empty task name")
+	}
+}

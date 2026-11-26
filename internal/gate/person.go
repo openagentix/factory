@@ -20,10 +20,9 @@ const (
 // "yes" cannot pass.
 var ErrYesRefused = errors.New("gate: a yes cannot pass this exception")
 
-// On an error it returns the zero Decision, which is not a pass.
-//
 // ApplyPersonDecision returns what happens next, given an exception and a
-// person's answer.
+// person's answer. On an error it returns the zero Decision, which is not a
+// pass.
 //
 // A yes passes only an exception of the high risk kind whose review agreed
 // and whose risk is high by content, for a task the risk rules apply to. For

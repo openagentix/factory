@@ -94,7 +94,7 @@ func (f *fixture) spec(script string) Spec {
 		Task:        api.Task{APIVersion: "factory.openagentix.org/v1", Kind: "Task"},
 		TriggerJSON: []byte(`{"issue":7}`),
 		Prompt:      harness.PromptParts{TaskPrompt: "Do it.", Trigger: "hello"},
-		Adapter:     harness.NewStub(oxfBinary),
+		Adapter:     &harness.Stub{Program: oxfBinary, AttackRoot: filepath.Dir(filepath.Dir(f.data))},
 		Harness:     harness.Spec{StubScript: p},
 		Author:      testAuthor,
 		Deadline:    time.Minute,
@@ -158,7 +158,7 @@ func killLater(t *testing.T, pid int) {
 
 // runDirs lists the run directories left in the data directory.
 func runDirs(f *fixture) []string {
-	ents, _ := os.ReadDir(f.data)
+	ents, _ := os.ReadDir(filepath.Join(f.data, "runs"))
 	var out []string
 	for _, e := range ents {
 		out = append(out, e.Name())

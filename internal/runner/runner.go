@@ -47,6 +47,9 @@ type Limits struct {
 	// PipeWait is how long the runner waits for the output pipes to end
 	// after the process group is gone.
 	PipeWait time.Duration
+	// CallbackWait is how long the runner waits at the end for a slow
+	// OnEvent callback to take the events it was given.
+	CallbackWait time.Duration
 }
 
 // Defaults of Limits and of the time settings.
@@ -56,6 +59,8 @@ const (
 	DefaultMaxEventsBytes = 16 << 20
 	DefaultMaxStderrBytes = 4 << 20
 	DefaultPipeWait       = 2 * time.Second
+	DefaultCallbackWait   = 5 * time.Second
+	callbackBuffer        = 1024
 	DefaultGrace          = 5 * time.Second
 )
 
@@ -75,6 +80,9 @@ func (l Limits) withDefaults() Limits {
 	if l.PipeWait <= 0 {
 		l.PipeWait = DefaultPipeWait
 	}
+	if l.CallbackWait <= 0 {
+		l.CallbackWait = DefaultCallbackWait
+	}
 	return l
 }
 
@@ -85,7 +93,8 @@ type Spec struct {
 	// and as the parent of the new commit.
 	Repo   *repo.Repo
 	Commit string
-	// DataDir is where run directories are made. It is made when absent.
+	// DataDir is where runs are made, in DataDir/runs (mode 0700), each in a
+	// directory with a long random name. It is made when absent.
 	DataDir string
 
 	// Task is the resolved task, written to in/task.json. TriggerJSON is
@@ -128,24 +137,30 @@ type Spec struct {
 
 	// KeepFailed keeps the run directory of a failed run for inspection.
 	KeepFailed bool
-	// OnEvent gets every event, in order, from one goroutine. It must not
-	// block for long.
+	// OnEvent gets the events, in order, from one goroutine, through a
+	// buffer. A callback that is too slow loses events (see
+	// Outcome.CallbackDropped) and never holds up the reading of the agent's
+	// output. A panic in it fails the run and kills the agent's group.
 	OnEvent func(api.Event)
 }
 
 // Outcome is everything the runner learned about one run.
 type Outcome struct {
-	// Failed is true when the run produced no usable result or no commit.
-	// Reason says why, in plain words.
-	Failed bool
+	// Status is the answer. The zero value means failed. Decide only from
+	// Status, never from the other fields alone.
+	Status Status
+	// Reason says why a run did not succeed, in plain words.
 	Reason string
-	// Result is the parsed result.json. Nil when there was none.
+	// Result is the parsed result.json. It is set only when Status is
+	// succeeded, succeeded with no change or needs a person. A failed
+	// outcome carries none, and its Reason says why.
 	Result *api.Result
 	// Summary is what the harness stream said at the end.
 	Summary harness.Summary
-	// Commit is the new commit, or the parent when nothing changed. Empty
-	// when the run failed before the import. Changed says whether the
-	// files differ from the parent.
+	// Commit is the new commit, or the parent when nothing changed. It is
+	// set only when Status is succeeded or succeeded with no change. The
+	// runner never moves a ref. Changed says whether the files differ from
+	// the parent.
 	Commit  string
 	Changed bool
 	// ExitCode is the exit code of the agent, or -1 when it was killed by a
@@ -156,14 +171,21 @@ type Outcome struct {
 	// Notes are plain statements about what happened and what the runner
 	// could not do.
 	Notes []string
-	// EventCount counts the events handed out. EventsDropped counts those
-	// that did not fit in the channel or the events file.
-	EventCount    int
-	EventsDropped int
+	// EventCount counts the events read from the agent. EventsDropped counts
+	// those that did not fit in the events file. CallbackDropped counts those
+	// the OnEvent callback was too slow to take.
+	EventCount      int
+	EventsDropped   int
+	CallbackDropped int
+	// Strays lists the ids of processes found under the run directory after
+	// the run, where the system lets the runner look (Linux). They were not
+	// killed.
+	Strays []int
 	// StderrHead is the start of standard error, made printable.
 	StderrHead string
 	// RunDir, EventsPath and StderrPath are set only when the run
-	// directory was kept.
+	// directory was kept. They are paths, and the agent may have moved the
+	// directory: a note says so when the runner noticed.
 	RunDir     string
 	EventsPath string
 	StderrPath string

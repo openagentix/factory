@@ -4,8 +4,10 @@
 //
 // For one run the local runner:
 //
-//   - makes a fresh run directory (mode 0700) under a data directory the
-//     caller names, with the subdirectories workspace, in, out and tmp;
+//   - makes a fresh run directory (mode 0700) in DataDir/runs, a folder of
+//     mode 0700, under a long random name, with the subdirectories
+//     workspace, in, out and tmp. It opens the directory once, as a handle,
+//     and reads, writes and removes only through that handle;
 //   - writes the files of the commit into workspace with repo.Export. The
 //     workspace is a plain directory with no .git;
 //   - writes task.json, prompt.md and trigger.json into in, read-only;
@@ -23,7 +25,11 @@
 //   - imports the workspace with repo.Import as one commit on the same
 //     parent, and reports the commit and whether anything changed;
 //   - returns one Outcome, then removes the run directory, unless the caller
-//     asked to keep failed runs.
+//     asked to keep failed runs. The Outcome has one Status, decided from the
+//     result, the exit code, the import and the flags together. Its zero
+//     value means failed. A result that contradicts the files (no_change
+//     with edits) fails the run, and a failed or needs_human run is never
+//     imported, so it leaves no commit.
 //
 // # Environment
 //
@@ -51,7 +57,15 @@
 //     runner stay bounded;
 //   - a workspace that was removed or swapped for a link fails the import,
 //     and the run fails with no commit;
-//   - inputs are read-only and the runner never reads them back.
+//   - inputs are read-only and the runner never reads them back;
+//   - the agent can rename its run directory and put a link in its place.
+//     The result is read through the handle, and the name is checked before
+//     and after the import: it must still name the directory that was made,
+//     with its parents unchanged. Cleanup empties the directory through the
+//     handle, removes a link left at the name and a moved copy in the runs
+//     folder, and reports a copy it cannot find;
+//   - a callback that panics fails the run and ends the group, and a slow
+//     one loses events instead of holding up the reading.
 //
 // # Limits
 //
@@ -62,9 +76,16 @@
 //     harness needs the person's login. It can write outside the workspace
 //     too, if the harness allows it.
 //   - A process that left the process group, for example with a new session,
-//     cannot be reached. The runner notices one case: such a process still
-//     holds the output pipes after the run, and a note says so. A process
-//     that closed them goes unnoticed.
+//     cannot be reached. The runner notices such a process when it still
+//     holds the output pipes after the run. On Linux it also looks in /proc
+//     for processes that use the run directory, and lists them without
+//     stopping them. On other systems it cannot look, and every outcome says
+//     so in a note.
+//   - repo.Import takes a path. A swap between the runner's check and the
+//     moment the repository package opens the path is narrowed, not ruled
+//     out. An import that takes an opened directory would close it.
+//   - The runs folder keeps other users out. The same user, so the agent,
+//     can still list it.
 //   - Files the agent writes under the run directory are not limited in
 //     size, except by what Import accepts. A full disk is not prevented.
 //   - A swap of a file between a check and its open is narrowed, not ruled

@@ -10,7 +10,7 @@ import (
 )
 
 func TestFakeRunnerGivesItsOutcomeAndEvents(t *testing.T) {
-	f := &Fake{Outcome: Outcome{Commit: "abc", Changed: true}, Events: []api.Event{{Kind: api.EventMessage, Text: "hi"}}}
+	f := &Fake{Outcome: Outcome{Status: StatusSucceeded, Commit: "abc", Changed: true}, Events: []api.Event{{Kind: api.EventMessage, Text: "hi"}}}
 	var seen []string
 	h, err := f.Start(context.Background(), Spec{OnEvent: func(e api.Event) { seen = append(seen, e.Text) }, Commit: "base"})
 	if err != nil {
@@ -41,7 +41,7 @@ func TestFakeRunnerHoldAndCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	o, err := h.Wait(context.Background())
-	if err != nil || !o.Cancelled || !o.Failed {
+	if err != nil || !o.Cancelled || !o.Failed() {
 		t.Errorf("o=%+v err=%v", o, err)
 	}
 }

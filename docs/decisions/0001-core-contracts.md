@@ -330,7 +330,7 @@ The **evidence bundle** is built by the orchestrator in the verify stage. The re
 }
 ```
 
-`acceptance[].state` and `before` are `working`, `not_working` or `could_not_confirm`. `check` holds the manifest command that produced the state. It is required for `working` and `not_working`, and empty for `could_not_confirm`. `gate` is `pending`, `passed`, `failed` or `exception`. `usage.enforced` is true only when a governance provider enforced the limit; otherwise the web app says "reported, not enforced". A run with no change still records worker, usage, limits and outputs, with diff, checks and risk empty. The agent pull request body has three parts: Summary, Evidence, Risk.
+`checks[].timedOut` is true when the deadline stopped the check, and is left out otherwise. `acceptance[].state` and `before` are `working`, `not_working` or `could_not_confirm`. `check` holds the manifest command that produced the state. It is required for `working` and `not_working`, and empty for `could_not_confirm`. `gate` is `pending`, `passed`, `failed` or `exception`. `usage.enforced` is true only when a governance provider enforced the limit; otherwise the web app says "reported, not enforced". A run with no change still records worker, usage, limits and outputs, with diff, checks and risk empty. The agent pull request body has three parts: Summary, Evidence, Risk.
 
 ## Interfaces that vary by where it runs
 

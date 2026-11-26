@@ -17,6 +17,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,9 +44,22 @@ func Open(dir string) (*Repo, error) {
 }
 
 // Dir returns the absolute path of the repository.
-func (r *Repo) Dir() string { return r.dir }
+func (r *Repo) Dir() string {
+	if r == nil {
+		return ""
+	}
+	return r.dir
+}
 
-func (r *Repo) check(ctx context.Context) error { return checkTrusted(ctx, r.dir) }
+// check runs the guard. A nil or zero-value Repo has no directory: it fails
+// before any git command, because an empty path would mean the current
+// directory.
+func (r *Repo) check(ctx context.Context) error {
+	if r == nil || r.dir == "" {
+		return errors.New("repository handle is not open: use repo.Open")
+	}
+	return checkTrusted(ctx, r.dir)
+}
 
 // Resolve turns a revision into a full commit id. A revision that starts with
 // "-" is refused.
@@ -83,16 +97,21 @@ func (r *Repo) diff(ctx context.Context, base, head, format string) ([]byte, err
 
 // Export writes the files of a commit into destDir, which must be absent or
 // an empty directory. destDir gets no .git. It reads git objects only. It
-// returns notes about what it left out (see materialize).
-func (r *Repo) Export(ctx context.Context, commit, destDir string, lim Limits) ([]string, error) {
-	sha, err := r.Resolve(ctx, commit)
+// returns notes about what it left out (see materialize). A directory it
+// makes has mode 0700. It stops after lim.MaxDuration with a *TimeoutError.
+func (r *Repo) Export(ctx context.Context, commit, destDir string, lim Limits) (notes []string, err error) {
+	lim = lim.WithDefaults()
+	tctx, cancel := context.WithTimeout(ctx, lim.MaxDuration)
+	defer cancel()
+	defer func() { err = timeoutOr(ctx, tctx, "export", lim.MaxDuration, err) }()
+	sha, err := r.Resolve(tctx, commit)
 	if err != nil {
 		return nil, err
 	}
 	if err := prepareDest(destDir); err != nil {
 		return nil, err
 	}
-	return materialize(ctx, r.dir, sha, destDir, lim.WithDefaults())
+	return materialize(tctx, r.dir, sha, destDir, lim)
 }
 
 // prepareDest makes dest if it is absent, and refuses one that is not an
@@ -112,7 +131,7 @@ func prepareDest(dest string) error {
 		}
 		return nil
 	case os.IsNotExist(err):
-		return os.MkdirAll(dest, 0o755)
+		return os.MkdirAll(dest, 0o700)
 	default:
 		return err
 	}

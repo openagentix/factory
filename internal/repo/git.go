@@ -45,19 +45,64 @@ func gitEnv() []string {
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
 		"GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_CEILING_DIRECTORIES=/",
 	)
 }
 
-// gitCommand builds every git command of this package. It is the only place
+// buildGit builds every git command of this package. It is the only place
 // that starts the git program, and a test keeps it that way. There is no
 // shell: args is an argument list.
 //
 // gitDir is the git directory of a bare repository. The command is tied to it
 // with --git-dir, so git never searches the file system for another
 // repository, and replace objects are off. An empty gitDir is for the few
-// commands that need no repository: they run in the temporary directory.
+// commands that need no repository (git init, git config --file): they run in
+// a new empty directory that the returned function removes. It is not the
+// system temporary directory itself, where another process could have planted
+// a .git. GIT_CEILING_DIRECTORIES is set for every command, so git never
+// looks above the directory it starts in. Extra variables are each in
+// NAME=value form and must be named in identityEnv, or they are dropped.
+// The command runs in its own process group, and the whole group is killed
+// when ctx ends.
+func buildGit(ctx context.Context, gitDir string, extra []string, args []string) (*exec.Cmd, func(), error) {
+	full := append([]string{}, hardenedGitConfig...)
+	cleanup := func() {}
+	var dir, ceiling string
+	if gitDir != "" {
+		if abs, err := filepath.Abs(gitDir); err == nil {
+			gitDir = abs
+		}
+		full = append(full, "--git-dir="+gitDir, "--no-replace-objects")
+		dir, ceiling = gitDir, filepath.Dir(gitDir)
+	} else {
+		d, err := os.MkdirTemp("", "oxf-git-")
+		if err != nil {
+			return nil, nil, err
+		}
+		dir, ceiling = d, filepath.Dir(d)
+		cleanup = func() { _ = os.RemoveAll(d) }
+	}
+	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(gitEnv(), "GIT_CEILING_DIRECTORIES="+ceiling)
+	for _, kv := range extra {
+		if name, _, ok := strings.Cut(kv, "="); ok && identityEnv[name] {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	ownProcessGroup(cmd)
+	return cmd, cleanup, nil
+}
+
+// gitCommand and gitCommandEnv build a command on a repository, for tests.
+// gitDir must not be empty.
 func gitCommand(ctx context.Context, gitDir string, args ...string) *exec.Cmd {
 	return gitCommandEnv(ctx, gitDir, nil, args...)
+}
+
+func gitCommandEnv(ctx context.Context, gitDir string, extra []string, args ...string) *exec.Cmd {
+	cmd, _, _ := buildGit(ctx, gitDir, extra, args)
+	return cmd
 }
 
 // identityEnv names the only extra variables a caller may add to the git
@@ -67,44 +112,19 @@ var identityEnv = map[string]bool{
 	"GIT_COMMITTER_NAME": true, "GIT_COMMITTER_EMAIL": true, "GIT_COMMITTER_DATE": true,
 }
 
-// gitCommandEnv is gitCommand with extra variables, each in NAME=value form
-// and each named in identityEnv. A name that is not on the list is dropped.
-func gitCommandEnv(ctx context.Context, gitDir string, extra []string, args ...string) *exec.Cmd {
-	full := append([]string{}, hardenedGitConfig...)
-	dir := os.TempDir()
-	if gitDir != "" {
-		if abs, err := filepath.Abs(gitDir); err == nil {
-			gitDir = abs
-		}
-		full = append(full, "--git-dir="+gitDir, "--no-replace-objects")
-		dir = gitDir
-	}
-	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
-	cmd.Dir = dir
-	cmd.Env = gitEnv()
-	for _, kv := range extra {
-		if name, _, ok := strings.Cut(kv, "="); ok && identityEnv[name] {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	return cmd
-}
-
 // runGit runs git and returns its standard output.
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := gitCommand(ctx, dir, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, gitError(args, err, stderr.String())
-	}
-	return stdout.Bytes(), nil
+	return runGitIn(ctx, dir, nil, nil, args...)
 }
 
 // runGitIn runs git with a reader as standard input and extra identity
 // variables, and returns its standard output.
 func runGitIn(ctx context.Context, dir string, stdin io.Reader, extraEnv []string, args ...string) ([]byte, error) {
-	cmd := gitCommandEnv(ctx, dir, extraEnv, args...)
+	cmd, cleanup, err := buildGit(ctx, dir, extraEnv, args)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -125,7 +145,11 @@ func gitError(args []string, err error, stderr string) error {
 // runGitStream runs git with a reader as standard input and a function that
 // reads standard output while the command runs.
 func runGitStream(ctx context.Context, dir string, stdin io.Reader, read func(io.Reader) error, args ...string) error {
-	cmd := gitCommand(ctx, dir, args...)
+	cmd, cleanup, err := buildGit(ctx, dir, nil, args)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	cmd.Stdin = stdin
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -67,7 +67,7 @@ func materialize(ctx context.Context, repoDir, sha, dest string, lim Limits) ([]
 		case f[1] == "commit" || f[0] == modeGitlink:
 			notes = append(notes, fmt.Sprintf("skipped submodule: %s", safeText(name)))
 		case unsafeEntryName(name):
-			notes = append(notes, fmt.Sprintf("skipped path with a .git or unsafe part: %s", safeText(name)))
+			notes = append(notes, fmt.Sprintf("skipped path with a .git, invisible, control or otherwise unsafe part: %s", safeText(name)))
 		default:
 			size, err := strconv.ParseInt(f[3], 10, 64)
 			if err != nil || size < 0 {
@@ -128,8 +128,10 @@ func unsafeEntryName(name string) bool {
 	if name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, "\\\x00") {
 		return true
 	}
+	// The same rule as Import, so the tree is not trusted just because the
+	// factory made it.
 	for _, part := range strings.Split(name, "/") {
-		if part == "" || part == "." || part == ".." || strings.EqualFold(part, ".git") {
+		if checkComponent(part) != nil {
 			return true
 		}
 	}

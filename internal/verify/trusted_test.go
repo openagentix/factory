@@ -143,7 +143,7 @@ func TestRunChecks_LimitsComeFromOptionsWithDefaults(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 	l := CheckOptions{}.limits()
-	if l.MaxTotalBytes != 2<<30 || l.MaxFileBytes != 200<<20 || l.MaxEntries != 200000 {
+	if l.MaxTotalBytes != 2<<30 || l.MaxFileBytes != 200<<20 || l.MaxEntries != 50000 {
 		t.Errorf("defaults = %+v", l)
 	}
 }

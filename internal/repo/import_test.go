@@ -700,7 +700,7 @@ func TestImport_Limits(t *testing.T) {
 		lim   Limits
 		want  []string
 	}{
-		{"one file too big", big, Limits{MaxFileBytes: 99}, []string{"a.txt", "over the limit of 99"}},
+		{"one file too big", big, Limits{MaxFileBytes: 99}, []string{"over the limit of 99"}},
 		{"total too big", big, Limits{MaxTotalBytes: 150}, []string{"total", "150"}},
 		{"too many entries", big, Limits{MaxEntries: 2}, []string{"entries", "2"}},
 		{"directories count as entries", func(w *workspace) { w.write("a/b/c/d.txt", "x") }, Limits{MaxEntries: 3}, []string{"entries"}},
@@ -729,10 +729,10 @@ func TestImport_Limits(t *testing.T) {
 
 func TestImport_LimitsDefault(t *testing.T) {
 	l := Limits{}.WithDefaults()
-	if l.MaxTotalBytes != 2<<30 || l.MaxFileBytes != 200<<20 || l.MaxEntries != 200000 || l.MaxPathBytes != 4096 || l.MaxDepth != 64 {
+	if l.MaxTotalBytes != 2<<30 || l.MaxFileBytes != 200<<20 || l.MaxEntries != 50000 || l.MaxPathBytes != 4096 || l.MaxDepth != 64 {
 		t.Errorf("defaults = %+v", l)
 	}
-	if got := (Limits{MaxDepth: 7}).WithDefaults(); got.MaxDepth != 7 || got.MaxEntries != 200000 {
+	if got := (Limits{MaxDepth: 7}).WithDefaults(); got.MaxDepth != 7 || got.MaxEntries != 50000 {
 		t.Errorf("a set field must stay: %+v", got)
 	}
 }

@@ -21,34 +21,76 @@ const (
 // SetRef points a branch at a commit. It accepts only a name under
 // refs/heads/factory/ or the exact name refs/heads/factory-staging, so the
 // factory can never move the default branch or any other ref through it. The
-// commit must exist and must be a commit.
-func (r *Repo) SetRef(ctx context.Context, ref, commit string) error {
+// commit must exist and must be a commit. old is the commit the ref must have
+// now, as a full id, or ZeroID if the ref must not exist. If the ref has
+// another value, SetRef changes nothing and returns a *RefConflictError.
+func (r *Repo) SetRef(ctx context.Context, ref, commit, old string) error {
 	if err := r.check(ctx); err != nil {
 		return err
 	}
 	if err := checkRefName(ref); err != nil {
 		return err
 	}
-	return r.updateRef(ctx, ref, commit)
+	return r.updateRef(ctx, ref, commit, old)
 }
 
 // SetDefaultMirror points MirrorRef at a commit: the state of the project's
 // default branch that the factory last fetched. It is a separate method so
-// that no run branch name can reach it.
-func (r *Repo) SetDefaultMirror(ctx context.Context, commit string) error {
+// that no run branch name can reach it. old works as in SetRef.
+func (r *Repo) SetDefaultMirror(ctx context.Context, commit, old string) error {
 	if err := r.check(ctx); err != nil {
 		return err
 	}
-	return r.updateRef(ctx, MirrorRef, commit)
+	return r.updateRef(ctx, MirrorRef, commit, old)
 }
 
-func (r *Repo) updateRef(ctx context.Context, ref, commit string) error {
+// ZeroID as the old value means the ref must not exist.
+const ZeroID = "0000000000000000000000000000000000000000"
+
+// RefConflictError says that a ref did not have the expected old value.
+type RefConflictError struct {
+	Ref      string
+	Expected string
+	Actual   string // ZeroID if the ref does not exist
+}
+
+func (e *RefConflictError) Error() string {
+	return fmt.Sprintf("ref %s is %s, expected %s", Visible(e.Ref, 100), e.Actual, e.Expected)
+}
+
+func isFullID(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// updateRef is a compare-and-swap: git changes the ref only if it still has
+// the old value, and takes its own lock for that.
+func (r *Repo) updateRef(ctx context.Context, ref, commit, old string) error {
+	if !isFullID(old) {
+		return fmt.Errorf("the old value of a ref must be a full lower case id or ZeroID, not %q", Visible(old, 50))
+	}
 	sha, err := resolveCommit(ctx, r.dir, commit)
 	if err != nil {
 		return err
 	}
-	_, err = runGit(ctx, r.dir, "update-ref", "--no-deref", ref, sha)
-	return err
+	if _, err = runGit(ctx, r.dir, "update-ref", "--no-deref", ref, sha, old); err != nil {
+		actual := ZeroID
+		if out, e := runGit(ctx, r.dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref); e == nil {
+			actual = strings.TrimSpace(string(out))
+		}
+		if actual != old {
+			return &RefConflictError{Ref: ref, Expected: old, Actual: actual}
+		}
+		return err
+	}
+	return nil
 }
 
 // checkRefName allows the two name forms and only plain components: letters,

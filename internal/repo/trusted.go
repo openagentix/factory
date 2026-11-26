@@ -38,11 +38,11 @@ var trustedConfigKeys = map[string]bool{
 // directory (commondir, gitdir, a linked objects directory) and cannot find
 // state from an unfinished operation (rebase-*, MERGE_*, lock files).
 //
-// "index" is there because the import into the repository uses --work-tree,
-// which makes git write an index in the repository directory.
+// There is no "index": the factory never uses an index, because Import writes
+// objects itself.
 var trustedLayout = map[string]bool{ // true means a directory
 	"HEAD": false, "config": false, "description": false, "packed-refs": false,
-	"FETCH_HEAD": false, "ORIG_HEAD": false, "index": false,
+	"FETCH_HEAD": false, "ORIG_HEAD": false,
 	"objects": true, "refs": true, "info": true, "hooks": true, "branches": true, "logs": true,
 }
 
@@ -52,7 +52,9 @@ var trustedLayout = map[string]bool{ // true means a directory
 // refs, which are all on the layout list. If a git version made another
 // entry, it would not be on the list and Init would fail
 // rather than allow it, and the list would be reviewed. The result passes the
-// guard. The orchestrator uses it, and so do tests.
+// guard. The object format is sha1, which Import relies on to write objects
+// itself, and the guard refuses a repository that says otherwise (see
+// checkTrusted). The orchestrator uses Init, and so do tests.
 func Init(dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -64,7 +66,7 @@ func Init(dir string) error {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return err
 	}
-	if _, err := runGit(context.Background(), "", "init", "--bare", "--quiet", "--template=", abs); err != nil {
+	if _, err := runGit(context.Background(), "", "init", "--bare", "--quiet", "--template=", "--object-format=sha1", abs); err != nil {
 		return err
 	}
 	return checkTrusted(context.Background(), abs)
@@ -91,14 +93,23 @@ func checkTrusted(ctx context.Context, dir string) error {
 	if err != nil {
 		return fmt.Errorf("cannot read the repository configuration: %w", err)
 	}
+	version := ""
 	for _, rec := range strings.Split(string(out), "\x00") {
 		if rec == "" {
 			continue
 		}
-		key, _, _ := strings.Cut(rec, "\n")
+		key, val, _ := strings.Cut(rec, "\n")
 		if !trustedConfigKeys[strings.ToLower(key)] {
 			return fmt.Errorf("repository is not trusted: the configuration key %q is not allowed", Visible(key, 100))
 		}
+		if strings.EqualFold(key, "core.repositoryformatversion") {
+			version = val
+		}
+	}
+	// Version 1 is what a repository needs to name another object format or
+	// any extension. Import writes sha1 objects, so only version 0 is allowed.
+	if version != "0" {
+		return untrusted("core.repositoryformatversion is %q, not 0", Visible(version, 20))
 	}
 	return nil
 }

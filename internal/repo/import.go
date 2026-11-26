@@ -94,9 +94,23 @@ type entry struct {
 // still a plain file with one link. That narrows a swap while Import runs; it
 // does not rule it out without an operating system sandbox.
 //
-// The first call of a hash-object per file makes this slow for very large
-// trees. That is the cost of not using an index.
-func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, author Author, opts ImportOptions) (string, bool, error) {
+// Blobs, trees and nothing else are written by this package as loose
+// objects, with no process for each file (see objects.go for why). The commit
+// is made by one `git commit-tree`, with the author and time passed through
+// the allowlisted environment and signing off. After a failed import, the
+// objects it wrote are removed. Import stops after Limits.MaxDuration with a
+// *TimeoutError.
+func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, author Author, opts ImportOptions) (commit string, changed bool, err error) {
+	lim := opts.Limits.WithDefaults()
+	parentCtx := ctx
+	ctx, cancel := context.WithTimeout(ctx, lim.MaxDuration)
+	defer cancel()
+	defer func() {
+		if err != nil {
+			commit, changed = "", false
+			err = timeoutOr(parentCtx, ctx, "import", lim.MaxDuration, err)
+		}
+	}()
 	if err := r.check(ctx); err != nil {
 		return "", false, err
 	}
@@ -126,7 +140,19 @@ func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, autho
 	}
 	defer root.Close()
 
-	s := &scanner{root: root, lim: opts.Limits.WithDefaults(), excl: excl}
+	ow, err := openObjWriter(r.dir)
+	if err != nil {
+		return "", false, err
+	}
+	defer ow.close()
+	// Objects made for an import that fails are removed again.
+	defer func() {
+		if err != nil {
+			ow.removeCreated()
+		}
+	}()
+
+	s := &scanner{root: root, lim: lim, excl: excl}
 	topInfo, err := root.Lstat(".")
 	if err != nil {
 		return "", false, err
@@ -138,10 +164,10 @@ func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, autho
 	if importHook != nil {
 		importHook()
 	}
-	if err := r.hashAll(ctx, s, top); err != nil {
+	if err := hashAll(ctx, ow, s, top); err != nil {
 		return "", false, err
 	}
-	tree, _, err := r.buildTree(ctx, top, true)
+	tree, _, err := buildTree(ctx, ow, top, true)
 	if err != nil {
 		return "", false, err
 	}
@@ -211,15 +237,46 @@ func (s *scanner) dir(ctx context.Context, rel string, fi fs.FileInfo, depth int
 	if opened, err := f.Stat(); err != nil || !os.SameFile(opened, fi) {
 		return nil, fmt.Errorf("directory %s changed while it was imported", quote(rel))
 	}
-	ents, err := f.ReadDir(-1)
-	if err != nil {
-		return nil, fmt.Errorf("cannot list directory %s: %w", quote(rel), err)
-	}
-	sort.Slice(ents, func(i, j int) bool { return ents[i].Name() < ents[j].Name() })
 	var out []*entry
 	seen := map[string]string{}
-	for _, de := range ents {
-		name := de.Name()
+	// The directory is read in chunks, and every name is counted, also those
+	// that are left out, before the next chunk is read. A directory with
+	// millions of names cannot fill memory or run the clock.
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ents, rerr := f.ReadDir(listChunk)
+		for _, de := range ents {
+			e, err := s.one(ctx, rel, depth, de.Name(), seen)
+			if err != nil {
+				return nil, err
+			}
+			if e != nil {
+				out = append(out, e)
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return nil, fmt.Errorf("cannot list directory %s: %w", quote(rel), rerr)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out, nil
+}
+
+// listChunk is the number of names read from a directory at a time.
+const listChunk = 256
+
+// one checks and reads one name of the directory rel. It returns nil for a
+// name that is left out.
+func (s *scanner) one(ctx context.Context, rel string, depth int, name string, seen map[string]string) (*entry, error) {
+	{
+		if s.count++; s.count > s.lim.MaxEntries {
+			return nil, fmt.Errorf("more than %d entries", s.lim.MaxEntries)
+		}
 		child := name
 		if rel != "." {
 			child = rel + "/" + name
@@ -239,10 +296,7 @@ func (s *scanner) dir(ctx context.Context, rel string, fi fs.FileInfo, depth int
 		}
 		seen[key] = child
 		if s.excl.matches(child) {
-			continue
-		}
-		if s.count++; s.count > s.lim.MaxEntries {
-			return nil, fmt.Errorf("more than %d entries", s.lim.MaxEntries)
+			return nil, nil
 		}
 		fi, err := s.root.Lstat(child)
 		if err != nil {
@@ -281,9 +335,8 @@ func (s *scanner) dir(ctx context.Context, rel string, fi fs.FileInfo, depth int
 			}
 			return nil, fmt.Errorf("%s is a special file (%s) and is not imported", quote(child), kind)
 		}
-		out = append(out, e)
+		return e, nil
 	}
-	return out, nil
 }
 
 func (s *scanner) add(n int64) error {
@@ -309,20 +362,8 @@ func (s *scanner) link(e *entry) error {
 	return nil
 }
 
-// countingReader counts what git reads.
-type countingReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countingReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
-}
-
 // hashAll writes the blob of every file and link.
-func (r *Repo) hashAll(ctx context.Context, s *scanner, es []*entry) error {
+func hashAll(ctx context.Context, ow *objWriter, s *scanner, es []*entry) error {
 	for _, e := range es {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -330,11 +371,11 @@ func (r *Repo) hashAll(ctx context.Context, s *scanner, es []*entry) error {
 		var err error
 		switch {
 		case e.isDir:
-			err = r.hashAll(ctx, s, e.children)
+			err = hashAll(ctx, ow, s, e.children)
 		case e.isLink:
-			e.oid, err = r.hashBlob(ctx, strings.NewReader(e.target))
+			e.oid, err = ow.write(ctx, "blob", int64(len(e.target)), strings.NewReader(e.target))
 		default:
-			err = r.hashFile(ctx, s, e)
+			err = hashFile(ctx, ow, s, e)
 		}
 		if err != nil {
 			return err
@@ -344,8 +385,9 @@ func (r *Repo) hashAll(ctx context.Context, s *scanner, es []*entry) error {
 }
 
 // hashFile opens the file without following a link and checks that it is
-// still the file that was listed.
-func (r *Repo) hashFile(ctx context.Context, s *scanner, e *entry) error {
+// still the file that was listed. It stores exactly the bytes it reads, and
+// fails if the file has another length than it had when it was opened.
+func hashFile(ctx context.Context, ow *objWriter, s *scanner, e *entry) error {
 	fail := func(what string) error { return fmt.Errorf("%s changed while it was imported: %s", quote(e.rel), what) }
 	cur, err := s.root.Lstat(e.rel)
 	if err != nil {
@@ -372,62 +414,42 @@ func (r *Repo) hashFile(ctx context.Context, s *scanner, e *entry) error {
 	if fi.Size() > s.lim.MaxFileBytes {
 		return fmt.Errorf("file %s is %d bytes, over the limit of %d bytes", quote(e.rel), fi.Size(), s.lim.MaxFileBytes)
 	}
+	if err := s.add(fi.Size() - e.fi.Size()); err != nil {
+		return err
+	}
 	e.mode = "100644"
 	if fi.Mode()&0o100 != 0 {
 		e.mode = "100755"
 	}
-	cr := &countingReader{r: io.LimitReader(f, s.lim.MaxFileBytes+1)}
-	oid, err := r.hashBlob(ctx, cr)
+	e.oid, err = ow.write(ctx, "blob", fi.Size(), f)
 	if err != nil {
-		return err
+		return fail(err.Error())
 	}
-	if cr.n > s.lim.MaxFileBytes {
-		return fmt.Errorf("file %s grew over the limit of %d bytes", quote(e.rel), s.lim.MaxFileBytes)
-	}
-	if err := s.add(cr.n - e.fi.Size()); err != nil {
-		return err
-	}
-	e.oid = oid
 	return nil
-}
-
-// hashBlob stores content as a blob. --no-filters is explicit: nothing may
-// change the bytes.
-func (r *Repo) hashBlob(ctx context.Context, content io.Reader) (string, error) {
-	out, err := runGitIn(ctx, r.dir, content, nil, "hash-object", "-w", "--stdin", "--no-filters")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 // buildTree writes the trees below es, bottom up, and returns the id of the
 // tree for es. A directory with nothing recorded in it gives ok false and is
 // left out, as git leaves it out. The top tree is always built.
-func (r *Repo) buildTree(ctx context.Context, es []*entry, top bool) (string, bool, error) {
-	var in strings.Builder
-	n := 0
+func buildTree(ctx context.Context, ow *objWriter, es []*entry, top bool) (string, bool, error) {
+	var items []treeItem
 	for _, e := range es {
-		mode, typ, oid := e.mode, "blob", e.oid
+		it := treeItem{mode: e.mode, name: e.name, oid: e.oid}
 		if e.isDir {
-			sub, ok, err := r.buildTree(ctx, e.children, false)
+			sub, ok, err := buildTree(ctx, ow, e.children, false)
 			if err != nil {
 				return "", false, err
 			}
 			if !ok {
 				continue
 			}
-			mode, typ, oid = "040000", "tree", sub
+			it = treeItem{mode: "40000", name: e.name, oid: sub}
 		}
-		fmt.Fprintf(&in, "%s %s %s\t%s\x00", mode, typ, oid, e.name)
-		n++
+		items = append(items, it)
 	}
-	if n == 0 && !top {
+	if len(items) == 0 && !top {
 		return "", false, nil
 	}
-	out, err := runGitIn(ctx, r.dir, strings.NewReader(in.String()), nil, "mktree", "-z")
-	if err != nil {
-		return "", false, err
-	}
-	return strings.TrimSpace(string(out)), true, nil
+	oid, err := ow.writeTree(ctx, items)
+	return oid, err == nil, err
 }

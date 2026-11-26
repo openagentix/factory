@@ -14,14 +14,15 @@ import (
 // a separate work tree for the files. The git identity comes from environment
 // variables set here, never from global git config.
 type testRepo struct {
-	t   *testing.T
-	dir string // the bare repository: what the package under test is given
-	wt  string // the work tree, where tests write files
+	t     *testing.T
+	dir   string // the bare repository: what the package under test is given
+	wt    string // the work tree, where tests write files
+	index string // the index, outside the repository: the guard allows none in it
 }
 
 func newTestRepo(t *testing.T) *testRepo {
 	t.Helper()
-	r := &testRepo{t: t, dir: filepath.Join(t.TempDir(), "repo.git"), wt: t.TempDir()}
+	r := &testRepo{t: t, dir: filepath.Join(t.TempDir(), "repo.git"), wt: t.TempDir(), index: filepath.Join(t.TempDir(), "index")}
 	if err := repo.Init(r.dir); err != nil {
 		t.Fatalf("repo.Init: %v", err)
 	}
@@ -34,7 +35,7 @@ func (r *testRepo) git(args ...string) string {
 	cmd := exec.Command("git", full...)
 	cmd.Dir = r.wt
 	cmd.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_INDEX_FILE="+r.index,
 		"GIT_AUTHOR_NAME=Test Author", "GIT_AUTHOR_EMAIL=author@example.invalid",
 		"GIT_COMMITTER_NAME=Test Author", "GIT_COMMITTER_EMAIL=author@example.invalid",
 	)

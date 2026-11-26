@@ -3,6 +3,7 @@ package gate
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/openagentix/factory/internal/api"
 	"github.com/openagentix/factory/internal/verify"
@@ -22,6 +23,8 @@ type ReviewBriefInput struct {
 	// ChangedPaths are the paths the change touched, from the orchestrator's
 	// own diff. File names are written by the builder, so they are untrusted.
 	ChangedPaths []string
+	// OldPaths are the old paths of renamed and deleted files.
+	OldPaths []string
 	// RiskPaths are the risk paths of the factory file.
 	RiskPaths api.RiskPaths
 	// Criteria is the person's wording of the criteria the ticket serves.
@@ -30,18 +33,46 @@ type ReviewBriefInput struct {
 
 // NeedsAttackerBrief reports whether the change touches a path listed as
 // security relevant or as a contract path. Such a change is reviewed by an
-// attacker's brief. It uses the same path matching as the risk rules.
-func NeedsAttackerBrief(changed []string, rp api.RiskPaths) bool {
-	for _, p := range changed {
-		for _, pat := range rp.Security {
-			if verify.Match(pat, p) {
+// attacker's brief. changed holds the new path of every file, and old holds
+// the old path of every rename or deletion, so both ends of a rename count.
+//
+// Matching ignores case, as the protected path check does. A path that is
+// not clean (a leading slash, a double slash, a dot or dot-dot segment,
+// white space at either end, a backslash, a control character, or an empty
+// path) cannot be ruled out, so it counts as a match.
+func NeedsAttackerBrief(changed, old []string, rp api.RiskPaths) bool {
+	for _, list := range [][]string{changed, old} {
+		for _, p := range list {
+			if uncleanPath(p) {
 				return true
+			}
+			for _, pat := range rp.Security {
+				if verify.MatchFold(pat, p) {
+					return true
+				}
+			}
+			for _, pat := range rp.Contract {
+				if verify.MatchFold(pat, p) {
+					return true
+				}
 			}
 		}
-		for _, pat := range rp.Contract {
-			if verify.Match(pat, p) {
-				return true
-			}
+	}
+	return false
+}
+
+func uncleanPath(p string) bool {
+	if p == "" || p != strings.TrimSpace(p) || strings.ContainsAny(p, "\\") || strings.HasPrefix(p, "/") {
+		return true
+	}
+	for _, r := range p {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return true
+		}
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return true
 		}
 	}
 	return false
@@ -81,7 +112,7 @@ A finding counts when you made it happen: a program ran, a token arrived somewhe
 func ReviewBrief(in ReviewBriefInput) string {
 	var out strings.Builder
 	out.WriteString(standardBrief)
-	if NeedsAttackerBrief(in.ChangedPaths, in.RiskPaths) {
+	if NeedsAttackerBrief(in.ChangedPaths, in.OldPaths, in.RiskPaths) {
 		out.WriteString(attackerBrief)
 	}
 	out.WriteString("\n## The change\n\n")

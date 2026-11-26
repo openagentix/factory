@@ -47,6 +47,22 @@ type Assessment struct {
 	Reasons []string
 }
 
+// overLimits reports whether a review is over the limits of ParseReview, so
+// that a review built another way cannot skip them.
+func overLimits(r *api.ReviewFile) bool {
+	if len(r.Points) > MaxReviewPoints {
+		return true
+	}
+	var n int64
+	for _, p := range r.Points {
+		n += int64(len(p.Text)) + int64(len(p.File))
+		if n > MaxReviewBytes {
+			return true
+		}
+	}
+	return false
+}
+
 // Assess applies the sanity rules to a review. They run before Decide uses
 // it. A review for any subject but a change, an unknown verdict or severity,
 // and a review that does not agree but gives no point are all unusable: a
@@ -66,6 +82,9 @@ func Assess(r *api.ReviewFile) Assessment {
 	case api.VerdictAgrees, api.VerdictConcerns, api.VerdictDisagrees:
 	default:
 		return bad("the review has no valid verdict")
+	}
+	if overLimits(r) {
+		return bad("the review is over the limits of size and number of points")
 	}
 	blocking := false
 	for _, p := range r.Points {

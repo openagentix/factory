@@ -52,8 +52,8 @@ func TestPackageStartsNoProgramAndReadsNoFile(t *testing.T) {
 			t.Errorf("%s uses %q", name, m)
 		}
 		for _, m := range verifyCall.FindAllSubmatch(src, -1) {
-			if string(m[1]) != "Match" {
-				t.Errorf("%s calls verify.%s, only verify.Match is allowed", name, m[1])
+			if string(m[1]) != "Match" && string(m[1]) != "MatchFold" {
+				t.Errorf("%s calls verify.%s, only verify.Match and verify.MatchFold are allowed", name, m[1])
 			}
 		}
 	}

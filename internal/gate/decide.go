@@ -10,14 +10,20 @@ import (
 // Outcome is what the gate decides.
 type Outcome string
 
-// The three outcomes.
+// The outcomes.
 const (
 	// OutcomePass combines the change into staging.
 	OutcomePass Outcome = "pass"
 	// OutcomeRework sends the reasons back to the builder for another attempt.
 	OutcomeRework Outcome = "rework"
+	// OutcomeReviewAgain asks the orchestrator to run the review again. The
+	// builder is not at fault, so no attempt is spent.
+	OutcomeReviewAgain Outcome = "review_again"
 	// OutcomeException stops. A person is told in plain words.
 	OutcomeException Outcome = "exception"
+	// OutcomeDeclined is a change that a person did not want. It is dropped,
+	// its ticket is closed as declined, and no attempt is used.
+	OutcomeDeclined Outcome = "declined"
 )
 
 // ExceptionKind says which kind of exception an exception is. Only
@@ -35,9 +41,25 @@ const (
 	// ExceptionInvalidFacts is a gate that was given facts it cannot judge.
 	// It is a fault of the factory. Nothing passes.
 	ExceptionInvalidFacts ExceptionKind = "invalid_facts"
+	// ExceptionNoReview is a change whose review could not be obtained
+	// within the review limit. Nothing passes.
+	ExceptionNoReview ExceptionKind = "no_review"
+	// ExceptionAcceptanceUnconfirmed is an acceptance task whose attempts
+	// are used up. The criteria without an agreed check become could not
+	// confirm, the person is told, and building goes ahead. It is not off
+	// course.
+	ExceptionAcceptanceUnconfirmed ExceptionKind = "acceptance_unconfirmed"
+	// ExceptionSetupNotFinished is an onboard task whose attempts are used
+	// up. It is reported as setup that did not finish.
+	ExceptionSetupNotFinished ExceptionKind = "setup_not_finished"
 )
 
-// VerifyFacts is what the verify stage measured.
+// DefaultMaxReviewTries is how many review runs the gate asks for, for one
+// attempt, when Facts leaves the limit at zero.
+const DefaultMaxReviewTries = 2
+
+// VerifyFacts is what the verify stage measured. The lists count whatever
+// the flags say, and a flag that contradicts its list is a fault.
 type VerifyFacts struct {
 	// ProtectedOK is true when no protected path was touched. The zero value
 	// is false.
@@ -51,29 +73,39 @@ type VerifyFacts struct {
 
 // Facts is everything the gate reads. Every field is a fact the orchestrator
 // measured or recorded. No field holds text a model wrote, except the
-// points inside Review, which only ever become reasons.
+// points inside Review, which only ever become reasons. A zero, nil or
+// half-filled value never lets a change pass.
 type Facts struct {
 	// Task is implement, fix-ci, acceptance or onboard. The risk rules apply
 	// to implement and fix-ci only.
-	Task   string
+	Task string
+	// Change names the change: ticket, attempt, full commit and builder run.
+	// The attempt is this attempt, counted from 1.
+	Change ChangeRef
 	Verify VerifyFacts
 	// Acceptance is the state of each criterion with the change and before
-	// it, on staging. A criterion that was working before and is not working
-	// now is a regression.
+	// it, on staging. Every entry must carry its earlier state. A criterion
+	// that was working before and is not working now is a regression.
 	Acceptance []api.AcceptanceEntry
-	// Review is the bound review, or nil when there is none.
+	// Review is the bound review, or nil when there is none. It must have
+	// been bound to Change.
 	Review *BoundReview
+	// ReviewTries is how many review runs were already started for this
+	// attempt. MaxReviewTries is the limit, and zero means
+	// DefaultMaxReviewTries.
+	ReviewTries, MaxReviewTries int
 	// Risk is the rule based risk of the change.
 	Risk api.Risk
 	// BuilderHarness is the harness of the work run. The reviewer's harness
 	// comes from the bound review.
 	BuilderHarness string
-	// Attempt is this attempt, counted from 1. MaxAttempts is the ticket's
-	// limit.
-	Attempt, MaxAttempts int
+	// MaxAttempts is the ticket's attempt limit.
+	MaxAttempts int
 }
 
-// Decision is the answer of the gate.
+// Decision is the answer of the gate. Decide seals it: the unexported fields
+// hold the facts a person's answer is checked against later, and a decision
+// built by hand has none.
 type Decision struct {
 	Outcome Outcome
 	// Exception is set only for an exception.
@@ -84,8 +116,7 @@ type Decision struct {
 	// the builder's harness is unknown. Such a change never counts toward
 	// automatic Accept.
 	SingleOpinion bool
-	// ReviewMissing is true when there was no usable review. The
-	// orchestrator may start the review again before it starts a rework.
+	// ReviewMissing is true when there was no usable review for this change.
 	ReviewMissing bool
 	// ReviewAgreed records that a usable review agreed.
 	ReviewAgreed bool
@@ -96,6 +127,14 @@ type Decision struct {
 	Plain string
 	// PassedByPerson is true on a pass that a person's "yes" gave.
 	PassedByPerson bool
+
+	sealed       bool
+	change       ChangeRef
+	sealedKind   ExceptionKind
+	sealedAgreed bool
+	sealedVerify bool
+	sealedHigh   bool
+	sealedReview string
 }
 
 // gatedTask reports whether the gate judges changes of the task.
@@ -109,50 +148,85 @@ func gatedTask(task string) bool {
 
 func riskApplies(task string) bool { return task == api.TaskImplement || task == api.TaskFixCI }
 
+const plainOffCourse = "The factory used all its tries on this work and some lines are still not working yet. Nothing was combined. The factory stops building on this goal and will plan it again with you."
+
 // Decide is the machine gate. It is a pure function of its argument.
 //
-// A change passes only when verify passes, an independent review agrees, and,
-// for implement and fix-ci, risk is not high. A failure of verify or a review
-// that does not agree is a rework while attempts remain, and when they are
-// used up the goal goes off course. Only a change that is high risk by its
-// content and has an agreeing review becomes a question to a person.
+// A change passes only when verify passes, an independent review of this
+// change agrees, and, for implement and fix-ci, risk is not high. A failure
+// of verify or a review that does not agree is a rework while attempts
+// remain. When they are used up an implement or fix-ci goal goes off course,
+// acceptance reports its criteria as could not confirm, and onboard reports
+// that setup did not finish. A missing or unusable review is not the
+// builder's fault: the review is run again, up to a limit. Only a change
+// that is high risk by its content and has an agreeing review becomes a
+// question to a person.
 func Decide(f Facts) Decision {
-	d := Decision{Task: f.Task, Attempt: f.Attempt, MaxAttempts: f.MaxAttempts, Risk: copyRisk(f.Risk)}
+	d := Decision{Task: f.Task, Attempt: f.Change.Attempt, MaxAttempts: f.MaxAttempts, Risk: copyRisk(f.Risk)}
+	seal := func(d Decision, agrees, verifyOK bool) Decision {
+		d.sealed, d.change, d.sealedKind = true, f.Change, d.Exception
+		d.sealedAgreed, d.sealedVerify = agrees, verifyOK
+		d.sealedHigh = riskApplies(f.Task) && f.Risk.Level == api.RiskHigh
+		if f.Review != nil {
+			d.sealedReview = f.Review.run.RunID
+		}
+		return d
+	}
 
 	if bad := invalidFacts(f); len(bad) > 0 {
 		d.Outcome, d.Exception, d.Reasons = OutcomeException, ExceptionInvalidFacts, bad
 		d.Plain = "The factory could not judge this change because its own checking went wrong. Nothing was combined. A developer is needed."
-		return d
+		return seal(d, false, false)
 	}
 
-	var failures []string
-	failures = append(failures, verifyReasons(f.Verify)...)
+	failures := verifyReasons(f.Verify)
 	failures = append(failures, regressionReasons(f.Acceptance)...)
+	verifyOK := len(failures) == 0
 
-	a := Assessment{Reasons: []string{"there is no review"}}
-	if f.Review != nil {
-		a = f.Review.Assessment()
-		if a.Usable {
-			d.SingleOpinion = sameHarness(f.BuilderHarness, f.Review.Harness()) || strings.TrimSpace(f.BuilderHarness) == ""
+	usable := f.Review.Usable() && f.Review.change == f.Change
+	agrees := usable && f.Review.a.Agrees
+	d.ReviewMissing = !usable
+	d.ReviewAgreed = agrees
+	if usable {
+		d.SingleOpinion = sameHarness(f.BuilderHarness, f.Review.Harness()) || strings.TrimSpace(f.BuilderHarness) == ""
+		if !agrees {
+			for _, r := range f.Review.a.Reasons {
+				failures = append(failures, "review: "+r)
+			}
 		}
 	}
-	d.ReviewMissing = !a.Usable
-	d.ReviewAgreed = a.Agrees
-	if !a.Agrees {
-		for _, r := range a.Reasons {
-			failures = append(failures, "review: "+r)
-		}
-	}
 
-	if len(failures) > 0 {
+	if !verifyOK || (usable && !agrees) {
 		d.Reasons = failures
-		if f.Attempt >= f.MaxAttempts {
-			d.Outcome, d.Exception = OutcomeException, ExceptionOffCourse
-			d.Plain = "The factory used all its tries on this work and some lines are still not working yet. Nothing was combined. The factory stops building on this goal and will plan it again with you."
-			return d
+		if f.Change.Attempt >= f.MaxAttempts {
+			d.Outcome, d.Exception = OutcomeException, usedUpKind(f.Task)
+			d.Plain = plainUsedUp(d.Exception)
+			return seal(d, agrees, verifyOK)
 		}
 		d.Outcome = OutcomeRework
-		return d
+		return seal(d, agrees, verifyOK)
+	}
+
+	if !usable {
+		why := "review: there is no usable review for this change"
+		if f.Review != nil && f.Review.Usable() {
+			why = "review: the review is about a different change"
+		} else if f.Review != nil {
+			why = "review: " + strings.Join(f.Review.Assessment().Reasons, "; ")
+		}
+		max := f.MaxReviewTries
+		if max == 0 {
+			max = DefaultMaxReviewTries
+		}
+		if f.ReviewTries < max {
+			d.Outcome = OutcomeReviewAgain
+			d.Reasons = []string{why, fmt.Sprintf("the review will run again (try %d of %d)", f.ReviewTries+1, max)}
+			return seal(d, false, verifyOK)
+		}
+		d.Outcome, d.Exception = OutcomeException, ExceptionNoReview
+		d.Reasons = []string{why, fmt.Sprintf("the review could not be obtained in %d tries", max)}
+		d.Plain = "The factory could not get a second opinion on this change, so it did not combine it. A developer is needed."
+		return seal(d, false, verifyOK)
 	}
 
 	d.Reasons = []string{"verify passed", "the review agrees"}
@@ -164,12 +238,32 @@ func Decide(f Facts) Decision {
 				d.Reasons = append(d.Reasons, "risk: "+clean(r, maxReasonRunes))
 			}
 			d.Plain = "This change touches a part of your project that other programs or people rely on, and the factory's own checks are satisfied. Is that what you want?"
-			return d
+			return seal(d, true, true)
 		}
 		d.Reasons = append(d.Reasons, "risk is "+f.Risk.Level)
 	}
 	d.Outcome = OutcomePass
-	return d
+	return seal(d, true, true)
+}
+
+func usedUpKind(task string) ExceptionKind {
+	switch task {
+	case api.TaskAcceptance:
+		return ExceptionAcceptanceUnconfirmed
+	case api.TaskOnboard:
+		return ExceptionSetupNotFinished
+	}
+	return ExceptionOffCourse
+}
+
+func plainUsedUp(k ExceptionKind) string {
+	switch k {
+	case ExceptionAcceptanceUnconfirmed:
+		return "The factory could not write a reliable check for some of your lines, so it cannot confirm them. They are shown as could not confirm. Building goes ahead."
+	case ExceptionSetupNotFinished:
+		return "Setting up this project did not finish. Nothing was changed. A developer is needed."
+	}
+	return plainOffCourse
 }
 
 const maxReasonRunes = 300
@@ -183,8 +277,14 @@ func invalidFacts(f Facts) []string {
 	if !gatedTask(f.Task) {
 		bad = append(bad, fmt.Sprintf("the gate does not judge the task %q", clean(f.Task, 40)))
 	}
-	if f.Attempt < 1 || f.MaxAttempts < 1 {
-		bad = append(bad, fmt.Sprintf("the attempt (%d) and the attempt limit (%d) must both be 1 or more", f.Attempt, f.MaxAttempts))
+	if err := f.Change.valid(); err != nil {
+		bad = append(bad, err.Error())
+	}
+	if f.MaxAttempts < 1 {
+		bad = append(bad, fmt.Sprintf("the attempt limit (%d) must be 1 or more", f.MaxAttempts))
+	}
+	if f.ReviewTries < 0 || f.MaxReviewTries < 0 {
+		bad = append(bad, "the review try counts must not be negative")
 	}
 	if riskApplies(f.Task) {
 		switch f.Risk.Level {
@@ -193,12 +293,23 @@ func invalidFacts(f Facts) []string {
 			bad = append(bad, "the risk level is not low, medium or high")
 		}
 	}
+	if f.Verify.ProtectedOK && len(f.Verify.ProtectedTouched) > 0 {
+		bad = append(bad, "verify facts contradict each other: protected paths are listed as touched but marked ok")
+	}
+	if f.Verify.ChecksPassed && len(f.Verify.FailedChecks) > 0 {
+		bad = append(bad, "verify facts contradict each other: failed checks are listed but marked passed")
+	}
+	for i, e := range f.Acceptance {
+		if !e.Before.Valid() {
+			bad = append(bad, fmt.Sprintf("acceptance entry %d (criterion %d) has no known earlier state", i, e.ID))
+		}
+	}
 	return bad
 }
 
 func verifyReasons(v VerifyFacts) []string {
 	var out []string
-	if !v.ProtectedOK {
+	if !v.ProtectedOK || len(v.ProtectedTouched) > 0 {
 		if len(v.ProtectedTouched) == 0 {
 			out = append(out, "verify: a protected path was touched or not checked")
 		}
@@ -206,7 +317,7 @@ func verifyReasons(v VerifyFacts) []string {
 			out = append(out, "verify: protected path touched: "+clean(p, maxReasonRunes))
 		}
 	}
-	if !v.ChecksPassed {
+	if !v.ChecksPassed || len(v.FailedChecks) > 0 {
 		if len(v.FailedChecks) == 0 {
 			out = append(out, "verify: a task check did not pass")
 		}
@@ -219,7 +330,7 @@ func verifyReasons(v VerifyFacts) []string {
 
 // Regressions returns the criteria that were working before the change and
 // are not working with it. Any state but working counts, so an unknown state
-// is a regression.
+// is a regression. Decide refuses an entry with no known earlier state.
 func Regressions(entries []api.AcceptanceEntry) []api.AcceptanceEntry {
 	var out []api.AcceptanceEntry
 	for _, e := range entries {

@@ -19,16 +19,31 @@ func boundReview(t testing.TB, r *api.ReviewFile, harness string) *BoundReview {
 	return b
 }
 
+// at sets the attempt of the change and rebinds the review to it, as the
+// orchestrator would. It leaves the review alone when the attempt is not a
+// valid one.
+func at(f *Facts, n int) {
+	f.Change.Attempt = n
+	if f.Review == nil || !f.Review.valid {
+		return
+	}
+	run := f.Review.run
+	run.Attempt = n
+	if b, err := BindReview(f.Change, run, f.Review.file); err == nil {
+		f.Review = b
+	}
+}
+
 // okFacts is a change that passes: verify is fine, the other harness agrees,
 // risk is low, first attempt of three.
 func okFacts(t testing.TB) Facts {
 	return Facts{
 		Task:           api.TaskImplement,
+		Change:         goodChange(),
 		Verify:         VerifyFacts{ProtectedOK: true, ChecksPassed: true},
 		Review:         boundReview(t, rev("agrees"), api.HarnessCodex),
 		Risk:           api.Risk{Level: api.RiskLow, Reasons: []string{"served criteria working"}},
 		BuilderHarness: api.HarnessClaudeCode,
-		Attempt:        1,
 		MaxAttempts:    3,
 	}
 }
@@ -75,7 +90,7 @@ func TestDecide(t *testing.T) {
 		}, OutcomePass, "", false, false, ""},
 
 		// "If verify fails or the review does not agree, back to the builder."
-		{"no review at all", func(_ testing.TB, f *Facts) { f.Review = nil }, OutcomeRework, "", false, true, "no review"},
+		{"no review at all", func(_ testing.TB, f *Facts) { f.Review = nil }, OutcomeReviewAgain, "", false, true, "usable review"},
 		{"review concerns", func(t testing.TB, f *Facts) {
 			f.Review = boundReview(t, rev("concerns", pt("major")), api.HarnessCodex)
 		}, OutcomeRework, "", false, false, "concerns"},
@@ -87,7 +102,7 @@ func TestDecide(t *testing.T) {
 		}, OutcomeRework, "", false, false, "blocking"},
 		{"empty review that does not agree counts as no review", func(t testing.TB, f *Facts) {
 			f.Review = boundReview(t, rev("concerns"), api.HarnessCodex)
-		}, OutcomeRework, "", false, true, "no points"},
+		}, OutcomeReviewAgain, "", false, true, "no points"},
 		{"a review that does not agree never becomes a question, even at high risk", func(t testing.TB, f *Facts) {
 			f.Risk.Level = api.RiskHigh
 			f.Review = boundReview(t, rev("disagrees", pt("major")), api.HarnessCodex)
@@ -95,37 +110,58 @@ func TestDecide(t *testing.T) {
 		{"high risk and no review is a rework", func(_ testing.TB, f *Facts) {
 			f.Risk.Level = api.RiskHigh
 			f.Review = nil
-		}, OutcomeRework, "", false, true, ""},
+		}, OutcomeReviewAgain, "", false, true, ""},
+		{"no review, review tries left", func(_ testing.TB, f *Facts) { f.Review = nil; f.ReviewTries = 1 }, OutcomeReviewAgain, "", false, true, ""},
+		{"no review, review tries used up", func(_ testing.TB, f *Facts) { f.Review = nil; f.ReviewTries = 2 }, OutcomeException, ExceptionNoReview, false, true, ""},
+		{"no review, own review limit of one", func(_ testing.TB, f *Facts) { f.Review = nil; f.MaxReviewTries = 1; f.ReviewTries = 1 }, OutcomeException, ExceptionNoReview, false, true, ""},
+		{"no review does not spend an attempt on the last attempt", func(_ testing.TB, f *Facts) { at(f, 3); f.Review = nil }, OutcomeReviewAgain, "", false, true, ""},
+		{"a review of another change is no review", func(t testing.TB, f *Facts) {
+			run := goodRun()
+			other := goodChange()
+			other.Commit = strings.Repeat("e", 40)
+			run.Commit = other.Commit
+			b, err := BindReview(other, run, rev("agrees"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Review = b
+		}, OutcomeReviewAgain, "", false, true, "different change"},
+		{"a zero review is no review", func(_ testing.TB, f *Facts) { f.Review = &BoundReview{} }, OutcomeReviewAgain, "", false, true, ""},
+		{"negative review tries", func(_ testing.TB, f *Facts) { f.ReviewTries = -1 }, OutcomeException, ExceptionInvalidFacts, false, false, "negative"},
 
 		// "When the attempts are used up, the goal is off course."
 		{"verify fails on the last attempt", func(_ testing.TB, f *Facts) {
-			f.Attempt = 3
+			at(f, 3)
 			f.Verify.ChecksPassed = false
 		}, OutcomeException, ExceptionOffCourse, false, false, ""},
 		{"review disagrees on the last attempt", func(t testing.TB, f *Facts) {
-			f.Attempt = 3
 			f.Review = boundReview(t, rev("disagrees", pt("major")), api.HarnessCodex)
+			at(f, 3)
 		}, OutcomeException, ExceptionOffCourse, false, false, "disagrees"},
 		{"past the last attempt is also used up", func(_ testing.TB, f *Facts) {
-			f.Attempt = 9
+			at(f, 9)
 			f.Review = nil
+			f.Verify.ChecksPassed = false
 		}, OutcomeException, ExceptionOffCourse, false, true, ""},
 		{"one attempt allowed, it failed", func(_ testing.TB, f *Facts) {
-			f.Attempt, f.MaxAttempts = 1, 1
+			at(f, 1)
+			f.MaxAttempts = 1
 			f.Review = nil
+			f.Verify.ChecksPassed = false
 		}, OutcomeException, ExceptionOffCourse, false, true, ""},
 		{"second of three fails: rework remains", func(_ testing.TB, f *Facts) {
-			f.Attempt = 2
+			at(f, 2)
 			f.Review = nil
+			f.Verify.ChecksPassed = false
 		}, OutcomeRework, "", false, true, ""},
-		{"last attempt that passes still passes", func(_ testing.TB, f *Facts) { f.Attempt = 3 }, OutcomePass, "", false, false, ""},
+		{"last attempt that passes still passes", func(_ testing.TB, f *Facts) { at(f, 3) }, OutcomePass, "", false, false, ""},
 
 		// "High risk by content with an agreeing review is an exception."
 		{"high risk and agreeing review", func(_ testing.TB, f *Facts) {
 			f.Risk = api.Risk{Level: api.RiskHigh, Reasons: []string{"contract path changed: api/openapi.yaml"}}
 		}, OutcomeException, ExceptionHighRisk, false, false, "contract path"},
 		{"high risk on the last attempt is still the question", func(_ testing.TB, f *Facts) {
-			f.Attempt = 3
+			at(f, 3)
 			f.Risk.Level = api.RiskHigh
 		}, OutcomeException, ExceptionHighRisk, false, false, ""},
 
@@ -139,7 +175,7 @@ func TestDecide(t *testing.T) {
 			f.Risk.Level = api.RiskHigh
 		}, OutcomeException, ExceptionHighRisk, true, false, ""},
 		{"same harness, different spelling", func(t testing.TB, f *Facts) {
-			f.Review = boundReview(t, rev("agrees"), " Claude-Code ")
+			f.Review = boundReview(t, rev("agrees"), "CLAUDE-CODE")
 		}, OutcomePass, "", true, false, ""},
 		{"unknown builder harness counts as single opinion", func(_ testing.TB, f *Facts) { f.BuilderHarness = "" }, OutcomePass, "", true, false, ""},
 		{"same harness rework keeps the mark", func(t testing.TB, f *Facts) {
@@ -161,16 +197,25 @@ func TestDecide(t *testing.T) {
 		}, OutcomeRework, "", false, false, ""},
 		{"acceptance attempts used up", func(_ testing.TB, f *Facts) {
 			f.Task = api.TaskAcceptance
-			f.Attempt = 3
+			at(f, 3)
 			f.Review = nil
-		}, OutcomeException, ExceptionOffCourse, false, true, ""},
+			f.Verify.ChecksPassed = false
+		}, OutcomeException, ExceptionAcceptanceUnconfirmed, false, true, ""},
+		{"onboard attempts used up", func(_ testing.TB, f *Facts) {
+			f.Task = api.TaskOnboard
+			at(f, 3)
+			f.Verify.ChecksPassed = false
+		}, OutcomeException, ExceptionSetupNotFinished, false, false, ""},
+		{"verify contradicts itself (protected)", func(_ testing.TB, f *Facts) { f.Verify.ProtectedTouched = []string{"x"} }, OutcomeException, ExceptionInvalidFacts, false, false, "contradict"},
+		{"verify contradicts itself (checks)", func(_ testing.TB, f *Facts) { f.Verify.FailedChecks = []string{"x"} }, OutcomeException, ExceptionInvalidFacts, false, false, "contradict"},
+		{"no change reference", func(_ testing.TB, f *Facts) { f.Change = ChangeRef{} }, OutcomeException, ExceptionInvalidFacts, false, false, "ticket"},
 
 		// Deny by default on facts the gate cannot read.
 		{"review task is never gated", func(_ testing.TB, f *Facts) { f.Task = api.TaskReview }, OutcomeException, ExceptionInvalidFacts, false, false, "task"},
 		{"unknown task", func(_ testing.TB, f *Facts) { f.Task = "deploy" }, OutcomeException, ExceptionInvalidFacts, false, false, ""},
 		{"no risk level on an implement change", func(_ testing.TB, f *Facts) { f.Risk = api.Risk{} }, OutcomeException, ExceptionInvalidFacts, false, false, "risk"},
 		{"made up risk level", func(_ testing.TB, f *Facts) { f.Risk.Level = "none" }, OutcomeException, ExceptionInvalidFacts, false, false, "risk"},
-		{"attempt zero", func(_ testing.TB, f *Facts) { f.Attempt = 0 }, OutcomeException, ExceptionInvalidFacts, false, false, "attempt"},
+		{"attempt zero", func(_ testing.TB, f *Facts) { at(f, 0) }, OutcomeException, ExceptionInvalidFacts, false, false, "attempt"},
 		{"no attempt limit", func(_ testing.TB, f *Facts) { f.MaxAttempts = 0 }, OutcomeException, ExceptionInvalidFacts, false, false, "attempt"},
 	}
 	for _, tc := range tests {
@@ -208,8 +253,11 @@ func TestPlainWordsAvoidEngineeringWords(t *testing.T) {
 	banned := []string{"pull request", "merge", "diff", "review", "branch", "commit"}
 	cases := []func(*Facts){
 		func(f *Facts) { f.Risk.Level = api.RiskHigh },
-		func(f *Facts) { f.Attempt = 3; f.Verify.ChecksPassed = false },
+		func(f *Facts) { at(f, 3); f.Verify.ChecksPassed = false },
 		func(f *Facts) { f.Task = api.TaskReview },
+		func(f *Facts) { f.Review = nil; f.ReviewTries = 5 },
+		func(f *Facts) { f.Task = api.TaskAcceptance; at(f, 3); f.Verify.ChecksPassed = false },
+		func(f *Facts) { f.Task = api.TaskOnboard; at(f, 3); f.Verify.ChecksPassed = false },
 	}
 	for i, edit := range cases {
 		f := okFacts(t)
@@ -226,74 +274,162 @@ func TestPlainWordsAvoidEngineeringWords(t *testing.T) {
 	}
 }
 
-// Every combination of the facts. None may pass with a failed verify, a
-// regression, or a review that does not agree.
-func TestNoCombinationPassesWithoutAllConditions(t *testing.T) {
-	type rv struct {
+// reviewVariants builds every kind of review value a careless caller could
+// hand over for one change: nil, zero, bound for this change in several
+// verdicts, and bound for another change.
+func reviewVariants(t testing.TB, c ChangeRef) []struct {
+	name string
+	r    *BoundReview
+} {
+	bind := func(ch ChangeRef, file *api.ReviewFile, harness string) *BoundReview {
+		run := ReviewRun{RunID: "r_review", Task: api.TaskReview, Phase: api.PhaseSucceeded,
+			Ticket: ch.Ticket, Attempt: ch.Attempt, Commit: ch.Commit, Harness: harness}
+		b, err := BindReview(ch, run, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	other := c
+	other.Commit = strings.Repeat("e", 40)
+	return []struct {
 		name string
-		r    *api.ReviewFile
-		good bool
+		r    *BoundReview
+	}{
+		{"nil", nil},
+		{"zero", &BoundReview{}},
+		{"zero but marked valid", &BoundReview{valid: true}},
+		{"agrees other harness", bind(c, rev("agrees"), api.HarnessCodex)},
+		{"agrees same harness", bind(c, rev("agrees", pt("minor")), api.HarnessClaudeCode)},
+		{"agrees with blocking", bind(c, rev("agrees", pt("blocking")), api.HarnessCodex)},
+		{"concerns", bind(c, rev("concerns", pt("major")), api.HarnessCodex)},
+		{"disagrees", bind(c, rev("disagrees", pt("blocking")), api.HarnessCodex)},
+		{"concerns with no points", bind(c, rev("concerns"), api.HarnessCodex)},
+		{"agrees for another change", bind(other, rev("agrees"), api.HarnessCodex)},
 	}
-	reviews := []rv{
-		{"none", nil, false},
-		{"agrees", rev("agrees"), true},
-		{"agrees+minor", rev("agrees", pt("minor")), true},
-		{"agrees+blocking", rev("agrees", pt("blocking")), false},
-		{"concerns", rev("concerns", pt("major")), false},
-		{"concerns empty", rev("concerns"), false},
-		{"disagrees", rev("disagrees", pt("blocking")), false},
-		{"disagrees empty", rev("disagrees"), false},
-		{"wrong subject", &api.ReviewFile{SchemaVersion: 1, Subject: api.SubjectSpec, Verdict: "agrees"}, false},
+}
+
+// oracle says, from first principles and not from the gate's code, whether a
+// change may pass without a person.
+func oracle(f Facts, reviewAgrees bool) bool {
+	switch f.Task {
+	case api.TaskImplement, api.TaskFixCI, api.TaskAcceptance, api.TaskOnboard:
+	default:
+		return false
 	}
+	c := f.Change
+	if c.Ticket < 1 || c.Attempt < 1 || len(c.Commit) != 40 || c.BuilderRun == "" || f.MaxAttempts < 1 || f.ReviewTries < 0 || f.MaxReviewTries < 0 {
+		return false
+	}
+	if f.Task == api.TaskImplement || f.Task == api.TaskFixCI {
+		if f.Risk.Level != api.RiskLow && f.Risk.Level != api.RiskMedium {
+			return false
+		}
+	}
+	v := f.Verify
+	if !v.ProtectedOK || !v.ChecksPassed || len(v.ProtectedTouched) > 0 || len(v.FailedChecks) > 0 {
+		return false
+	}
+	for _, e := range f.Acceptance {
+		if !e.Before.Valid() || (e.Before == api.StateWorking && e.State != api.StateWorking) {
+			return false
+		}
+	}
+	return reviewAgrees
+}
+
+// The whole walk: every combination of the facts, with zero, nil and
+// hand-built values for each input type. PASS only when verify passed with no
+// contradiction, no regression with every earlier state known, a valid bound
+// agreeing review of this change, and risk not high.
+func TestNoCombinationPassesWithoutAllConditions(t *testing.T) {
 	tasks := []string{api.TaskImplement, api.TaskFixCI, api.TaskAcceptance, api.TaskOnboard, api.TaskReview, "", "x"}
+	verifies := []VerifyFacts{
+		{ProtectedOK: true, ChecksPassed: true},
+		{ProtectedOK: false, ChecksPassed: true},
+		{ProtectedOK: true, ChecksPassed: false},
+		{ProtectedOK: true, ChecksPassed: true, ProtectedTouched: []string{"a"}},
+		{ProtectedOK: true, ChecksPassed: true, FailedChecks: []string{"a"}},
+		{},
+	}
+	accs := [][]api.AcceptanceEntry{
+		nil,
+		{{ID: 1, State: api.StateWorking, Before: api.StateWorking, Check: "c"}},
+		{{ID: 1, State: api.StateNotWorking, Before: api.StateWorking}},
+		{{ID: 1, State: api.StateWorking}},
+		{{ID: 1, State: api.StateWorking, Before: "weird"}},
+		{{ID: 1, State: "weird", Before: api.StateWorking}},
+		{{}},
+	}
 	risks := []string{api.RiskLow, api.RiskMedium, api.RiskHigh, "", "weird"}
-	harnesses := []string{api.HarnessClaudeCode, api.HarnessCodex}
 	builders := []string{api.HarnessClaudeCode, ""}
-	n, passed := 0, 0
-	for _, task := range tasks {
-		for _, protOK := range []bool{false, true} {
-			for _, checksOK := range []bool{false, true} {
-				for _, regress := range []bool{false, true} {
-					for _, r := range reviews {
-						for _, h := range harnesses {
-							for _, risk := range risks {
-								for _, builder := range builders {
-									for _, attempt := range []int{0, 1, 2, 3, 4} {
-										f := Facts{
-											Task:           task,
-											Verify:         VerifyFacts{ProtectedOK: protOK, ChecksPassed: checksOK},
-											Risk:           api.Risk{Level: risk},
-											BuilderHarness: builder,
-											Attempt:        attempt,
-											MaxAttempts:    3,
-										}
-										if r.r != nil {
-											f.Review = boundReview(t, r.r, h)
-										}
-										if regress {
-											f.Acceptance = []api.AcceptanceEntry{{ID: 1, State: api.StateNotWorking, Before: api.StateWorking}}
-										} else {
-											f.Acceptance = []api.AcceptanceEntry{{ID: 1, State: api.StateWorking, Before: api.StateWorking, Check: "c"}}
-										}
+	changes := []ChangeRef{
+		{Ticket: 42, Attempt: 1, Commit: testCommit, BuilderRun: "r_build"},
+		{Ticket: 42, Attempt: 3, Commit: testCommit, BuilderRun: "r_build"},
+		{Ticket: 42, Attempt: 4, Commit: testCommit, BuilderRun: "r_build"},
+		{},
+		{Ticket: 42, Attempt: 0, Commit: testCommit, BuilderRun: "r_build"},
+		{Ticket: 42, Attempt: 1, Commit: testCommit[:7], BuilderRun: "r_build"},
+		{Ticket: 0, Attempt: 1, Commit: testCommit, BuilderRun: "r_build"},
+		{Ticket: 42, Attempt: 1, Commit: testCommit, BuilderRun: ""},
+	}
+	tries := [][2]int{{0, 0}, {2, 0}, {-1, 0}, {0, -1}}
+	n, passed, asked := 0, 0, 0
+	for _, c := range changes {
+		// A review can only be bound to a change that is well formed. For the
+		// others, bind to a good change that differs, so the review does not
+		// match.
+		bindTo := c
+		if c.valid() != nil {
+			bindTo = goodChange()
+		}
+		for _, rv := range reviewVariants(t, bindTo) {
+			agrees := rv.r != nil && rv.r.Agrees() && rv.r.change == c
+			for _, task := range tasks {
+				for _, v := range verifies {
+					for _, acc := range accs {
+						for _, risk := range risks {
+							for _, b := range builders {
+								for _, tr := range tries {
+									for _, maxA := range []int{0, 3} {
+										f := Facts{Task: task, Change: c, Verify: v, Acceptance: acc, Review: rv.r,
+											ReviewTries: tr[0], MaxReviewTries: tr[1], Risk: api.Risk{Level: risk},
+											BuilderHarness: b, MaxAttempts: maxA}
 										d := Decide(f)
 										n++
+										want := oracle(f, agrees)
+										if want && riskApplies(task) && risk == api.RiskHigh {
+											t.Fatal("oracle bug")
+										}
+										if (d.Outcome == OutcomePass) != want {
+											t.Fatalf("pass = %v, oracle %v, review %s, facts %+v, decision %+v", d.Outcome == OutcomePass, want, rv.name, f, d)
+										}
 										if d.Outcome == OutcomePass {
 											passed++
-											if !protOK || !checksOK || regress || !r.good {
-												t.Fatalf("passed with protOK=%v checksOK=%v regress=%v review=%s facts=%+v", protOK, checksOK, regress, r.name, f)
-											}
-											if risk == api.RiskHigh && (task == api.TaskImplement || task == api.TaskFixCI) {
-												t.Fatalf("a high risk change passed without a person: %+v", f)
-											}
-											if task == api.TaskReview || task == "" || task == "x" || attempt < 1 {
-												t.Fatalf("passed on facts that cannot be read: %+v", f)
-											}
-										}
-										if d.Exception == ExceptionHighRisk && (!protOK || !checksOK || regress || !r.good) {
-											t.Fatalf("asked a person about a change that did not earn the question: %+v", f)
 										}
 										if d.Outcome == OutcomeException && d.Exception == "" {
 											t.Fatal("exception with no kind")
+										}
+										if d.Outcome != OutcomeException && d.Exception != "" {
+											t.Fatal("kind without exception")
+										}
+										if len(d.Reasons) == 0 {
+											t.Fatalf("no reasons: %+v", d)
+										}
+										if d.Outcome == OutcomeException {
+											got, err := ApplyPersonDecision(d, c, AnswerYes)
+											if d.Exception != ExceptionHighRisk && (err == nil || got.Outcome == OutcomePass) {
+												t.Fatalf("a yes passed %+v", d)
+											}
+											if d.Exception == ExceptionHighRisk {
+												asked++
+												if !agrees || !v.ProtectedOK || !v.ChecksPassed || len(v.ProtectedTouched)+len(v.FailedChecks) > 0 {
+													t.Fatalf("asked a person without earning it: %+v", f)
+												}
+												if err != nil || got.Outcome != OutcomePass {
+													t.Fatalf("a good yes failed: %v", err)
+												}
+											}
 										}
 									}
 								}
@@ -304,10 +440,10 @@ func TestNoCombinationPassesWithoutAllConditions(t *testing.T) {
 			}
 		}
 	}
-	if passed == 0 {
-		t.Fatal("no combination passed, so the walk proves nothing")
+	if passed == 0 || asked == 0 {
+		t.Fatalf("passed %d, asked %d: the walk proves nothing", passed, asked)
 	}
-	t.Logf("walked %d combinations, %d passed", n, passed)
+	t.Logf("walked %d combinations, %d passed, %d asked a person", n, passed, asked)
 }
 
 func TestDecideDoesNotAliasInput(t *testing.T) {

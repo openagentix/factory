@@ -31,16 +31,16 @@ func TestFillEvidence(t *testing.T) {
 		{"high risk question", func(_ testing.TB, f *Facts) { f.Risk.Level = api.RiskHigh }, nil, api.GateException, true, "agrees", false, api.RiskHigh, api.HarnessCodex},
 		{"high risk, person said yes", func(_ testing.TB, f *Facts) { f.Risk.Level = api.RiskHigh },
 			func(d Decision) Decision {
-				n, err := ApplyPersonDecision(d, AnswerYes)
+				n, err := ApplyPersonDecision(d, goodChange(), AnswerYes)
 				if err != nil {
 					t.Fatal(err)
 				}
 				return n
 			}, api.GatePassed, true, "agrees", false, api.RiskHigh, api.HarnessCodex},
-		{"no review", func(_ testing.TB, f *Facts) { f.Review = nil }, nil, api.GateFailed, false, "", false, api.RiskLow, ""},
+		{"no review, asked again", func(_ testing.TB, f *Facts) { f.Review = nil }, nil, api.GatePending, false, "", false, api.RiskLow, ""},
 		{"unusable review is recorded as no review", func(t testing.TB, f *Facts) {
 			f.Review = boundReview(t, rev("concerns"), api.HarnessCodex)
-		}, nil, api.GateFailed, false, "", false, api.RiskLow, ""},
+		}, nil, api.GatePending, false, "", false, api.RiskLow, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

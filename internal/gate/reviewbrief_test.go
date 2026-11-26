@@ -44,7 +44,7 @@ func TestAttackerBriefChosenByPath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			in := briefInput(tc.paths...)
-			if got := NeedsAttackerBrief(in.ChangedPaths, in.RiskPaths); got != tc.want {
+			if got := NeedsAttackerBrief(in.ChangedPaths, in.OldPaths, in.RiskPaths); got != tc.want {
 				t.Fatalf("got %v", got)
 			}
 			if got := strings.Contains(ReviewBrief(in), "## The attacker"); got != tc.want {

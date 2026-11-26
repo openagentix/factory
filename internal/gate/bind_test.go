@@ -2,18 +2,22 @@ package gate
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/openagentix/factory/internal/api"
 )
 
+// testCommit is a full lower case commit id.
+const testCommit = "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+
 func goodChange() ChangeRef {
-	return ChangeRef{Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", BuilderRun: "r_build"}
+	return ChangeRef{Ticket: 42, Attempt: 1, Commit: testCommit, BuilderRun: "r_build"}
 }
 
 func goodRun() ReviewRun {
 	return ReviewRun{RunID: "r_review", Task: api.TaskReview, Phase: api.PhaseSucceeded,
-		Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", Harness: api.HarnessCodex}
+		Ticket: 42, Attempt: 1, Commit: testCommit, Harness: api.HarnessCodex}
 }
 
 func TestBindReview(t *testing.T) {
@@ -24,13 +28,13 @@ func TestBindReview(t *testing.T) {
 		ok     bool
 	}{
 		{"matching review run", func(*ReviewRun) {}, rev("agrees"), true},
-		{"different commit", func(r *ReviewRun) { r.Commit = "ffffffff" }, rev("agrees"), false},
+		{"different commit", func(r *ReviewRun) { r.Commit = strings.Repeat("f", 40) }, rev("agrees"), false},
 		{"empty commit", func(r *ReviewRun) { r.Commit = "" }, rev("agrees"), false},
-		{"abbreviated commit is not the same commit", func(r *ReviewRun) { r.Commit = "a1b2c3d" }, rev("agrees"), false},
+		{"abbreviated commit is not the same commit", func(r *ReviewRun) { r.Commit = testCommit[:39] }, rev("agrees"), false},
 		{"run of an implement task", func(r *ReviewRun) { r.Task = api.TaskImplement }, rev("agrees"), false},
 		{"run of a fix-ci task", func(r *ReviewRun) { r.Task = api.TaskFixCI }, rev("agrees"), false},
 		{"another ticket", func(r *ReviewRun) { r.Ticket = 43 }, rev("agrees"), false},
-		{"an earlier attempt", func(r *ReviewRun) { r.Attempt = 1 }, rev("agrees"), false},
+		{"an earlier attempt", func(r *ReviewRun) { r.Attempt = 2 }, rev("agrees"), false},
 		{"run that did not succeed", func(r *ReviewRun) { r.Phase = api.PhaseFailed }, rev("agrees"), false},
 		{"run still working", func(r *ReviewRun) { r.Phase = api.PhaseWorking }, rev("agrees"), false},
 		{"no run id", func(r *ReviewRun) { r.RunID = "" }, rev("agrees"), false},
@@ -74,7 +78,7 @@ func TestBoundReviewTakesBindingFactsOnlyFromTheRecord(t *testing.T) {
 	// parser refuses a file that tries to carry one. The harness a bound
 	// review reports is the recorded one.
 	for _, in := range []string{
-		`{"schemaVersion":1,"subject":"change","verdict":"agrees","commit":"a1b2c3d4"}`,
+		`{"schemaVersion":1,"subject":"change","verdict":"agrees","commit":"abc"}`,
 		`{"schemaVersion":1,"subject":"change","verdict":"agrees","harness":"codex"}`,
 		`{"schemaVersion":1,"subject":"change","verdict":"agrees","run":"r_review"}`,
 	} {
@@ -98,10 +102,10 @@ func TestBoundReviewTakesBindingFactsOnlyFromTheRecord(t *testing.T) {
 func TestAFileFromTheBuildersRunIsNeverAReview(t *testing.T) {
 	agrees := rev("agrees")
 	builderRuns := []ReviewRun{
-		{RunID: "r_build", Task: api.TaskImplement, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", Harness: api.HarnessClaudeCode},
-		{RunID: "r_build", Task: api.TaskReview, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", Harness: api.HarnessClaudeCode},
-		{RunID: "r_other", Task: api.TaskFixCI, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", Harness: api.HarnessClaudeCode},
-		{RunID: "r_old", Task: api.TaskImplement, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 1, Commit: "00000000", Harness: api.HarnessClaudeCode},
+		{RunID: "r_build", Task: api.TaskImplement, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 1, Commit: testCommit, Harness: api.HarnessClaudeCode},
+		{RunID: "r_build", Task: api.TaskReview, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 1, Commit: testCommit, Harness: api.HarnessClaudeCode},
+		{RunID: "r_other", Task: api.TaskFixCI, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 1, Commit: testCommit, Harness: api.HarnessClaudeCode},
+		{RunID: "r_old", Task: api.TaskImplement, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 0, Commit: strings.Repeat("0", 40), Harness: api.HarnessClaudeCode},
 	}
 	for i, run := range builderRuns {
 		if b, err := BindReview(goodChange(), run, agrees); err == nil {

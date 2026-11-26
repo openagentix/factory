@@ -76,8 +76,8 @@ func TestReworkBriefJSON(t *testing.T) {
 
 func TestReworkBriefCapsPointsAndText(t *testing.T) {
 	var pts []api.ReviewPoint
-	for i := 0; i < 500; i++ {
-		pts = append(pts, api.ReviewPoint{Severity: "minor", Text: strings.Repeat("long ", 1000), File: strings.Repeat("d/", 500) + "f.go"})
+	for i := 0; i < MaxReviewPoints-1; i++ {
+		pts = append(pts, api.ReviewPoint{Severity: "minor", Text: strings.Repeat("long ", 150), File: strings.Repeat("d/", 150) + "f.go"})
 	}
 	pts = append(pts, api.ReviewPoint{Severity: "blocking", Text: "the one that matters"})
 	in := reworkInput(t)
@@ -89,7 +89,7 @@ func TestReworkBriefCapsPointsAndText(t *testing.T) {
 	if b.Points()[0].Text != "the one that matters" {
 		t.Fatal("the cap dropped the most serious point")
 	}
-	if b.OmittedPoints() != 501-MaxBriefPoints {
+	if b.OmittedPoints() != MaxReviewPoints-MaxBriefPoints {
 		t.Fatalf("omitted = %d", b.OmittedPoints())
 	}
 	for _, p := range b.Points() {

@@ -23,8 +23,10 @@ func FillEvidence(ev *api.Evidence, d Decision, r *BoundReview) error {
 	switch d.Outcome {
 	case OutcomePass:
 		gate = api.GatePassed
-	case OutcomeRework:
+	case OutcomeRework, OutcomeDeclined:
 		gate = api.GateFailed
+	case OutcomeReviewAgain:
+		gate = api.GatePending
 	case OutcomeException:
 		gate = api.GateException
 	default:

@@ -3,8 +3,6 @@ package gate
 import (
 	"errors"
 	"fmt"
-
-	"github.com/openagentix/factory/internal/api"
 )
 
 // Answer is a person's answer to an exception.
@@ -20,50 +18,57 @@ const (
 // "yes" cannot pass.
 var ErrYesRefused = errors.New("gate: a yes cannot pass this exception")
 
-// ApplyPersonDecision returns what happens next, given an exception and a
-// person's answer. On an error it returns the zero Decision, which is not a
-// pass.
+// ApplyPersonDecision returns what happens next, given an exception, the
+// change it is about and a person's answer. On an error it returns the
+// original decision unchanged, together with the error.
 //
-// A yes passes only an exception of the high risk kind whose review agreed
-// and whose risk is high by content, for a task the risk rules apply to. For
-// every other kind a yes is refused with ErrYesRefused. The decision is
-// checked again here, so a decision that was built by hand, or changed after
-// Decide made it, does not pass.
+// A decision is accepted only when Decide made it (it is sealed) for this
+// very change. A yes passes only an exception of the high risk kind that
+// Decide made when verify had passed with no regression, a review of this
+// change agreed, and risk was high by content, for a task the risk rules
+// apply to. Every other kind refuses a yes with ErrYesRefused. Exported
+// fields of the decision are not trusted: the sealed facts are checked.
 //
-// A no to a high risk question sends the change back to its ticket as a new
-// attempt, or, when the attempts are used up, takes the goal off course. A no
-// to any other exception changes nothing.
-func ApplyPersonDecision(d Decision, a Answer) (Decision, error) {
+// A no to a high risk question means the change is not wanted: it is dropped
+// and its ticket is closed as declined. It is not off course and uses no
+// attempt. A no to any other exception changes nothing.
+func ApplyPersonDecision(d Decision, c ChangeRef, a Answer) (Decision, error) {
+	fail := func(err error) (Decision, error) { return d, err }
 	if a != AnswerYes && a != AnswerNo {
-		return Decision{}, fmt.Errorf("gate: the answer %q is not yes or no", string(a))
+		return fail(fmt.Errorf("gate: the answer %q is not yes or no", string(a)))
+	}
+	if !d.sealed {
+		return fail(fmt.Errorf("%w: the decision was not made by the gate", ErrYesRefused))
 	}
 	if d.Outcome != OutcomeException {
-		return Decision{}, fmt.Errorf("gate: only an exception takes an answer, this decision is %q", string(d.Outcome))
+		return fail(fmt.Errorf("gate: only an exception takes an answer, this decision is %q", string(d.Outcome)))
+	}
+	if err := c.valid(); err != nil || c != d.change {
+		return fail(fmt.Errorf("%w: the decision is about a different change", ErrYesRefused))
 	}
 	switch d.Exception {
-	case ExceptionHighRisk, ExceptionOffCourse, ExceptionInvalidFacts:
+	case ExceptionHighRisk, ExceptionOffCourse, ExceptionInvalidFacts, ExceptionNoReview,
+		ExceptionAcceptanceUnconfirmed, ExceptionSetupNotFinished:
 	default:
-		return Decision{}, fmt.Errorf("gate: unknown kind of exception %q", string(d.Exception))
+		return fail(fmt.Errorf("gate: unknown kind of exception %q", string(d.Exception)))
+	}
+	if d.Exception != d.sealedKind {
+		return fail(fmt.Errorf("%w: the kind of exception was changed after the gate made it", ErrYesRefused))
 	}
 	if a == AnswerNo {
 		if d.Exception != ExceptionHighRisk {
 			return d, nil
 		}
 		next := d
-		next.Reasons = append(append([]string(nil), d.Reasons...), "a person said no")
-		if d.Attempt >= d.MaxAttempts {
-			next.Exception = ExceptionOffCourse
-			next.Plain = "The factory used all its tries on this work and some lines are still not working yet. Nothing was combined. The factory stops building on this goal and will plan it again with you."
-			return next, nil
-		}
-		next.Outcome, next.Exception, next.Plain = OutcomeRework, "", ""
+		next.Reasons = append(append([]string(nil), d.Reasons...), "a person said no, the change is dropped and its ticket is closed as declined")
+		next.Outcome, next.Exception, next.Plain = OutcomeDeclined, "", ""
 		return next, nil
 	}
 	if d.Exception != ExceptionHighRisk {
-		return Decision{}, fmt.Errorf("%w: the exception is %q", ErrYesRefused, string(d.Exception))
+		return fail(fmt.Errorf("%w: the exception is %q", ErrYesRefused, string(d.Exception)))
 	}
-	if !d.ReviewAgreed || d.Risk.Level != api.RiskHigh || !riskApplies(d.Task) {
-		return Decision{}, fmt.Errorf("%w: the review did not agree, or the risk is not high by content", ErrYesRefused)
+	if !d.sealedAgreed || !d.sealedVerify || !d.sealedHigh || d.sealedReview == "" || !riskApplies(d.Task) {
+		return fail(fmt.Errorf("%w: verify, the review or the risk does not support it", ErrYesRefused))
 	}
 	next := d
 	next.Reasons = append(append([]string(nil), d.Reasons...), "a person said yes")

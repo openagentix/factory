@@ -82,3 +82,22 @@ func TestLoadManifest_Refusals(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadManifest_TenThousandEntriesAreRefused(t *testing.T) {
+	tr := newTestRepo(t)
+	var b strings.Builder
+	b.WriteString(`{"schemaVersion":1,"goal":8,"criteria":[`)
+	for i := 1; i <= 10000; i++ {
+		if i > 1 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"id":%d,"text":"t","run":"x"}`, i)
+	}
+	b.WriteString("]}")
+	tr.write("acceptance/8/manifest.json", b.String())
+	c := tr.commit("x")
+	_, err := LoadManifest(context.Background(), tr.open(), c, "", 8)
+	if err == nil || !strings.Contains(err.Error(), "10000 criteria") {
+		t.Errorf("err = %v", err)
+	}
+}

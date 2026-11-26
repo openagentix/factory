@@ -39,7 +39,7 @@ Read the design and the decision records before you change a contract.
 
 ## Licence rule
 
-Embed only MIT and Apache-2.0 code. Never embed AGPL, PolyForm, FSL or Elastic licensed code. Ask before adding a dependency, and write a decision record for it.
+Embed only MIT and Apache-2.0 code. Never embed AGPL, PolyForm, FSL or Elastic licensed code. BSD, ISC and public domain code are accepted for underlying modules of the Go ecosystem and for SQLite. Every module is listed in `THIRD-PARTY.md`. Ask before adding a dependency, and write a decision record for it.
 
 ## Commit rules
 

@@ -72,6 +72,20 @@ In the first release the work stage is a process on the person's own machine, st
 
 Never start a harness with a flag that skips all permission checks on a person's own machine. No prompts in unattended runs must come from a policy, not from switching checks off.
 
+## Found during the first build
+
+A second agent, told to attack each package, made these happen before anything was merged. Each is fixed and kept as a test.
+
+| Found | Fix |
+|---|---|
+| Repository settings made the orchestrator's git run a program, outside any sandbox | The factory's own repository, a guard with fixed lists, a checkout written from objects |
+| Repository settings sent the propose token to another server during a push | A push from a fresh temporary repository, an address the factory builds, a credential only for that exact host |
+| A value that starts with a dash became a flag of the harness, including one that turns permission checks off | Every value validated and passed as `--flag=value`. A test that allows only known flags |
+| The stub agent wrote and deleted outside its directories | Resolved paths, no links followed, runs only when switched on |
+| A finished run record could be rewritten | No update to a run in a terminal phase |
+| The run database was readable by other users of the machine | Directory 0700, files 0600 |
+| A path written in an odd form slipped past the acceptance path protection | One rule for every repository path |
+
 ## Honest summary
 
 In local mode the honest statement is: the same trust as running Claude Code or Codex yourself, plus a verify stage, an independent review and a publish step the agent does not control. The factory gives the agent no credential, but the agent runs as the same user and the factory cannot wall off that user's files. The default branch moves only through the accept token, on a person's Accept or Undo, or through a developer. That split holds only if the git host's branch protection enforces it. In a container the git host is well protected, because the worker has no credential for it and cannot read the person's home directory. Enforced budgets, outbound rules and an audit record are what OpenAgentix adds. The web app and the docs must say all of this.

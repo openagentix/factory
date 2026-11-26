@@ -16,3 +16,6 @@ bin/
 # Local notes for AI assistants. Never commit.
 CLAUDE.local.md
 .superpowers/
+
+# Local working copies for builders. Never commit.
+.worktrees/

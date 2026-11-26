@@ -137,20 +137,20 @@ Rules for the dial:
 - The trust ledger sits beside the dial. In v0.1 it informs. It does not move the dial.
 - On OpenAgentix the platform policy sets the ceiling and enforces it. Policy can only tighten. Same dial, stronger hand.
 
-**The review gate is a decision, not a button.** A gate that a person passes without reading is one more "yes". So the factory writes a **decision card** for every pull request: what you are approving, what was decided for you, what was not verified, and where an independent review by the other model disagrees. Risk sets the effort: one action for low risk, a confirmation per item for high risk. Detail in decision record 0001, Decision 13.
+**The review gate is a decision, not a button.** A gate that a person passes without reading is one more "yes". So the factory computes a **decision card** for every pull request, from structured inputs and not from a model's prose: what you are approving, what was decided for you, what was not verified, and the verdict of an independent review by the other model. Risk sets the effort: one action for low risk, a confirmation per item for high risk. Detail in decision record 0001, Decision 13.
 
 ```
-YOU ARE APPROVING                                risk: MEDIUM
- 1. Public contract changes: the result file gains "rulings"
- 2. Two new risks accepted in the threat model
+YOU ARE APPROVING                                  risk: HIGH
+ 1. Contract path changed: the result file gains "rulings" [confirm]
+ 2. Criterion 3, "old clients still work": unverified    [confirm]
 DECIDED FOR YOU (3 rulings)                      [overturn]
 NOT VERIFIED
- - nothing in this change has been run
- - the summary does not mention 2 changed files
-INDEPENDENT REVIEW (other model): agrees, 1 concern
+ - 2 changed files are not covered by any claim
+ - criterion 3 has no check
+INDEPENDENT REVIEW (other model): concerns, 1 point
 ```
 
-**Trust comes from outcomes, not from merges.** A merge without engagement never raises trust. The ledger counts engaged reviews and, above all, what happened after the merge: not reverted, no follow-up fix, the default branch stayed green. Automatic merge opens per **class of change**, when that class has a clean record, proposed by the factory and switched on by a person. One bad outcome closes it again.
+**Trust comes from outcomes, not from merges.** The act of merging is never evidence, read or unread. What counts is what happened after: not reverted, no follow-up fix, the default branch stayed green, and the change was actually exercised. A change nobody exercised is silent, and silence is not success. Automatic merge opens per **class of change**, when that class has a clean record, proposed by the factory and switched on by a person. One bad outcome closes it again. With one maintainer this record is honest but not independent, and the factory says so.
 
 **The attention record.** The trust ledger counts what a person feels: touches per merged pull request, questions asked, rulings made, rulings a person overturned. Many overturned rulings say turn the dial down. Few say it can go up.
 

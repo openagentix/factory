@@ -167,7 +167,7 @@ Rules:
 - A change to a protected path fails the run.
 - A change to any test file raises the risk level and is shown first to the reviewer.
 - `usage.enforced` is `false` on rungs 1 and 2. The UI says "reported, not enforced". It is `true` only when a governance provider enforced the limit.
-- Risk in v0.1 is rule based: test files changed, protected area near, diff size, new dependency files. No model judges risk.
+- Risk is rule based. No model sets the level. The rules are in Decision 13, which replaces the first list given here.
 
 The pull request body has three parts, after Matt Pocock's `pr` skill: Summary, Evidence, Merge danger.
 
@@ -337,51 +337,74 @@ A worker writes a ruling when its method would have asked a person and the choic
 
 ## Decision 13: the review gate is a decision, not a button
 
-Added on 2026-11-26.
+Added on 2026-11-26. It replaces the risk rules of Decision 6 and the words "locked in v0.1" for dial level 3 in Decision 12. An independent review of the first draft of this decision disagreed with it on twelve points. This text is the corrected one.
 
-**What happened.** The first pull request in this repository changed 17 files, a contract on paper and the threat model. It was merged 85 seconds after it was opened, with green checks and no reading. Moving the "yes" from a prompt to a merge button solves nothing. Green checks show that the code builds. They do not show that the change is right.
+**What happened.** The first pull request in this repository (number 10) changed 17 files, a contract on paper and the threat model. It was merged 85 seconds after it was opened, and its owner said it was merged without reading. Moving the "yes" from a prompt to a merge button solves nothing. Green checks show that the code builds. They do not show that the change is right.
 
-**The decision card.** For every pull request the factory opens, the orchestrator writes a card at the top of the pull request and in the web app. The orchestrator writes it from the evidence bundle. The agent does not.
+**Structured inputs.** The card must be computed, not written by a model. So the contracts gain structure:
 
-| Part | Content | Source |
+- Each claim in the result file lists the files it covers: `{ "text": "...", "files": ["..."] }`.
+- A ticket the factory creates has numbered acceptance criteria. The result file reports each one: `{ "id": 2, "status": "met | not_met | unverified", "check": "name of the check that shows it, or empty" }`.
+- The review task writes `review.json`, not free text: `{ "verdict": "agrees | concerns | disagrees", "points": [ { "severity": "...", "text": "...", "file": "..." } ], "criteria": [ { "id": 2, "status": "..." } ] }`.
+- `factory.yaml` lists `riskPaths`: which paths are public contracts, which are security-relevant, which are dependency manifests, which are documents. `onboard` proposes the lists.
+
+**The decision card.** The orchestrator writes it from these inputs. The agent does not write it.
+
+| Part | Content | Computed from |
 |---|---|---|
-| You are approving | The few things a person is really deciding: contract changes, new dependencies, test or CI changes, security-relevant paths, behaviour named in the acceptance criteria | Rules over the diff and the ticket |
-| Decided for you | The agent's rulings, each with an overturn action | The result file |
-| Not verified | What no check covered: acceptance criteria with no check, files changed that the summary does not mention, anything the policy denied | Claim against diff, criteria against checks |
-| Independent review | The verdict of the review run and only the points where it disagrees with the builder | The `review` task, on the other harness when two are present |
-| Risk | Low, medium or high, with the reasons | Rules, see below |
+| You are approving | Changed paths that fall under `riskPaths` (contract, security, dependencies), changed test files, and each acceptance criterion | Diff, `riskPaths`, ticket |
+| Decided for you | The rulings, each with an overturn action | Result file |
+| Not verified | Changed files that no claim lists. Criteria with status `unverified` or with no check named. Criteria where builder and reviewer differ. Anything the policy denied | Diff against claims, result file against `review.json` |
+| Independent review | The verdict and its points | `review.json` |
+| Risk | Low, medium or high, with reasons | Rules below |
 
-**Risk sets the effort.**
+The card is written twice. When the pull request opens it shows "review pending". When the review run ends it is completed. A gate action in the web app is possible only on a completed card. A ticket written by a person without numbered criteria gets a card that says "no acceptance criteria".
 
-| Risk | When | The gate asks for |
+**Risk rules.** These replace the list in Decision 6. Risk is computed after the review and stored in the evidence bundle with the review verdict and the criteria results.
+
+| Risk | When |
+|---|---|
+| High | A contract or security path changed. Or a dependency manifest changed. Or a test file changed. Or the review verdict is `disagrees`. Or any criterion is `not_met` or `unverified` |
+| Low | Only paths listed as documents changed, or: no high reason, the review `agrees`, every changed file is covered by a claim, and the diff is under a size limit from the settings |
+| Medium | Everything else |
+
+A change to a protected path fails the run before any card exists, so it is not a risk reason.
+
+**Risk sets the effort.** Low: one action. Medium: open the completed card. High: a separate confirmation for each item under "You are approving", in the web app, with no single button.
+
+**What the factory can and cannot see.** Only actions in the web app count as engagement. A merge made on the git host with no action in the web app is recorded as a merge without engagement, with the name the git host gives for who merged. The factory cannot stop that merge. The confirmations are not enforced by the git host.
+
+**Trust.** The ledger keeps three records apart, per class of change:
+
+| Record | Meaning | Evidence of trust |
 |---|---|---|
-| Low | No contract, dependency, test, CI or protected-area change. Checks pass. The review agrees. Nothing unverified | One action |
-| Medium | Anything between | Opening the card |
-| High | A public contract, a security-relevant path, tests or CI changed, the reviews disagree, or acceptance criteria are unverified | A separate confirmation for each item under "You are approving". There is no single button in the web app |
+| Merge | Someone merged it | No. The act of merging is never evidence, with or without engagement |
+| Engaged review | A completed card was opened and, for high risk, each item confirmed | Weak. It can be clicked through |
+| Outcome | What happened after the merge | Yes, when the change was exercised |
 
-Risk is rule based in v0.1. No model sets the risk level. The factory cannot stop a person from pressing merge on GitHub itself. It records that they did.
+An outcome is **bad** when the change is reverted, or a later fix names it, or the default branch turns red on this merge commit. It is **good** only when none of that happened inside the window **and** the change was exercised: a check on the default branch ran tests in the changed packages, or, later, the change was deployed. Otherwise it is **silent**. A silent outcome counts for nothing. Silence is not success.
 
-**A class of change** is the unit for trust: task, risk level and kind of paths touched (for example: `implement`, low, documents only).
+A revert is counted once, as a bad outcome. An overturned ruling is a ruling a person marked as wrong in the web app.
 
-**What counts as trust.** The ledger records three things per class and keeps them apart:
+**A class of change** is: the task, the risk level, and the kind of paths touched (documents, tests, code, contract, security, dependencies, from `riskPaths`). The orchestrator assigns the class from the diff.
 
-| Record | Meaning | Counts toward a higher dial level |
-|---|---|---|
-| Merged without engagement | Merged with the card unopened, or faster than a floor set by the size of the diff | No |
-| Engaged review | The card was opened and, for high risk, each item confirmed | Yes |
-| Outcome | After a set number of days: not reverted, no fix that names it, the default branch stayed green | Yes, and it weighs most |
+**The dial and automatic merge.** A person sets the dial per task at levels 0 to 2. Level 3 is not a position for a whole task. It is a switch per class, under a task whose ceiling allows 3.
 
-A merge without engagement never raises trust. Without this rule, thoughtless merges would talk the factory into merging by itself.
+- A class is **eligible** when, inside a window, it has at least a set number of good outcomes, no bad outcome, and a review verdict of `agrees` each time, from a different harness than the builder. The count and the window are settings with no default yet. They will be chosen from real runs.
+- The factory proposes an eligible class and shows the record. A person switches it on.
+- If a person keeps merging one class without engagement and its outcomes are good, the factory says so and proposes the switch. That is consistent with the rule above: the outcomes are the evidence, not the merges.
+- A bad outcome switches the class off. It becomes eligible again only after a fresh, full count of good outcomes.
+- In v0.1 the ledger computes eligibility and shows it. The merge stays with a person. Automatic merge needs a credential that the local product does not hold.
 
-**The road to automatic merge.** Dial level 3 is opened per class, not for a whole task.
+**Limits.**
 
-- A class becomes eligible when it has enough outcomes on record with none bad, and the independent review agreed each time. The numbers are settings. The first defaults will be chosen from real runs, not guessed here.
-- When a class is eligible, the factory proposes it, with the record shown. A person switches it on. The factory never switches it on.
-- If a person keeps merging one class without engagement and its outcomes stay good, the factory says so plainly and proposes removing that gate. A gate that adds nothing is a cost.
-- One bad outcome closes the class again and the factory says why.
-- In v0.1 the ledger computes eligibility and shows it. The merge itself stays with a person. Automatic merge needs a credential that the local product does not hold.
-
-**Limits.** The rules catch omissions, not subtle wrongness. Two models can share a blind spot. Outcomes need time, so a new repository has no basis for automatic merge, and the factory must say so. Engagement can be faked by clicking through. Outcomes cannot.
+- With one maintainer, the same person engages, merges and switches a class on. There is no second person. The record is honest but the check is not independent.
+- The review run reads untrusted text and can be steered. With one harness installed it is the same model as the builder and shares its blind spots. Such a review does not count for eligibility.
+- The agent chooses which files it touches, so it can keep a change inside a low-risk class. The size limit and `riskPaths` reduce this. They do not remove it.
+- Outcomes can be caused by other commits. A red build is counted only on the merge commit itself, which misses late failures.
+- "Exercised" is an estimate from which tests ran. It does not prove the changed lines ran.
+- Criteria status from the builder is self-reported. The reviewer's status is a second opinion, not a proof.
+- The rules have never been run. Their false alarms and misses are unmeasured.
 
 ## Name
 

@@ -59,7 +59,8 @@ In v0.1 the work stage is a process on the person's own machine, started with th
 
 | L8 | With no prompts, the agent runs a harmful command that a person would have refused | A permission policy per run: an allowlist of tools and commands, writes limited to the worktree. Outside the policy is denied and recorded | The policy is only as good as its list, and depends on each harness honouring it. Not verified by a run |
 | L9 | The agent makes a wrong choice where it used to ask | Rulings are recorded and shown at the gate. The verify stage is outside the agent | A wrong ruling that passes the checks reaches the reviewer |
-| L10 | A person merges without reading, and the factory counts that as trust | A merge without engagement is recorded as such and never raises trust. Trust comes from engaged reviews and, most of all, from outcomes after merge. High-risk changes need a confirmation per item in the web app | A person can still press merge on the git host. Engagement can be faked. Outcomes take time |
+| L10 | A person merges without reading, and the factory takes that as trust | The act of merging is never counted as evidence. Trust comes from outcomes after merge, and only when the change was exercised. High-risk changes need a confirmation per item in the web app | A person can still press merge on the git host. Engagement can be clicked through. Outcomes take time and can be silent. With one maintainer there is no second person |
+| L11 | The review run is steered by text in the change, or shares the builder's blind spot | The review writes a fixed schema. A review by the same harness as the builder does not count toward automatic merge | A steered review that says "agrees" lowers the risk level shown |
 
 Never start a harness with a flag that skips all permission checks on a person's own machine. No prompts must come from a policy, not from switching checks off.
 

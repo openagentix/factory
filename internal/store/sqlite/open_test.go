@@ -88,3 +88,43 @@ func TestOpenTwiceKeepsData(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestUpgradeFromVersion1KeepsRunsAndChecksPhase(t *testing.T) {
+	ctx := context.Background()
+	path := tempPath(t)
+	db, err := sql.Open("sqlite3", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(migrations[0].sql); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id, task, ticket, goal, phase, created_at, worked, body)
+		VALUES ('old', 'implement', 1, 1, 'queued', '2026-11-26T10:00:00.000000000Z', 0, '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	defer s.Close()
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM runs WHERE id = 'old'").Scan(&n); err != nil || n != 1 {
+		t.Errorf("old row after upgrade: %d, %v", n, err)
+	}
+	_, err = s.db.Exec(`INSERT INTO runs (id, task, ticket, goal, phase, created_at, worked, body)
+		VALUES ('new', 'implement', 1, 1, 'sleeping', '2026-11-26T10:00:00.000000000Z', 0, '{}')`)
+	if err == nil {
+		t.Error("the database accepted a phase that is not a run phase")
+	}
+	var idx int
+	s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'runs_%'").Scan(&idx)
+	if idx != 3 {
+		t.Errorf("indexes after upgrade = %d, want 3", idx)
+	}
+}

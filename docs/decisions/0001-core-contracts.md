@@ -2,8 +2,9 @@
 
 - Status: proposed, 2026-11-26. Owner approved the scope and positioning in session. The contracts below are not proven by a run yet.
 - Scope: the local product (a laptop or a dedicated machine, using the Claude Code and Codex already installed there). Every contract is shaped so a container runner, Kubernetes and OpenAgentix need no schema change.
+- Decision 12 replaces the dial levels of Decision 11: every run is unattended and a person decides at gates.
 - Revised the same day: Decision 11 makes the local runner the default and adds co-pilot mode and the autonomy dial. Where an earlier decision speaks of a container, read "work stage", and see Decision 11 for the local form.
-- The product is named OpenAgentix Factory. "AgentFleet" was the first working name. See "Name".
+- The product is named OpenAgentix Software Factory. "AgentFleet" was the first working name. See "Name".
 
 ## Context
 
@@ -155,7 +156,7 @@ Built by the orchestrator in the verify stage. Stored with the run and rendered 
   "testFilesChanged": ["internal/x/x_test.go"],
   "checks": [ { "name": "test", "exitCode": 0, "durationSeconds": 41, "ranBy": "orchestrator" } ],
   "usage": { "billing": "plan", "inputTokens": 12000, "outputTokens": 3400, "enforced": false },
-  "mode": "autopilot | copilot",
+  "mode": "unattended | wheel",
   "limits": { "deadline": "30m", "maxCostUSD": 5 },
   "risk": { "level": "low | medium | high", "reasons": ["test files changed"] }
 }
@@ -293,7 +294,7 @@ Rules for the local runner:
 
 The tool names and their inputs are a public contract. Verify, evidence and publish are identical to autopilot. The evidence bundle records `mode`.
 
-**Autonomy dial.** One level per task: 0 off, 1 co-pilot, 2 autopilot with human review, 3 autopilot with merge. Level 3 is locked in v0.1.
+**Autonomy dial.** (The levels in this paragraph are replaced by Decision 12.) One level per task: 0 off, 1 co-pilot, 2 autopilot with human review, 3 autopilot with merge. Level 3 is locked in v0.1.
 
 - `spec.autonomy.ceiling` in the task file sets the highest level allowed. It changes by pull request.
 - The current level is stored by the orchestrator and moved in the web app, at or below the ceiling. Every change is logged with time and the previous level.
@@ -308,11 +309,37 @@ The tool names and their inputs are a public contract. Verify, evidence and publ
 
 **Where it runs.** On a laptop the web app listens on localhost. On a dedicated machine `oxf` runs as a service and may listen on the local network behind a login token.
 
+## Decision 12: gates, not prompts
+
+Added on 2026-11-26. It replaces the dial levels and the "co-pilot mode" wording of Decision 11. The contracts of Decision 11 stand.
+
+The value of the product is as little interaction as possible, with a reliable way to judge the result. So every run is unattended, and a person decides at fixed gates.
+
+**Dial levels.** 0 off. 1 guided: the factory stops at every phase gate, which are the spec, the plan and every pull request. 2 autopilot: it stops at the pull request only. 3 autopilot with merge, locked in v0.1. A task at any level from 1 up starts runs by itself. The default for a new repository is 1.
+
+**Permission policy.** Each run has a policy: the tools and commands it may use, and the paths it may write. The harness adapter turns the policy into that harness's own settings. A request inside the policy runs. A request outside is denied and recorded. The harness is never started in a mode that asks a person, and never in a mode that skips all checks.
+
+**Rulings.** The result file gains a list:
+
+```json
+"rulings": [ { "decision": "Kept the old endpoint as an alias", "why": "Two callers still use it", "costIfWrong": "One extra route to remove later" } ]
+```
+
+A worker writes a ruling when its method would have asked a person and the choice can be undone and is inside the ticket. Otherwise it writes a question and ends with `needs_human`. The evidence bundle carries the rulings and the policy denials.
+
+**Unattended contract.** A fixed text placed before any method. It tells the agent that it runs unattended, must not ask for confirmation, and must use rulings and questions as above. It is part of the worker contract.
+
+**Questions are batched.** A run that ends with questions adds them to the inbox. Nothing else waits on them.
+
+**Attention record.** The trust ledger also counts, per task: gate actions by a person per merged pull request, questions asked, rulings made, and rulings overturned. A ruling is counted as overturned when a person marks it so in the web app, or reverts the commit.
+
+**Take the wheel.** The Model Context Protocol tools of Decision 11 stay, under that name. Claiming a ticket by hand is an action on a ticket, not a dial level. The run record keeps `mode` with the values `unattended` and `wheel`.
+
 ## Name
 
 The first working name, "AgentFleet", is used by other projects in the same field, so it was dropped.
 
-Decided by the owner on 2026-11-26: **OpenAgentix Factory**. The site and the API group are both `factory.openagentix.org`, a domain the owner holds. Command `oxf` is a working name. Tagline: "Runs alone on Docker. Governed on OpenAgentix."
+Decided by the owner on 2026-11-26: **OpenAgentix Software Factory**. The site and the API group are both `factory.openagentix.org`, a domain the owner holds. Command `oxf` is a working name. Tagline: "Runs alone on Docker. Governed on OpenAgentix."
 
 - The group is the product's own, separate from the platform group `openagentix.io`, as OpenAgentix ADR 0012 requires.
 - The platform group ends in `.io` and this group ends in `.org`. Both will show side by side on rung 3. Whether the platform group should move is a question for OpenAgentix, not for this record.

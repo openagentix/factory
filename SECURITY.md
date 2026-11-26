@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-There is no release yet. When there is one, only the latest release gets security fixes. OpenAgentix Factory will be at version 0.x and the interfaces will still be changing, so older releases will not be patched. Fixes land on `main` and in a new patch release. See [CHANGELOG.md](CHANGELOG.md).
+There is no release yet. When there is one, only the latest release gets security fixes. OpenAgentix Software Factory will be at version 0.x and the interfaces will still be changing, so older releases will not be patched. Fixes land on `main` and in a new patch release. See [CHANGELOG.md](CHANGELOG.md).
 
 | Version | Supported |
 |---|---|

@@ -1,6 +1,6 @@
 # Contributor Covenant Code of Conduct
 
-> OpenAgentix Factory adopts the Contributor Covenant, version 2.1, without changes to its text, except that the placeholder for the contact method is filled in. The official text is at https://www.contributor-covenant.org/version/2/1/code_of_conduct.html.
+> OpenAgentix Software Factory adopts the Contributor Covenant, version 2.1, without changes to its text, except that the placeholder for the contact method is filled in. The official text is at https://www.contributor-covenant.org/version/2/1/code_of_conduct.html.
 
 ## Our Pledge
 

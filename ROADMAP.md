@@ -11,13 +11,13 @@ Nothing else works yet. There is no release.
 
 ## v0.1
 
-Local runner that uses the Claude Code and Codex logins already on the machine. Autopilot and co-pilot. The autonomy dial and the trust ledger. Goal to spec to tickets to pull requests with evidence. A web app. A demo mode that needs no login and no token.
+Local runner that uses the Claude Code and Codex logins already on the machine. Unattended runs with gates, and take the wheel. The autonomy dial and the trust ledger. Goal to spec to tickets to pull requests with evidence. A web app. A demo mode that needs no login and no token.
 
 Build order inside v0.1:
 
 1. Autopilot slice: a ready ticket, the local `claude` or `codex` in a worktree, verification, an evidenced draft pull request.
 2. The web app on top: pipeline, inbox, live run, evidence, the dial.
-3. Co-pilot: the endpoint and the plugin.
+3. Take the wheel: the endpoint and the plugin.
 4. The front half: goal to spec to tickets.
 
 ## v0.2
@@ -38,4 +38,4 @@ Container and Kubernetes runners, deploying, merging without a person, git hosts
 
 ## Open question before any public claim
 
-Whether the terms of Claude and Codex subscriptions allow unattended runs started by another program is not checked. If they do not, autopilot on a subscription is dropped and co-pilot remains.
+Whether the terms of Claude and Codex subscriptions allow unattended runs started by another program is not checked. If they do not, autopilot on a subscription is dropped and take the wheel remains.

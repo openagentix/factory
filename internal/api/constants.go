@@ -13,7 +13,7 @@ const (
 	// APIVersion is the value of the apiVersion field in resource files.
 	APIVersion = Group + "/" + Version
 	// ProductName is the product name shown to people.
-	ProductName = "OpenAgentix Factory"
+	ProductName = "OpenAgentix Software Factory"
 )
 
 // Resource kinds.

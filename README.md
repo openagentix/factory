@@ -1,4 +1,4 @@
-# OpenAgentix Factory
+# OpenAgentix Software Factory
 
 **Runs on your laptop. Governed on OpenAgentix.**
 
@@ -26,24 +26,25 @@ Goal -> Spec -> Plan -> Build -> Verify -> Ship -> Observe
 - Every change comes with evidence: what changed, what was checked, what it used. The factory records it, not the agent.
 - The agent cannot edit the checks that judge it. It never gets a credential that can merge or deploy.
 
-## Autopilot and co-pilot
+## Gates, not prompts
 
-Every piece of work is a run with three stages: work, verify, publish. Only the work stage differs.
+People who use coding agents today spend the day answering "yes". The aim here is as little interaction as possible, with a reliable way to judge the result.
 
-| Mode | Who does the work stage |
+| Interruption today | What the factory does instead |
 |---|---|
-| Autopilot | `oxf` starts the installed `claude` or `codex` with no terminal, in a fresh git worktree |
-| Co-pilot | Your own Claude Code or Codex session claims the ticket, works on it and hands it back |
+| A permission prompt | Policy decides. Inside the policy it runs. Outside, it is denied and recorded |
+| A checkpoint: "approve this plan?" | The agent decides what can be undone, and records a ruling. The verify stage is the real approval |
+| A real question | It goes to an inbox. The run ends. You answer a batch in one sitting |
 
-Verify, evidence, publish and the trust ledger are the same in both.
+You decide at gates, never at prompts. You can use any workflow method inside a run: superpowers, Open GSD, or your own. You can also take the wheel and work a ticket in your own session.
 
 ## The autonomy dial
 
-One setting per task. A person moves it. The repository sets a ceiling.
+One setting per task. It sets how many gates there are: every phase (guided), the pull request only (autopilot), or none for low-risk changes (locked for now). A person moves it. The repository sets a ceiling.
 
 ```
  implement                                  ceiling: autopilot
-   off     co-pilot    [AUTOPILOT]    merge (locked)
+   off      guided     [AUTOPILOT]    merge (locked)
     o---------o------------O- - - - - - - x
  last 30 days: 14 runs, 11 merged, 2 reworked, 0 reverted
  merge is locked: needs an enforced rung and a longer record
@@ -68,7 +69,7 @@ These are plans, not promises. See [ROADMAP.md](ROADMAP.md).
 
 | Release | Content |
 |---|---|
-| v0.1 | Local runner with your existing logins. Autopilot and co-pilot. The dial and trust ledger. Goal to spec to tickets to pull requests with evidence. A web app. A demo mode |
+| v0.1 | Local runner with your existing logins. Unattended runs with gates. The dial and trust ledger. Goal to spec to tickets to pull requests with evidence. A web app. A demo mode |
 | v0.2 | Checks from the spec that the builder cannot touch. A learning loop. A container runner with an API key |
 | v0.3 | The ship phase. `oxf run --once`. A Kubernetes Job runner |
 | v0.4 | The observe phase. An OpenAgentix governance provider |

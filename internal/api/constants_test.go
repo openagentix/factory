@@ -7,7 +7,7 @@ func TestConstants(t *testing.T) {
 		{"Group", Group, "factory.openagentix.org"},
 		{"Version", Version, "v1alpha1"},
 		{"APIVersion", APIVersion, "factory.openagentix.org/v1alpha1"},
-		{"ProductName", ProductName, "OpenAgentix Factory"},
+		{"ProductName", ProductName, "OpenAgentix Software Factory"},
 	}
 	for _, tt := range tests {
 		if tt.got != tt.want {

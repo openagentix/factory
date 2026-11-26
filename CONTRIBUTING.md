@@ -12,7 +12,7 @@ Good first contributions, from easiest to hardest:
 
 - **Documentation.** Fix a wrong or unclear sentence in the README, the design document or a decision record.
 - **Tests.** Add a test for a case in `internal/api` that is not covered.
-- **Review.** Read the [design document](docs/superpowers/specs/2026-11-26-openagentix-factory-design.md) and the [decision records](docs/decisions), and tell us what is unclear, risky or wrong. Early design review is worth a lot.
+- **Review.** Read the [design document](docs/design.md) and the [decision records](docs/decisions), and tell us what is unclear, risky or wrong. Early design review is worth a lot.
 - **Bugs.** Run `make test`, try the code, and report what you find.
 
 If you are unsure where to begin, open a GitHub Discussion or an issue and ask. Small questions are welcome.

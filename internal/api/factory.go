@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -115,8 +117,8 @@ func (f *Factory) Validate() error {
 		p.add("spec.pollInterval", "must be a positive duration such as 1m: %v", err)
 	}
 	ap := f.Spec.AcceptancePath
-	if !cleanRelativePath(ap) {
-		p.add("spec.acceptancePath", "must be a clean relative directory below the repository root: no leading /, no trailing /, no empty, . or .. part")
+	if !cleanRelativePath(ap) || strings.ContainsAny(ap, "*?[{ ") {
+		p.add("spec.acceptancePath", "must be a plain relative directory below the repository root: no leading /, no trailing /, no empty, . or .. part, no glob character (* ? [ {) and no space")
 	}
 	f.checkPaths(&p)
 	return p.err()
@@ -213,4 +215,67 @@ func patternsOverlap(a, b string) bool {
 		return false
 	}
 	return pa == pb || strings.HasPrefix(pb, pa+"/") || strings.HasPrefix(pa, pb+"/")
+}
+
+// factorySpecWire is FactorySpec as written. ProtectedPaths is a pointer so
+// that an explicit empty list is kept and only a nil list is left out. Without
+// this, omitempty would drop an empty list and a re-parse would bring back the
+// default.
+type factorySpecWire struct {
+	Repository               string    `json:"repository" yaml:"repository"`
+	DefaultWorker            Worker    `json:"defaultWorker" yaml:"defaultWorker"`
+	MaxOpenAgentPullRequests int       `json:"maxOpenAgentPullRequests,omitempty" yaml:"maxOpenAgentPullRequests,omitempty"`
+	PollInterval             string    `json:"pollInterval,omitempty" yaml:"pollInterval,omitempty"`
+	AcceptancePath           string    `json:"acceptancePath,omitempty" yaml:"acceptancePath,omitempty"`
+	Start                    string    `json:"start,omitempty" yaml:"start,omitempty"`
+	ProtectedPaths           *[]string `json:"protectedPaths,omitempty" yaml:"protectedPaths,omitempty"`
+	RiskPaths                RiskPaths `json:"riskPaths,omitempty" yaml:"riskPaths,omitempty"`
+}
+
+func (s FactorySpec) wire() factorySpecWire {
+	w := factorySpecWire{
+		Repository: s.Repository, DefaultWorker: s.DefaultWorker,
+		MaxOpenAgentPullRequests: s.MaxOpenAgentPullRequests, PollInterval: s.PollInterval,
+		AcceptancePath: s.AcceptancePath, Start: s.Start, RiskPaths: s.RiskPaths,
+	}
+	if s.ProtectedPaths != nil {
+		w.ProtectedPaths = &s.ProtectedPaths
+	}
+	return w
+}
+
+// MarshalJSON keeps an explicit empty protectedPaths list.
+func (s FactorySpec) MarshalJSON() ([]byte, error) { return json.Marshal(s.wire()) }
+
+// MarshalYAML keeps an explicit empty protectedPaths list.
+func (s FactorySpec) MarshalYAML() (any, error) { return s.wire(), nil }
+
+// ValidateFactoryAndTasks validates a factory file together with the task
+// files of the same repository. It runs the factory's own checks, each task's
+// own checks, and the check of every task's protectedPaths against the risk
+// paths of the factory (CheckTaskProtectedPaths). It also rejects two tasks
+// with one name. Every error from a task starts with tasks.<task name>. The
+// factory and the tasks must have their defaults applied. The orchestrator
+// calls this when it loads .factory/.
+func ValidateFactoryAndTasks(f *Factory, tasks []*Task) error {
+	var p problems
+	var fve ValidationErrors
+	if errors.As(f.Validate(), &fve) {
+		p.list = append(p.list, fve...)
+	}
+	seen := map[string]bool{}
+	for i, t := range tasks {
+		if t == nil {
+			p.add(fmt.Sprintf("tasks[%d]", i), "must not be nil")
+			continue
+		}
+		prefix := "tasks." + t.Metadata.Name
+		if seen[t.Metadata.Name] {
+			p.add(prefix+".metadata.name", "duplicate task name %q", t.Metadata.Name)
+		}
+		seen[t.Metadata.Name] = true
+		p.addNested(prefix, t.Validate())
+		p.addNested(prefix, CheckTaskProtectedPaths(t, f))
+	}
+	return p.err()
 }

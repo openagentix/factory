@@ -90,3 +90,28 @@ func TestBoundReviewTakesBindingFactsOnlyFromTheRecord(t *testing.T) {
 		t.Fatalf("harness %q run %q", b.Harness(), b.RunID())
 	}
 }
+
+// Attacker A: the builder writes review.json into its own output directory
+// or workspace and says "agrees". The gate takes a review only with the
+// orchestrator's record of a finished review run, so a file from a builder
+// run is never a review, whatever the file says.
+func TestAFileFromTheBuildersRunIsNeverAReview(t *testing.T) {
+	agrees := rev("agrees")
+	builderRuns := []ReviewRun{
+		{RunID: "r_build", Task: api.TaskImplement, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", Harness: api.HarnessClaudeCode},
+		{RunID: "r_build", Task: api.TaskReview, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", Harness: api.HarnessClaudeCode},
+		{RunID: "r_other", Task: api.TaskFixCI, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 2, Commit: "a1b2c3d4", Harness: api.HarnessClaudeCode},
+		{RunID: "r_old", Task: api.TaskImplement, Phase: api.PhaseSucceeded, Ticket: 42, Attempt: 1, Commit: "00000000", Harness: api.HarnessClaudeCode},
+	}
+	for i, run := range builderRuns {
+		if b, err := BindReview(goodChange(), run, agrees); err == nil {
+			t.Fatalf("case %d: a builder run's file was bound: %+v", i, b)
+		}
+	}
+	// And with no bound review there is nothing to pass with.
+	f := okFacts(t)
+	f.Review = nil
+	if Decide(f).Outcome == OutcomePass {
+		t.Fatal("passed without a bound review")
+	}
+}

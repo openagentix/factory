@@ -26,7 +26,7 @@ func TestMaterializeLimits(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dest := t.TempDir()
-			_, err := materialize(context.Background(), r.dir, head, dest, tt.lim)
+			_, err := materialize(context.Background(), r.dir, head, openTestRoot(t, dest), tt.lim)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatal(err)

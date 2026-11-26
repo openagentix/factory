@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -101,19 +102,50 @@ func (r *Repo) diff(ctx context.Context, base, head, format string) ([]byte, err
 // an empty directory. destDir gets no .git. It reads git objects only. It
 // returns notes about what it left out (see materialize). A directory it
 // makes has mode 0700. It stops after lim.MaxDuration with a *TimeoutError.
-func (r *Repo) Export(ctx context.Context, commit, destDir string, lim Limits) (notes []string, err error) {
-	lim = lim.WithDefaults()
-	tctx, cancel := context.WithTimeout(ctx, lim.MaxDuration)
-	defer cancel()
-	defer func() { err = timeoutOr(ctx, tctx, "export", lim.MaxDuration, err) }()
-	sha, err := r.Resolve(tctx, commit)
-	if err != nil {
+// It makes destDir if needed, opens it once, and calls ExportRoot.
+func (r *Repo) Export(ctx context.Context, commit, destDir string, lim Limits) ([]string, error) {
+	if err := r.check(ctx); err != nil {
 		return nil, err
 	}
 	if err := prepareDest(destDir); err != nil {
 		return nil, err
 	}
-	return materialize(tctx, r.dir, sha, destDir, lim)
+	root, err := openDirOnce(destDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return r.ExportRoot(ctx, commit, root, lim)
+}
+
+// ExportRoot is Export for a directory that the caller has already opened.
+// Every write goes through root, and its path is never opened again. root must
+// be an empty directory. The caller closes it.
+func (r *Repo) ExportRoot(ctx context.Context, commit string, root *os.Root, lim Limits) (notes []string, err error) {
+	lim = lim.WithDefaults()
+	tctx, cancel := context.WithTimeout(ctx, lim.MaxDuration)
+	defer cancel()
+	defer func() { err = timeoutOr(ctx, tctx, "export", lim.MaxDuration, err) }()
+	if root == nil {
+		return nil, errors.New("no directory to export into")
+	}
+	sha, err := r.Resolve(tctx, commit)
+	if err != nil {
+		return nil, err
+	}
+	d, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	ents, err := d.ReadDir(1)
+	d.Close()
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	if len(ents) > 0 {
+		return nil, errors.New("the directory to export into is not empty")
+	}
+	return materialize(tctx, r.dir, sha, root, lim)
 }
 
 // prepareDest makes dest if it is absent, and refuses one that is not an

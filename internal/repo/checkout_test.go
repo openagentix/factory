@@ -47,7 +47,7 @@ func TestMaterialize(t *testing.T) {
 	head := r.git("rev-parse", "HEAD")
 
 	dest := t.TempDir()
-	notes, err := materialize(context.Background(), r.dir, head, dest, Limits{MaxTotalBytes: DefaultMaxTotalBytes, MaxFileBytes: DefaultMaxFileBytes, MaxEntries: DefaultMaxEntries})
+	notes, err := materialize(context.Background(), r.dir, head, openTestRoot(t, dest), Limits{MaxTotalBytes: DefaultMaxTotalBytes, MaxFileBytes: DefaultMaxFileBytes, MaxEntries: DefaultMaxEntries})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestMaterialize_SameFileTwiceAndLinkParent(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dest, "lnk")); err != nil {
 		t.Fatal(err)
 	}
-	note, err := writeEntry(dest, "100644", "lnk/evil.txt", strings.NewReader("x"), 1)
+	note, err := writeEntry(openTestRoot(t, dest), "100644", "lnk/evil.txt", strings.NewReader("x"), 1)
 	if err != nil || note == "" {
 		t.Fatalf("note=%q err=%v", note, err)
 	}
@@ -210,4 +210,15 @@ func TestGitCommandIsHardened(t *testing.T) {
 			t.Errorf("git command lacks -c %s: %s", want, args)
 		}
 	}
+}
+
+// openTestRoot opens dir as a root, closed when the test ends.
+func openTestRoot(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { root.Close() })
+	return root
 }

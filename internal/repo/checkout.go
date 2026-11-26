@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -37,7 +36,7 @@ const (
 // The sizes come from the tree listing and are checked against lim before
 // anything is written. The size of each object is checked again when it is
 // read.
-func materialize(ctx context.Context, repoDir, sha, dest string, lim Limits) ([]string, error) {
+func materialize(ctx context.Context, repoDir, sha string, dest *os.Root, lim Limits) ([]string, error) {
 	listing, err := runGit(ctx, repoDir, "ls-tree", "-r", "-z", "-l", "--full-tree", sha)
 	if err != nil {
 		return nil, err
@@ -139,9 +138,8 @@ func unsafeEntryName(name string) bool {
 }
 
 // writeEntry writes one file or link. It returns a note when it skips it.
-func writeEntry(dest, mode, name string, content io.Reader, size int64) (string, error) {
-	full, err := safeJoin(dest, name)
-	if err != nil {
+func writeEntry(dest *os.Root, mode, name string, content io.Reader, size int64) (string, error) {
+	if err := safeJoin(dest, name); err != nil {
 		_, _ = io.Copy(io.Discard, content)
 		return fmt.Sprintf("skipped %s: %v", safeText(name), err), nil
 	}
@@ -158,7 +156,7 @@ func writeEntry(dest, mode, name string, content io.Reader, size int64) (string,
 		if !linkStaysInside(name, target) {
 			return fmt.Sprintf("skipped symbolic link %s: target %s leaves the checkout", safeText(name), safeText(target)), nil
 		}
-		if err := os.Symlink(target, full); err != nil {
+		if err := dest.Symlink(target, name); err != nil {
 			return "", err
 		}
 		return "", nil
@@ -167,7 +165,7 @@ func writeEntry(dest, mode, name string, content io.Reader, size int64) (string,
 	if mode == modeExecutable {
 		perm = 0o755
 	}
-	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	f, err := dest.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
 		return "", err
 	}
@@ -175,10 +173,13 @@ func writeEntry(dest, mode, name string, content io.Reader, size int64) (string,
 		f.Close()
 		return "", err
 	}
-	if err := f.Close(); err != nil {
+	// Chmod on the open file, not on the path: the umask must not hide the
+	// executable bit, and a swapped name cannot be reached.
+	if err := f.Chmod(perm); err != nil {
+		f.Close()
 		return "", err
 	}
-	return "", os.Chmod(full, perm) // the umask must not hide the executable bit
+	return "", f.Close()
 }
 
 // safeLinkTarget accepts "../" steps followed by plain names, and nothing
@@ -218,27 +219,31 @@ func linkStaysInside(linkPath, target string) bool {
 	return up <= depth && path.Clean(path.Join(path.Dir(linkPath), target)) != ".."
 }
 
-// safeJoin makes the parent directories of name below dest and returns the
-// path of the file. It refuses to go through anything that is not a plain
-// directory, so a link in the tree cannot send a write outside dest.
-func safeJoin(dest, name string) (string, error) {
+// safeJoin makes the parent directories of name below dest, through dest. It
+// refuses to go through anything that is not a plain directory, so a link in
+// the tree cannot send a write elsewhere. The root refuses any path that would
+// leave it, even if a parent is swapped for a link after this check.
+func safeJoin(dest *os.Root, name string) error {
 	parts := strings.Split(name, "/")
-	cur := dest
+	cur := ""
 	for _, p := range parts[:len(parts)-1] {
-		cur = filepath.Join(cur, p)
-		fi, err := os.Lstat(cur)
+		if cur != "" {
+			cur += "/"
+		}
+		cur += p
+		fi, err := dest.Lstat(cur)
 		switch {
 		case os.IsNotExist(err):
-			if err := os.Mkdir(cur, 0o755); err != nil {
-				return "", err
+			if err := dest.Mkdir(cur, 0o755); err != nil {
+				return err
 			}
 		case err != nil:
-			return "", err
+			return err
 		case !fi.IsDir():
-			return "", fmt.Errorf("a parent is not a plain directory")
+			return fmt.Errorf("a parent is not a plain directory")
 		}
 	}
-	return filepath.Join(cur, parts[len(parts)-1]), nil
+	return nil
 }
 
 // safeText shows untrusted text in a note: control, invisible and invalid

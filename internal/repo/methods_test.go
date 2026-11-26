@@ -40,6 +40,7 @@ var exemptFromGuard = map[string]string{
 	"WithDefaults": "no repository",
 	"Visible":      "no repository",
 	"Suspicious":   "no repository",
+	"TrustOf":      "classifies an error",
 }
 
 func TestEveryExportedGitFunctionChecksTheGuardFirst(t *testing.T) {

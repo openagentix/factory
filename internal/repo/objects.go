@@ -42,6 +42,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"time"
 )
 
 type objWriter struct {
@@ -119,7 +120,19 @@ func (w *objWriter) write(ctx context.Context, typ string, size int64, content i
 	if err := w.root.Mkdir(dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
 		return "", err
 	}
-	if err := w.root.Link(tmp, dir+"/"+oid[2:]); err != nil && !errors.Is(err, fs.ErrExist) {
+	final := dir + "/" + oid[2:]
+	err = w.root.Link(tmp, final)
+	switch {
+	case err == nil:
+	case errors.Is(err, fs.ErrExist):
+		// The object is there already. Make it look new, as git does, so a
+		// prune that runs before the commit exists does not take it. Setting
+		// the time works on a read-only file, because it is ours.
+		now := time.Now()
+		if err := w.root.Chtimes(final, now, now); err != nil {
+			return "", err
+		}
+	default:
 		return "", err
 	}
 	return oid, nil

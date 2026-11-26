@@ -72,21 +72,11 @@ func Init(dir string) error {
 	return checkTrusted(context.Background(), abs)
 }
 
-// checkTrusted is the guard. Every exported function and method of this
-// package that uses git calls it first. It runs nothing from the repository. It looks at
-// the layout of the repository directory without starting git, then reads the
-// configuration file as a list of keys, with includes switched off. It fails
-// closed. The error names what it found.
-//
-// The guard detects a repository that was tampered with, at the start of each
-// call. It cannot stop a process that runs as the same user from changing the
-// repository between two calls.
-func checkTrusted(ctx context.Context, dir string) error {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return err
-	}
-	if err := checkLayout(abs); err != nil {
+// checkTrustedOnce is one pass of the guard. Entries named in ignore (paths
+// below the repository) are skipped: they are lock files that checkTrusted has
+// dealt with.
+func checkTrustedOnce(ctx context.Context, abs string, ignore map[string]bool) error {
+	if err := checkLayout(abs, ignore); err != nil {
 		return err
 	}
 	out, err := runGit(ctx, "", "config", "--file", filepath.Join(abs, "config"), "--no-includes", "--list", "-z")
@@ -125,7 +115,7 @@ func lstatKind(abs, rel string) (fs.FileInfo, error) {
 
 // checkLayout checks the names, types and contents of the repository
 // directory. See trustedLayout.
-func checkLayout(abs string) error {
+func checkLayout(abs string, ignore map[string]bool) error {
 	if fi, err := os.Lstat(abs); err != nil || !fi.IsDir() {
 		return fmt.Errorf("%s is not a git repository directory", abs)
 	}
@@ -134,6 +124,9 @@ func checkLayout(abs string) error {
 		return err
 	}
 	for _, e := range ents {
+		if ignore[e.Name()] {
+			continue
+		}
 		isDir, known := trustedLayout[e.Name()]
 		switch {
 		case !known:
@@ -149,8 +142,8 @@ func checkLayout(abs string) error {
 			return fmt.Errorf("%s is not a bare git repository: no %s", abs, need)
 		}
 	}
-	for _, f := range []func(string) error{checkObjects, checkRefs, checkInfo, checkHooks} {
-		if err := f(abs); err != nil {
+	for _, f := range []func(string, map[string]bool) error{checkObjects, checkRefs, checkInfo, checkHooks} {
+		if err := f(abs, ignore); err != nil {
 			return err
 		}
 	}
@@ -169,12 +162,15 @@ func dirEntries(abs, rel string) ([]fs.DirEntry, error) {
 // checkObjects: objects and every directory directly under it are real
 // directories, and there are no alternates. Packs and objects/info entries
 // are not links.
-func checkObjects(abs string) error {
+func checkObjects(abs string, ignore map[string]bool) error {
 	ents, err := dirEntries(abs, "objects")
 	if err != nil {
 		return err
 	}
 	for _, e := range ents {
+		if ignore["objects/"+e.Name()] {
+			continue
+		}
 		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 {
 			return untrusted("objects/%s is not a plain directory", Visible(e.Name(), 100))
 		}
@@ -199,7 +195,7 @@ func checkObjects(abs string) error {
 // checkRefs walks refs. A link is refused, and so is anything under
 // refs/replace, which would make git show other content than the commit id
 // names. A packed replace ref is refused too.
-func checkRefs(abs string) error {
+func checkRefs(abs string, _ map[string]bool) error {
 	root := filepath.Join(abs, "refs")
 	var bad error
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -236,7 +232,7 @@ func checkRefs(abs string) error {
 // checkInfo: info may hold only exclude, and an empty attributes file.
 // Attributes name drivers, so a file with content is refused. There must be
 // no grafts.
-func checkInfo(abs string) error {
+func checkInfo(abs string, _ map[string]bool) error {
 	ents, err := dirEntries(abs, "info")
 	if err != nil {
 		return err
@@ -261,7 +257,7 @@ func checkInfo(abs string) error {
 
 // checkHooks: hooks may hold only plain files that are not executable, and
 // files that end in ".sample". No links.
-func checkHooks(abs string) error {
+func checkHooks(abs string, _ map[string]bool) error {
 	root := filepath.Join(abs, "hooks")
 	var bad string
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

@@ -178,6 +178,11 @@ func (r *Repo) Prune(ctx context.Context, olderThan time.Duration) error {
 	if olderThan < MinPruneAge {
 		return fmt.Errorf("the prune expiry %v is shorter than %v", olderThan, MinPruneAge)
 	}
-	_, err := runGit(ctx, r.dir, "prune", fmt.Sprintf("--expire=%d.seconds.ago", int64(olderThan.Seconds())))
+	unlock, err := lockRepo(ctx, r)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	_, err = runGit(ctx, r.dir, "prune", fmt.Sprintf("--expire=%d.seconds.ago", int64(olderThan.Seconds())))
 	return err
 }

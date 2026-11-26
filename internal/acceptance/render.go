@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/openagentix/factory/internal/api"
 	"github.com/openagentix/factory/internal/repo"
@@ -41,8 +42,8 @@ func stateLine(r Result) string {
 		line += ". No check exists for it."
 	case r.Note == NoteTotalLimit:
 		line += ". Time ran out before this was checked."
-	case r.Note == NoteCouldNotStart:
-		line += ". Its check could not be started."
+	case r.Note == NoteCouldNotRun:
+		line += ". Its check could not run."
 	case s == api.StateNotWorking:
 		line += ". Its check did not pass."
 	}
@@ -52,6 +53,12 @@ func stateLine(r Result) string {
 // wording makes the person's text safe to show: one line, control and
 // invisible characters shown as <U+XXXX>, and a length limit.
 func wording(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '\u2800' || r == '\u3164' || unicode.Is(unicode.Cf, r) {
+			return -1 // blank look-alikes and invisible characters
+		}
+		return r
+	}, s)
 	s = strings.Join(strings.Fields(s), " ")
 	if s == "" {
 		return "(no wording)"
@@ -60,13 +67,15 @@ func wording(s string) string {
 }
 
 // RenderText gives the list for a person as plain text, one line per
-// criterion: a number, a mark, the person's wording, the state in words and,
+// criterion: a number, a mark, the person's wording in quotation marks (inner
+// quotes and backslashes escaped), the state in words and,
 // where there is one, a short note. The wording is untrusted and is shown as
 // text only.
 func RenderText(results []Result) string {
 	var b strings.Builder
 	for _, r := range results {
-		fmt.Fprintf(&b, "%s. %s %s - %s\n", strconv.Itoa(r.ID), mark(r.State), wording(r.Text), stateLine(r))
+		q := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(wording(r.Text))
+		fmt.Fprintf(&b, "%s. %s \"%s\" - %s\n", strconv.Itoa(r.ID), mark(r.State), q, stateLine(r))
 	}
 	return b.String()
 }

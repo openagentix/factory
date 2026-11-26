@@ -9,8 +9,11 @@ const (
 	NoteNoCheck = "no check exists for this criterion"
 	// NoteTimedOut: the check hit its deadline.
 	NoteTimedOut = "the check ran out of time"
-	// NoteCouldNotStart: the check could not be started.
-	NoteCouldNotStart = "the check could not be started"
+	// NoteCouldNotRun: the check itself was broken: it could not be started,
+	// the tool was not found (exit 127), it was not executable (exit 126) or
+	// a signal killed it. That is no evidence about the work. The exit code
+	// is kept for the engineering view.
+	NoteCouldNotRun = "its check could not run"
 	// NoteTotalLimit: the time limit for the whole run ended before this
 	// check ran or finished.
 	NoteTotalLimit = "the time limit for the whole run ended before this check finished"

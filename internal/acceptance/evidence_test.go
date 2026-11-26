@@ -37,7 +37,7 @@ func TestEvidenceEntries_PassTheRecordsOwnValidation(t *testing.T) {
 	tr := newTestRepo(t)
 	tr.writeManifest(40, crit(1, "a", "true"), crit(2, "b", "false"), crit(3, "c", ""))
 	c := tr.commit("x")
-	rep, err := Run(t.Context(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, testOptions())
+	rep, err := RunAtSource(t.Context(), tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}

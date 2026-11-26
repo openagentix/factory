@@ -53,6 +53,31 @@ type Report struct {
 	SharedChecks [][]int
 	// TotalLimitReached is true when TotalDeadline ended the run early.
 	TotalLimitReached bool
+	// ObjectsLeft is an upper bound on the git objects this run added that no
+	// ref points to (a commit, trees and files), or 0 when no overlay was
+	// needed. The caller decides when to call repo.Repo.Prune.
+	ObjectsLeft int
+}
+
+// ErrSameCommit is returned when the judged commit and the acceptance source
+// are the same commit. Then the manifest and checks would be the ones of the
+// change under test, which can have rewritten them. Use RunAtSource when
+// running the checks on the commit where they were written is what you mean.
+var ErrSameCommit = errors.New("acceptance: the judged commit and the acceptance source are the same commit, so the checks would come from the change under test; use RunAtSource if that is meant")
+
+// SourceRequest names a run of the checks on the commit where they landed.
+type SourceRequest struct {
+	Source         string
+	Goal           int
+	AcceptancePath string
+}
+
+// RunAtSource runs the checks on the commit where they were written, for
+// example the review of the checks themselves. It is a separate entry point so
+// that this case is chosen on purpose and cannot be reached by passing one
+// commit twice to Run.
+func RunAtSource(ctx context.Context, r *repo.Repo, req SourceRequest, opts Options) (*Report, error) {
+	return run(ctx, r, Request{Judged: req.Source, Source: req.Source, Goal: req.Goal, AcceptancePath: req.AcceptancePath}, opts, true)
 }
 
 // Run runs the check of every criterion of a goal and gives each criterion
@@ -70,7 +95,23 @@ type Report struct {
 // check that hits its deadline is not working yet. Run returns an error when
 // it cannot set up (a bad request, a manifest that is not valid, a copy that
 // fails), and when ctx ends, with the report so far.
+//
+// The caller must pass as Source the commit where the reviewed checks landed.
+// Run refuses the same commit twice (ErrSameCommit). It cannot check whether
+// Source is a trustworthy commit: Source is normally an ancestor of Judged, but
+// for a baseline it is a descendant of Judged, so no ancestry test can be
+// right for both. A Source taken from the change under test would let that
+// change choose its own checks, so the orchestrator must take it from the
+// commit that passed the review of the checks.
+//
+// Each run that lays checks over a change leaves objects that no ref points
+// to (see Report.ObjectsLeft). The caller must call repo.Repo.Prune on a
+// schedule.
 func Run(ctx context.Context, r *repo.Repo, req Request, opts Options) (*Report, error) {
+	return run(ctx, r, req, opts, false)
+}
+
+func run(ctx context.Context, r *repo.Repo, req Request, opts Options, sameOK bool) (*Report, error) {
 	if r == nil {
 		return nil, errors.New("acceptance: no repository")
 	}
@@ -91,6 +132,9 @@ func Run(ctx context.Context, r *repo.Repo, req Request, opts Options) (*Report,
 	if err != nil {
 		return nil, fmt.Errorf("acceptance: acceptance source: %w", err)
 	}
+	if judged == source && !sameOK {
+		return nil, ErrSameCommit
+	}
 	m, err := LoadManifest(ctx, r, source, req.AcceptancePath, req.Goal)
 	if err != nil {
 		return nil, err
@@ -106,7 +150,7 @@ func Run(ctx context.Context, r *repo.Repo, req Request, opts Options) (*Report,
 	target := judged
 	if judged != source {
 		lim := repo.Limits{MaxTotalBytes: opts.Check.MaxTotalBytes, MaxFileBytes: opts.Check.MaxFileBytes, MaxEntries: opts.Check.MaxEntries}
-		target, err = buildOverlay(runCtx, r, judged, source, req.AcceptancePath, lim)
+		target, rep.ObjectsLeft, err = buildOverlay(runCtx, r, judged, source, req.AcceptancePath, lim)
 		if err != nil {
 			if ctx.Err() == nil && runCtx.Err() != nil {
 				err = fmt.Errorf("the time limit for the whole run ended while the checks were being laid over the change: %w", err)
@@ -165,12 +209,17 @@ func fillFromOutcome(res *Result, c api.ManifestCriterion, o verify.CheckOutcome
 	switch {
 	case o.Err != "":
 		outcome = api.CheckNotRun
-		res.Note = NoteCouldNotStart
+		res.Note = NoteCouldNotRun
 	case o.TimedOut:
 		outcome = api.CheckFailed
 		res.Note = NoteTimedOut
 	case o.Passed():
 		outcome = api.CheckPassed
+	case o.Result.ExitCode == 126 || o.Result.ExitCode == 127 || o.Result.ExitCode < 0:
+		// Not executable, not found, or killed by a signal: a broken check
+		// says nothing about the work.
+		outcome = api.CheckNotRun
+		res.Note = NoteCouldNotRun
 	default:
 		outcome = api.CheckFailed
 	}

@@ -39,19 +39,39 @@ func GoalDir(acceptancePath string, goal int) string {
 	return acceptancePath + "/" + strconv.Itoa(goal)
 }
 
-// checkAcceptancePath refuses a path that is not a plain relative directory.
+// plainName reports whether s is made only of ASCII letters, digits, "-", "_"
+// and ".". This is a rule, not a normaliser: a file system may unify two
+// Unicode spellings of one name, and ASCII has only one spelling.
+func plainName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// checkAcceptancePath refuses a path that is not plain ASCII (letters,
+// digits, "-", "_", "." and "/" between parts) or has a ".", ".." or ".git"
+// part. An empty path means the default.
 func checkAcceptancePath(p string) error {
 	if p == "" {
 		return nil
 	}
 	bad := func() error {
-		return fmt.Errorf("the acceptance path %q must be a plain relative directory, without . or .. parts, glob characters, spaces or a .git part", repo.Visible(p, 100))
+		return fmt.Errorf("the acceptance path %q must be plain ASCII: letters, digits, - _ . and / between parts, with no . or .. part and no .git part", repo.Visible(p, 100))
 	}
 	if len(p) > 200 {
 		return bad()
 	}
 	for _, part := range strings.Split(p, "/") {
-		if part == "" || part == "." || part == ".." || strings.EqualFold(part, ".git") || strings.ContainsAny(part, "*?[{\\ \t\n") || repo.Suspicious(part) {
+		if !plainName(part) || part == "." || part == ".." || strings.EqualFold(part, ".git") {
 			return bad()
 		}
 	}

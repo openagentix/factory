@@ -39,7 +39,7 @@ func TestRun_StatesComeFromTheExitCode(t *testing.T) {
 		crit(4, "passes silently", "exit 0"),
 	)
 	c := tr.commit("checks")
-	rep, err := Run(context.Background(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, testOptions())
+	rep, err := RunAtSource(context.Background(), tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestRun_AWhitespaceCommandIsNoCheck(t *testing.T) {
 	m.Reason = "gave up"
 	tr.writeManifest(40, m)
 	c := tr.commit("checks")
-	rep, err := Run(context.Background(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, testOptions())
+	rep, err := RunAtSource(context.Background(), tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestRun_EachCheckHasItsOwnCopy(t *testing.T) {
 		crit(5, "needs the subdirectory", "test -d sub"),
 	)
 	c := tr.commit("checks")
-	rep, err := Run(context.Background(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, testOptions())
+	rep, err := RunAtSource(context.Background(), tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestRun_TheCheckRunsInACopyWithAScrubbedEnvironment(t *testing.T) {
 		crit(3, "the home directory is empty and is not the real one", `test "$HOME" != /nonexistent && test -z "$(ls -A "$HOME")"`),
 	)
 	c := tr.commit("checks")
-	rep, err := Run(context.Background(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, testOptions())
+	rep, err := RunAtSource(context.Background(), tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestRun_ACheckThatHitsItsDeadlineIsNotWorkingYet(t *testing.T) {
 	c := tr.commit("checks")
 	o := testOptions()
 	o.Check.Deadline = time.Second
-	rep, err := Run(context.Background(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, o)
+	rep, err := RunAtSource(context.Background(), tr.open(), SourceRequest{Source: c, Goal: 40}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestRun_TheTotalTimeLimitStopsAStall(t *testing.T) {
 	o.Check.Deadline = time.Minute
 	o.TotalDeadline = 2 * time.Second
 	start := time.Now()
-	rep, err := Run(context.Background(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, o)
+	rep, err := RunAtSource(context.Background(), tr.open(), SourceRequest{Source: c, Goal: 40}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestRun_ACancelledContextReturnsTheError(t *testing.T) {
 	c := tr.commit("checks")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Run(ctx, tr.open(), Request{Judged: c, Source: c, Goal: 40}, testOptions()); err == nil {
+	if _, err := RunAtSource(ctx, tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions()); err == nil {
 		t.Error("a cancelled context must return an error")
 	}
 }
@@ -261,7 +261,7 @@ func TestRun_SharedChecksAreReported(t *testing.T) {
 	tr.writeManifest(40,
 		crit(1, "a", "true"), crit(2, "b", " true "), crit(3, "c", "test -d ."), crit(4, "d", "true"), crit(5, "e", ""), crit(6, "f", ""))
 	c := tr.commit("checks")
-	rep, err := Run(context.Background(), tr.open(), Request{Judged: c, Source: c, Goal: 40}, testOptions())
+	rep, err := RunAtSource(context.Background(), tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,20 +274,22 @@ func TestRun_BadRequests(t *testing.T) {
 	tr := newTestRepo(t)
 	tr.writeManifest(40, crit(1, "a", "true"))
 	c := tr.commit("checks")
+	tr.write("more.txt", "x")
+	d := tr.commit("change")
 	r := tr.open()
 	for name, req := range map[string]Request{
 		"no judged":      {Source: c, Goal: 40},
 		"no source":      {Judged: c, Goal: 40},
 		"dash judged":    {Judged: "-x", Source: c, Goal: 40},
 		"missing judged": {Judged: "nope", Source: c, Goal: 40},
-		"wrong goal":     {Judged: c, Source: c, Goal: 41},
-		"bad path":       {Judged: c, Source: c, Goal: 40, AcceptancePath: "../x"},
+		"wrong goal":     {Judged: d, Source: c, Goal: 41},
+		"bad path":       {Judged: d, Source: c, Goal: 40, AcceptancePath: "../x"},
 	} {
 		if _, err := Run(context.Background(), r, req, testOptions()); err == nil {
 			t.Errorf("%s must be refused", name)
 		}
 	}
-	if _, err := Run(context.Background(), nil, Request{Judged: c, Source: c, Goal: 40}, testOptions()); err == nil {
+	if _, err := Run(context.Background(), nil, Request{Judged: d, Source: c, Goal: 40}, testOptions()); err == nil {
 		t.Error("a nil repository must be refused")
 	}
 }

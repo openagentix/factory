@@ -127,11 +127,11 @@ func TestRender_HostileTextIsInert(t *testing.T) {
 func TestRender_StateMarksAndNotes(t *testing.T) {
 	txt := RenderText(sampleResults())
 	for _, want := range []string{
-		"1. [x] A customer can move a booking to another day - working\n",
-		"2. [?] Works on a phone - could not confirm. No check exists for it.\n",
-		"3. [ ] An email goes out when a booking moves - not working yet. Its check did not pass.\n",
-		"4. [ ] The page loads in under two seconds - not working yet. Its check ran out of time.\n",
-		"5. [?] Old clients still work - could not confirm. Time ran out before this was checked.\n",
+		"1. [x] \"A customer can move a booking to another day\" - working\n",
+		"2. [?] \"Works on a phone\" - could not confirm. No check exists for it.\n",
+		"3. [ ] \"An email goes out when a booking moves\" - not working yet. Its check did not pass.\n",
+		"4. [ ] \"The page loads in under two seconds\" - not working yet. Its check ran out of time.\n",
+		"5. [?] \"Old clients still work\" - could not confirm. Time ran out before this was checked.\n",
 	} {
 		if !strings.Contains(txt, want) {
 			t.Errorf("missing %q in:\n%s", want, txt)

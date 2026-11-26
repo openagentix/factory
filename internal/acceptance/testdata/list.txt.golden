@@ -1,5 +1,5 @@
-1. [x] A customer can move a booking to another day - working
-2. [?] Works on a phone - could not confirm. No check exists for it.
-3. [ ] An email goes out when a booking moves - not working yet. Its check did not pass.
-4. [ ] The page loads in under two seconds - not working yet. Its check ran out of time.
-5. [?] Old clients still work - could not confirm. Time ran out before this was checked.
+1. [x] "A customer can move a booking to another day" - working
+2. [?] "Works on a phone" - could not confirm. No check exists for it.
+3. [ ] "An email goes out when a booking moves" - not working yet. Its check did not pass.
+4. [ ] "The page loads in under two seconds" - not working yet. Its check ran out of time.
+5. [?] "Old clients still work" - could not confirm. Time ran out before this was checked.

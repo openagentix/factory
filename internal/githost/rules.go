@@ -66,10 +66,9 @@ func checkLabel(l string) error {
 	return refuse("label %q is not in the fixed list", l)
 }
 
-// trusted is true for write access users and for the factory itself.
-func trusted(assoc, author, factoryLogin string) bool {
-	if isWriter(assoc) {
-		return true
-	}
+// isFactoryLogin reports whether the author is the factory's own user.
+func isFactoryLogin(author, factoryLogin string) bool {
 	return author != "" && factoryLogin != "" && strings.EqualFold(author, factoryLogin)
 }
+
+var loginRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,38}|[A-Za-z0-9-]*\[bot\])$`)

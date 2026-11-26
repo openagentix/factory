@@ -46,14 +46,59 @@ func FixedLabels() []string {
 
 // Errors. Use errors.Is to test for them.
 var (
-	// ErrNoAcceptToken is returned by an Accepter method when no accept token
-	// was given.
+	// ErrNoAcceptToken matches (errors.Is) the NoAcceptTokenError that an
+	// Accepter method returns when no accept token was given.
 	ErrNoAcceptToken = errors.New("githost: this action needs the accept token and none was given")
 	// ErrRefused is returned when a rule of this package forbids the action.
 	ErrRefused = errors.New("githost: refused by a factory rule")
 	// ErrNotFound is returned when the host has no such item.
 	ErrNotFound = errors.New("githost: not found")
 )
+
+// NoAcceptTokenError is returned by an Accepter method when no accept token
+// was given. errors.Is(err, ErrNoAcceptToken) is true for it.
+type NoAcceptTokenError struct{ Action string }
+
+func (e *NoAcceptTokenError) Error() string {
+	return "githost: " + e.Action + " needs the accept token and none was given"
+}
+
+// Is makes errors.Is(err, ErrNoAcceptToken) match.
+func (e *NoAcceptTokenError) Is(target error) bool { return target == ErrNoAcceptToken }
+
+// TruncatedError is returned together with the items read so far when a list
+// hit a size cap. The caller decides what to do with the partial result.
+type TruncatedError struct {
+	// Read is how many items were read.
+	Read int
+	// Reason says which cap was hit.
+	Reason string
+}
+
+func (e *TruncatedError) Error() string {
+	return fmt.Sprintf("githost: the list was cut short after %d items: %s", e.Read, e.Reason)
+}
+
+// CreatedIssue is one issue made by CreateSubIssues.
+type CreatedIssue struct {
+	// Index is the position in the input.
+	Index int
+	Issue Issue
+	// Linked is false when the issue was made but linking it to the goal failed.
+	Linked bool
+}
+
+// PartialCreateError is returned by CreateSubIssues when it failed part way.
+// Created tells what exists already, so the caller can resume.
+type PartialCreateError struct {
+	Created []CreatedIssue
+	Err     error
+}
+
+func (e *PartialCreateError) Error() string {
+	return fmt.Sprintf("githost: created %d issues before failing: %v", len(e.Created), e.Err)
+}
+func (e *PartialCreateError) Unwrap() error { return e.Err }
 
 // RateLimitError is returned when the host says the rate limit is used up.
 // The client never sleeps. The caller decides when to try again.
@@ -93,14 +138,17 @@ func (r Repo) String() string { return r.Owner + "/" + r.Name }
 type Issue struct {
 	Number int
 	// ID is the host's id, used to link sub-issues.
-	ID          int64
-	Title       string
-	Body        string
-	State       string // "open" or "closed"
-	Labels      []string
-	Author      string
+	ID     int64
+	Title  string
+	Body   string
+	State  string // "open" or "closed"
+	Labels []string
+	Author string
+	// Association is the host's word for the author. It is information only.
+	// Trust never depends on it.
 	Association string
-	// Trusted is true when the author has write access or is the factory.
+	// Trusted is true when the author has write, maintain or admin permission
+	// on the repository, or is the factory itself.
 	Trusted bool
 }
 
@@ -118,7 +166,7 @@ func (i Issue) HasLabel(l string) bool {
 type CommentKind int
 
 const (
-	// KindPerson is a comment from a user with write access.
+	// KindPerson is a comment from a user with write permission.
 	KindPerson CommentKind = iota
 	// KindFactory is a comment the factory posted with a run marker or a claim marker.
 	KindFactory
@@ -143,7 +191,12 @@ type Comment struct {
 	Association string
 	Body        string
 	Created     time.Time
-	Kind        CommentKind
+	// Updated is the time of the last edit, or Created when never edited.
+	Updated time.Time
+	// Edited is true when the comment changed after it was posted. A caller
+	// that acts on a comment may want to ignore edited ones.
+	Edited bool
+	Kind   CommentKind
 	// RunID is set for factory comments with a run marker or a claim marker.
 	RunID string
 	// Claim is set when the comment is a claim marker.
@@ -214,7 +267,7 @@ type CommitStatus struct {
 	TargetURL   string
 }
 
-// MergeSpec asks to merge the staging pull request.
+// MergeSpec asks to merge a pull request at an expected head commit.
 type MergeSpec struct {
 	// PullRequest is the number of the staging pull request.
 	PullRequest int
@@ -223,27 +276,33 @@ type MergeSpec struct {
 	Commit string
 }
 
-// RevertSpec asks to open a revert pull request. The caller pushes the revert
-// branch first, with PushBranch.
+// RevertBranch returns the branch a revert commit must be pushed to.
+func RevertBranch(commit string) string { return BranchPrefix + "revert-" + commit }
+
+// RevertSpec asks to open a revert pull request. The caller first pushes the
+// revert commit to RevertBranch(Commit) with PushBranch.
 type RevertSpec struct {
-	Branch string
+	// Commit is the head commit of the revert branch.
+	Commit string
 	Title  string
 	Body   string
-	// Merge also merges the revert, as the person chose.
-	Merge bool
 }
 
 // Proposer is everything the propose token may do. No method can write the
 // default branch.
 type Proposer interface {
 	// ListIssues lists open and closed issues with the label, from users with
-	// write access or the factory only. Pull requests are not returned.
+	// write permission or the factory only. Pull requests are not returned.
+	// If a size cap is hit, the issues read so far come back together with a
+	// *TruncatedError.
 	ListIssues(ctx context.Context, label string) ([]Issue, error)
 	// GetIssue reads one ticket.
 	GetIssue(ctx context.Context, number int) (Issue, error)
 	// ListComments lists the comments of a ticket from users with write
-	// access or the factory, oldest first.
-	ListComments(ctx context.Context, number int) ([]Comment, error)
+	// permission or the factory, oldest first. A non-zero since keeps only
+	// comments created or edited at or after that time. If a size cap is hit,
+	// the comments read so far come back together with a *TruncatedError.
+	ListComments(ctx context.Context, number int, since time.Time) ([]Comment, error)
 	// PostComment posts a comment carrying a run marker.
 	PostComment(ctx context.Context, number int, runID, body string) error
 	// PostAnswer posts an answer a person typed in the web app, with an answer marker.
@@ -255,7 +314,8 @@ type Proposer interface {
 	Claim(ctx context.Context, number int, machineID, runID string, expiry time.Duration) (ClaimResult, error)
 	// CreateSubIssues creates at most api.MaxIssuesPerRun issues as
 	// sub-issues of the goal, each with a machine-read dependency block.
-	// The result is in the order of the input.
+	// The result is in the order of the input. If it fails part way, the
+	// result still lists what was made and the error is a *PartialCreateError.
 	CreateSubIssues(ctx context.Context, goal int, issues []api.IssueProposal) ([]Issue, error)
 	// OpenPullRequest opens a pull request, or updates the open one for the same head.
 	OpenPullRequest(ctx context.Context, spec PRSpec) (PullRequest, error)
@@ -268,6 +328,10 @@ type Proposer interface {
 	// PushBranch pushes a commit from the local repository in dir to the
 	// agent branch. The branch must start with BranchPrefix.
 	PushBranch(ctx context.Context, dir, commit, branch string) error
+	// ManualPullRequestURL returns the web address where a person can open a
+	// pull request from an agent branch into the default branch. It needs no
+	// accept token and writes nothing.
+	ManualPullRequestURL(ctx context.Context, branch string) (string, error)
 	// PushStaging force pushes a commit to the staging branch. It is the only
 	// way to write the staging branch.
 	PushStaging(ctx context.Context, dir, commit string) error
@@ -277,11 +341,17 @@ type Proposer interface {
 // method returns ErrNoAcceptToken when no accept token was given.
 type Accepter interface {
 	// MergeStaging merges the staging pull request into the default branch
-	// with a merge commit, at the commit the person accepted.
+	// with a merge commit, at the commit the person accepted. The pull
+	// request must come from the staging branch of this repository (not a
+	// fork), and its head must be the expected commit.
 	MergeStaging(ctx context.Context, spec MergeSpec) error
-	// OpenRevert opens a pull request that reverts accepted work into the
-	// default branch, and merges it if spec.Merge is set.
+	// OpenRevert opens a pull request from RevertBranch(spec.Commit) into the
+	// default branch. It does not merge.
 	OpenRevert(ctx context.Context, spec RevertSpec) (PullRequest, error)
+	// MergeRevert merges a revert pull request opened by OpenRevert. The
+	// pull request must come from RevertBranch(spec.Commit) of this
+	// repository (not a fork) and its head must be spec.Commit.
+	MergeRevert(ctx context.Context, spec MergeSpec) error
 }
 
 // Host is the whole git host: the propose side and the accept side.
@@ -294,10 +364,14 @@ func refuse(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrRefused, fmt.Sprintf(format, a...))
 }
 
-func isWriter(assoc string) bool {
-	switch strings.ToUpper(assoc) {
-	case "OWNER", "MEMBER", "COLLABORATOR":
+// permissionWrites says whether a repository permission or role counts as
+// write access: admin, maintain and write do; triage, read and none do not.
+func permissionWrites(perm string) bool {
+	switch strings.ToLower(perm) {
+	case "admin", "maintain", "write":
 		return true
 	}
 	return false
 }
+
+func noAccept(action string) error { return &NoAcceptTokenError{Action: action} }

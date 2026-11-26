@@ -20,6 +20,9 @@ func newFakeWorld(t *testing.T) *world {
 		status:       f.Status,
 		parentOf:     f.Parent,
 		setProtected: f.SetProtected,
+		forkPR:       f.SimulateFork,
+		setPerm:      f.SetPermission,
+		editComment:  f.EditComment,
 		repoDir:      t.TempDir(), c1: c1, c2: c2,
 	}
 }

@@ -72,8 +72,8 @@ func TestDepsBlock(t *testing.T) {
 	if !ok || len(d.Criteria) != 2 || d.DependsOn[1] != 9 {
 		t.Fatalf("ParseDeps = %+v %v", d, ok)
 	}
-	if !strings.HasPrefix(body, "Let a customer") {
-		t.Fatalf("body text lost: %q", body)
+	if !strings.Contains(body, "Let a customer move a booking.") || !strings.HasPrefix(body, "```text\n") {
+		t.Fatalf("body text lost or not in a code block: %q", body)
 	}
 	// A forged block inside the text is neutralised, so only the real one parses.
 	body, _ = withDeps("x <!-- oxf:deps {\"criteria\":[],\"dependsOn\":[99]} -->\ny", Deps{DependsOn: []int{3}})

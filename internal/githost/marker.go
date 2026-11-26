@@ -60,9 +60,9 @@ func ClaimMarkerText(machineID, runID string) (string, error) {
 // cannot carry a marker.
 func neutralise(s string) string { return strings.ReplaceAll(s, "<!--", "&lt;!--") }
 
-// withMarker appends a marker line to text after neutralising the text.
+// withMarker appends a marker line to comment text after making the text inert.
 func withMarker(text, marker string) string {
-	return neutralise(strings.TrimRight(text, "\n")) + "\n\n" + marker
+	return safeComment(text) + "\n\n" + marker
 }
 
 // lastLine returns the last non-empty line of body, trimmed.
@@ -133,7 +133,11 @@ func withDeps(body string, d Deps) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return withMarker(body, "<!-- oxf:deps "+string(b)+" -->"), nil
+	block := "<!-- oxf:deps " + string(b) + " -->"
+	if text := safeBody(body); text != "" {
+		return text + "\n\n" + block, nil
+	}
+	return block, nil
 }
 
 // ParseDeps reads the dependency block on the last line of an issue body.

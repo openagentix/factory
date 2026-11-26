@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -19,20 +18,31 @@ type rawComment struct {
 	Assoc   string
 	Body    string
 	Created time.Time
+	Updated time.Time
 }
 
-// classify drops comments from users without write access (the factory's
-// own user always counts), sorts the rest oldest first, and tells whose each
-// one is. A marker counts only when the author is the factory's own user, so
-// text from anyone else cannot forge one.
-func classify(raw []rawComment, factoryLogin string) []Comment {
+// classify drops comments from users who are not writers (the factory's own
+// user always counts), sorts the rest oldest first, and tells whose each one
+// is. A marker counts only when the author is the factory's own user, so text
+// from anyone else cannot forge one. A non-zero since drops comments neither
+// created nor edited at or after it.
+func classify(raw []rawComment, factoryLogin string, since time.Time, writer func(login string) bool) []Comment {
 	var out []Comment
 	for _, r := range raw {
-		if !trusted(r.Assoc, r.Author, factoryLogin) {
+		own := isFactoryLogin(r.Author, factoryLogin)
+		if !own && !writer(r.Author) {
 			continue
 		}
-		c := Comment{ID: r.ID, Author: r.Author, Association: r.Assoc, Body: r.Body, Created: r.Created, Kind: KindPerson}
-		if factoryLogin != "" && strings.EqualFold(r.Author, factoryLogin) {
+		upd := r.Updated
+		if upd.Before(r.Created) {
+			upd = r.Created
+		}
+		if !since.IsZero() && upd.Before(since) {
+			continue
+		}
+		c := Comment{ID: r.ID, Author: r.Author, Association: r.Assoc, Body: r.Body, Created: r.Created,
+			Updated: upd, Edited: upd.After(r.Created), Kind: KindPerson}
+		if own {
 			switch kind, run, claim := parseMarker(r.Body); kind {
 			case markerRun:
 				c.Kind, c.RunID = KindFactory, run
@@ -57,7 +67,7 @@ func classify(raw []rawComment, factoryLogin string) []Comment {
 // expiry duration after it was posted.
 func decideClaim(comments []Comment, machine, run string, now time.Time, expiry time.Duration) ClaimResult {
 	for _, c := range comments { // already oldest first
-		if c.Claim == nil || now.Sub(c.Created) >= expiry {
+		if c.Claim == nil || c.Edited || now.Sub(c.Created) >= expiry {
 			continue
 		}
 		return ClaimResult{Won: *c.Claim == ClaimMarker{Machine: machine, Run: run}, Winner: *c.Claim}
@@ -111,7 +121,8 @@ type subIssueBackend interface {
 	linkSubIssue(ctx context.Context, goal, child Issue) error
 }
 
-// createSubIssues is the one flow for both implementations.
+// createSubIssues is the one flow for both implementations. If it fails part
+// way it returns a *PartialCreateError that lists what was made.
 func createSubIssues(ctx context.Context, b subIssueBackend, goal int, p []api.IssueProposal) ([]Issue, error) {
 	order, err := planSubIssues(p)
 	if err != nil {
@@ -125,6 +136,10 @@ func createSubIssues(ctx context.Context, b subIssueBackend, goal int, p []api.I
 		return nil, refuse("issue %d is not a trusted goal", goal)
 	}
 	made := make([]Issue, len(p))
+	var created []CreatedIssue
+	partial := func(err error) ([]Issue, error) {
+		return made, &PartialCreateError{Created: created, Err: err}
+	}
 	for _, i := range order {
 		deps := Deps{Criteria: p[i].Criteria}
 		for _, d := range p[i].DependsOn {
@@ -132,16 +147,18 @@ func createSubIssues(ctx context.Context, b subIssueBackend, goal int, p []api.I
 		}
 		body, err := withDeps(p[i].Body, deps)
 		if err != nil {
-			return nil, err
+			return partial(err)
 		}
-		is, err := b.createIssue(ctx, p[i].Title, body)
+		is, err := b.createIssue(ctx, safeTitle(p[i].Title), body)
 		if err != nil {
-			return nil, fmt.Errorf("issue %d of %d: %w", i+1, len(p), err)
-		}
-		if err := b.linkSubIssue(ctx, g, is); err != nil {
-			return nil, fmt.Errorf("linking issue %d: %w", is.Number, err)
+			return partial(fmt.Errorf("issue %d of %d: %w", i+1, len(p), err))
 		}
 		made[i] = is
+		created = append(created, CreatedIssue{Index: i, Issue: is})
+		if err := b.linkSubIssue(ctx, g, is); err != nil {
+			return partial(fmt.Errorf("linking issue %d: %w", is.Number, err))
+		}
+		created[len(created)-1].Linked = true
 	}
 	return made, nil
 }

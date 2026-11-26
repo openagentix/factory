@@ -20,6 +20,9 @@ type Fixture struct {
 	FactoryLogin string
 	// AcceptLogin is the user the accept token acts as.
 	AcceptLogin string
+	// Permissions maps a login to its repository permission: admin,
+	// maintain, write, triage or read. A user not listed has none.
+	Permissions map[string]string
 	Issues      []FixtureIssue
 }
 
@@ -43,6 +46,7 @@ func DemoFixture() Fixture {
 		DefaultCommit: strings.Repeat("a", 40),
 		FactoryLogin:  "factory-bot",
 		AcceptLogin:   "repo-owner",
+		Permissions:   map[string]string{"repo-owner": "admin"},
 		Issues: []FixtureIssue{
 			{Title: "Let customers move a booking", Body: "Goal text.", Labels: []string{LabelGoal}, Author: "repo-owner", Association: "OWNER"},
 			{Title: "Move endpoint", Body: "Ticket text.", Labels: []string{LabelPlanned}, Author: "factory-bot", Association: "NONE",
@@ -60,6 +64,7 @@ type fakeItem struct {
 
 type fakePR struct {
 	head, base, headSHA string
+	headRepo            string
 	draft               bool
 	state               PRState
 	mergedBy            string
@@ -80,6 +85,7 @@ type fakeState struct {
 	statuses      map[string]CommitStatus
 	protected     bool
 	parents       map[int]int
+	permissions   map[string]string
 }
 
 // Fake is an in memory git host that follows the same rules as the real one,
@@ -103,6 +109,10 @@ func NewFake(fx Fixture, clock func() time.Time) *Fake {
 		branches: map[string]string{fx.DefaultBranch: fx.DefaultCommit},
 		items:    map[int]*fakeItem{}, statuses: map[string]CommitStatus{}, parents: map[int]int{},
 	}
+	s.permissions = map[string]string{}
+	for k, v := range fx.Permissions {
+		s.permissions[strings.ToLower(k)] = v
+	}
 	f := &Fake{fakeState: s, hasAccept: true}
 	for _, fi := range fx.Issues {
 		it := s.newItem(fi.Title, fi.Body, fi.Author, fi.Association)
@@ -124,7 +134,7 @@ func (s *fakeState) newItem(title, body, author, assoc string) *fakeItem {
 	s.next++
 	it := &fakeItem{Issue: Issue{
 		Number: s.next, ID: int64(1000 + s.next), Title: title, Body: body, State: "open",
-		Author: author, Association: assoc, Trusted: trusted(assoc, author, s.factoryLogin),
+		Author: author, Association: assoc,
 	}}
 	s.items[s.next] = it
 	return it
@@ -132,7 +142,12 @@ func (s *fakeState) newItem(title, body, author, assoc string) *fakeItem {
 
 func (s *fakeState) addRawComment(it *fakeItem, author, assoc, body string) {
 	s.nextComment++
-	it.comments = append(it.comments, rawComment{ID: s.nextComment, Author: author, Assoc: assoc, Body: body, Created: s.clock()})
+	now := s.clock()
+	it.comments = append(it.comments, rawComment{ID: s.nextComment, Author: author, Assoc: assoc, Body: body, Created: now, Updated: now})
+}
+
+func (s *fakeState) writer(login string) bool {
+	return isFactoryLogin(login, s.factoryLogin) || permissionWrites(s.permissions[strings.ToLower(login)])
 }
 
 func (s *fakeState) get(n int) (*fakeItem, error) {
@@ -143,10 +158,38 @@ func (s *fakeState) get(n int) (*fakeItem, error) {
 	return it, nil
 }
 
-func (it *fakeItem) snapshot() Issue {
+func (s *fakeState) snapshot(it *fakeItem) Issue {
 	c := it.Issue
 	c.Labels = append([]string(nil), it.Labels...)
+	c.Trusted = s.writer(it.Author)
 	return c
+}
+
+// SetPermission sets the repository permission of a user.
+func (f *Fake) SetPermission(login, perm string) {
+	f.mu.Lock()
+	f.permissions[strings.ToLower(login)] = perm
+	f.mu.Unlock()
+}
+
+// EditComment changes the text of the index-th comment of an issue and
+// stamps the edit time, as a person editing it would.
+func (f *Fake) EditComment(number, index int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil && index < len(it.comments) {
+		it.comments[index].Body = body
+		it.comments[index].Updated = f.clock()
+	}
+}
+
+// SimulateFork makes a pull request look as if it came from a fork.
+func (f *Fake) SimulateFork(number int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil && it.pr != nil {
+		it.pr.headRepo = "someone-else/demo"
+	}
 }
 
 // SeedComment adds a comment from any user, for tests and demo scripts.
@@ -221,8 +264,8 @@ func (f *Fake) ListIssues(_ context.Context, label string) ([]Issue, error) {
 	defer f.mu.Unlock()
 	var out []Issue
 	for _, it := range f.items {
-		if it.pr == nil && it.Trusted && it.HasLabel(label) {
-			out = append(out, it.snapshot())
+		if it.pr == nil && f.writer(it.Author) && it.HasLabel(label) {
+			out = append(out, f.snapshot(it))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
@@ -236,17 +279,17 @@ func (f *Fake) GetIssue(_ context.Context, n int) (Issue, error) {
 	if err != nil {
 		return Issue{}, err
 	}
-	return it.snapshot(), nil
+	return f.snapshot(it), nil
 }
 
-func (f *Fake) ListComments(_ context.Context, n int) ([]Comment, error) {
+func (f *Fake) ListComments(_ context.Context, n int, since time.Time) ([]Comment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	it, err := f.get(n)
 	if err != nil {
 		return nil, err
 	}
-	return classify(it.comments, f.factoryLogin), nil
+	return classify(it.comments, f.factoryLogin, since, f.writer), nil
 }
 
 func (f *Fake) post(n int, text, marker string) error {
@@ -319,18 +362,19 @@ func (f *Fake) Claim(ctx context.Context, n int, machineID, runID string, expiry
 	if err := f.post(n, "Claimed by a factory run.", m); err != nil {
 		return ClaimResult{}, err
 	}
-	cs, err := f.ListComments(ctx, n)
+	now := f.clock()
+	cs, err := f.ListComments(ctx, n, now.Add(-expiry))
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	return decideClaim(cs, machineID, runID, f.clock(), expiry), nil
+	return decideClaim(cs, machineID, runID, now, expiry), nil
 }
 
 // Backend for createSubIssues. These methods lock for themselves.
 func (f *Fake) createIssue(_ context.Context, title, body string) (Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.newItem(title, body, f.factoryLogin, "NONE").snapshot(), nil
+	return f.snapshot(f.newItem(title, body, f.factoryLogin, "NONE")), nil
 }
 
 func (f *Fake) linkSubIssue(_ context.Context, goal, child Issue) error {
@@ -353,13 +397,14 @@ func (f *Fake) OpenPullRequest(_ context.Context, spec PRSpec) (PullRequest, err
 	draft := spec.Head != StagingBranch
 	for _, it := range f.items {
 		if p := it.pr; p != nil && p.state == PROpen && p.head == spec.Head && p.base == spec.Base {
-			p.title, p.body, p.headSHA = spec.Title, spec.Body, f.branches[spec.Head]
-			it.Title, it.Body = spec.Title, spec.Body
+			p.title, p.body, p.headSHA = safeTitle(spec.Title), safeBody(spec.Body), f.branches[spec.Head]
+			it.Title, it.Body = p.title, p.body
 			return f.prView(it), nil
 		}
 	}
-	it := f.newItem(spec.Title, spec.Body, f.factoryLogin, "NONE")
-	it.pr = &fakePR{head: spec.Head, base: spec.Base, headSHA: f.branches[spec.Head], draft: draft, state: PROpen, title: spec.Title, body: spec.Body}
+	title, body := safeTitle(spec.Title), safeBody(spec.Body)
+	it := f.newItem(title, body, f.factoryLogin, "NONE")
+	it.pr = &fakePR{head: spec.Head, base: spec.Base, headSHA: f.branches[spec.Head], headRepo: "demo/demo", draft: draft, state: PROpen, title: title, body: body}
 	return f.prView(it), nil
 }
 
@@ -422,9 +467,36 @@ func (f *Fake) PushStaging(_ context.Context, _, commit string) error {
 	return nil
 }
 
+// checkHead makes sure a pull request is the one the caller expects: open,
+// from this repository, from the expected branch at the expected commit, into
+// the default branch.
+func (f *Fake) checkHead(it *fakeItem, headRef, commit string) error {
+	p := it.pr
+	switch {
+	case p == nil || p.head != headRef || p.base != f.defaultBranch:
+		return refuse("pull request %d is not the expected pull request from %q", it.Number, headRef)
+	case p.headRepo != "demo/demo":
+		return refuse("pull request %d comes from another repository", it.Number)
+	case p.state != PROpen:
+		return refuse("pull request %d is not open", it.Number)
+	case f.branches[headRef] != commit:
+		return refuse("the branch %q is not at the expected commit", headRef)
+	}
+	return nil
+}
+
+func (f *Fake) mergeLocked(it *fakeItem, headRef, commit string) error {
+	if err := f.checkHead(it, headRef, commit); err != nil {
+		return err
+	}
+	f.branches[f.defaultBranch] = commit
+	it.pr.state, it.pr.mergedBy = PRMerged, f.acceptLogin
+	return nil
+}
+
 func (f *Fake) MergeStaging(_ context.Context, spec MergeSpec) error {
 	if !f.hasAccept {
-		return ErrNoAcceptToken
+		return noAccept("merging the staging pull request")
 	}
 	if err := checkCommit(spec.Commit); err != nil {
 		return err
@@ -435,38 +507,47 @@ func (f *Fake) MergeStaging(_ context.Context, spec MergeSpec) error {
 	if err != nil {
 		return err
 	}
-	p := it.pr
-	switch {
-	case p == nil || p.head != StagingBranch || p.base != f.defaultBranch:
-		return refuse("pull request %d is not the staging pull request", spec.PullRequest)
-	case p.state != PROpen:
-		return refuse("the staging pull request is not open")
-	case f.branches[StagingBranch] != spec.Commit:
-		return refuse("the staging branch is not at the accepted commit")
-	}
-	f.branches[f.defaultBranch] = spec.Commit
-	p.state, p.mergedBy = PRMerged, f.acceptLogin
-	return nil
+	return f.mergeLocked(it, StagingBranch, spec.Commit)
 }
 
 func (f *Fake) OpenRevert(_ context.Context, spec RevertSpec) (PullRequest, error) {
 	if !f.hasAccept {
-		return PullRequest{}, ErrNoAcceptToken
+		return PullRequest{}, noAccept("opening a revert pull request")
 	}
-	if err := checkBranchPush(spec.Branch, f.defaultBranch); err != nil {
+	if err := checkCommit(spec.Commit); err != nil {
 		return PullRequest{}, err
+	}
+	branch := RevertBranch(spec.Commit)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.branches[branch] != spec.Commit {
+		return PullRequest{}, refuse("the revert branch %q is not at the commit", branch)
+	}
+	title, body := safeTitle(spec.Title), safeBody(spec.Body)
+	it := f.newItem(title, body, f.acceptLogin, "OWNER")
+	it.pr = &fakePR{head: branch, base: f.defaultBranch, headSHA: spec.Commit, headRepo: "demo/demo", state: PROpen, title: title, body: body}
+	return f.prView(it), nil
+}
+
+func (f *Fake) MergeRevert(_ context.Context, spec MergeSpec) error {
+	if !f.hasAccept {
+		return noAccept("merging a revert pull request")
+	}
+	if err := checkCommit(spec.Commit); err != nil {
+		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	sha, ok := f.branches[spec.Branch]
-	if !ok {
-		return PullRequest{}, refuse("the revert branch %q has not been pushed", spec.Branch)
+	it, err := f.get(spec.PullRequest)
+	if err != nil {
+		return err
 	}
-	it := f.newItem(spec.Title, spec.Body, f.acceptLogin, "OWNER")
-	it.pr = &fakePR{head: spec.Branch, base: f.defaultBranch, headSHA: sha, state: PROpen, title: spec.Title, body: spec.Body}
-	if spec.Merge {
-		f.branches[f.defaultBranch] = sha
-		it.pr.state, it.pr.mergedBy = PRMerged, f.acceptLogin
+	return f.mergeLocked(it, RevertBranch(spec.Commit), spec.Commit)
+}
+
+func (f *Fake) ManualPullRequestURL(_ context.Context, branch string) (string, error) {
+	if err := checkBranchPush(branch, f.defaultBranch); err != nil {
+		return "", err
 	}
-	return f.prView(it), nil
+	return "https://example.invalid/" + f.repo.String() + "/compare/" + f.defaultBranch + "..." + branch + "?expand=1", nil
 }

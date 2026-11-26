@@ -86,22 +86,27 @@ func TestCheckLabel(t *testing.T) {
 	}
 }
 
-func TestTrusted(t *testing.T) {
+func TestIsFactoryLogin(t *testing.T) {
 	tests := []struct {
-		assoc, author string
-		want          bool
-	}{
-		{"OWNER", "a", true}, {"member", "a", true}, {"COLLABORATOR", "a", true},
-		{"CONTRIBUTOR", "a", false}, {"NONE", "a", false}, {"FIRST_TIMER", "a", false}, {"", "a", false},
-		{"NONE", "factory-bot", true}, {"NONE", "Factory-Bot", true}, {"NONE", "", false},
-	}
+		author string
+		want   bool
+	}{{"factory-bot", true}, {"Factory-Bot", true}, {"someone", false}, {"", false}}
 	for _, tc := range tests {
-		if got := trusted(tc.assoc, tc.author, "factory-bot"); got != tc.want {
-			t.Errorf("trusted(%q,%q) = %v", tc.assoc, tc.author, got)
+		if got := isFactoryLogin(tc.author, "factory-bot"); got != tc.want {
+			t.Errorf("isFactoryLogin(%q) = %v", tc.author, got)
 		}
 	}
-	if trusted("NONE", "", "") {
-		t.Error("empty author matched empty factory login")
+	if isFactoryLogin("", "") {
+		t.Error("empty author matched an empty factory login")
+	}
+}
+
+func TestPermissionWrites(t *testing.T) {
+	for p, want := range map[string]bool{"admin": true, "maintain": true, "write": true, "WRITE": true,
+		"triage": false, "read": false, "none": false, "": false} {
+		if permissionWrites(p) != want {
+			t.Errorf("permissionWrites(%q) = %v", p, !want)
+		}
 	}
 }
 

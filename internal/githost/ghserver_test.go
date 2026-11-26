@@ -33,6 +33,8 @@ type ghServer struct {
 	nextComment int64
 	statuses    map[string]map[string]any
 	protected   bool
+	perms       map[string]string
+	permCalls   int
 
 	// Requests that used a token for something it must not do.
 	mergesByPropose int
@@ -53,6 +55,7 @@ type srvItem struct {
 	merged       bool
 	mergedBy     string
 	parent       int
+	headRepo     string
 }
 
 func loginFor(auth string) string {
@@ -66,7 +69,10 @@ func loginFor(auth string) string {
 }
 
 func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *ghServer {
-	s := &ghServer{t: t, git: git, clock: clock, items: map[int]*srvItem{}, statuses: map[string]map[string]any{}}
+	s := &ghServer{t: t, git: git, clock: clock, items: map[int]*srvItem{}, statuses: map[string]map[string]any{}, perms: map[string]string{}}
+	for k, v := range fx.Permissions {
+		s.perms[k] = v
+	}
 	for _, fi := range fx.Issues {
 		it := s.newItem(fi.Title, fi.Body, fi.Author, fi.Association)
 		it.labels = append(it.labels, fi.Labels...)
@@ -96,7 +102,21 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 		writeJSON(w, 200, map[string]any{"default_branch": "main", "full_name": "demo/demo"})
 	})
 	h("GET "+R+"/branches/{branch}", func(w http.ResponseWriter, r *http.Request, _ string) {
-		writeJSON(w, 200, map[string]any{"name": r.PathValue("branch"), "protected": s.protected})
+		sha := s.git.head(r.PathValue("branch"))
+		if sha == "" {
+			writeJSON(w, 404, map[string]any{"message": "Branch not found"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"name": r.PathValue("branch"), "protected": s.protected, "commit": map[string]any{"sha": sha}})
+	})
+	h("GET "+R+"/collaborators/{user}/permission", func(w http.ResponseWriter, r *http.Request, _ string) {
+		s.permCalls++
+		role := s.perms[r.PathValue("user")]
+		if role == "" {
+			role = "none"
+		}
+		legacy := map[string]string{"admin": "admin", "maintain": "write", "write": "write", "triage": "read", "read": "read", "none": "none"}[role]
+		writeJSON(w, 200, map[string]any{"permission": legacy, "role_name": role, "user": map[string]any{"login": r.PathValue("user")}})
 	})
 	h("GET "+R+"/issues", s.listIssues)
 	h("POST "+R+"/issues", func(w http.ResponseWriter, r *http.Request, login string) {
@@ -112,9 +132,12 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 	})
 	h("GET "+R+"/issues/{n}/comments", func(w http.ResponseWriter, r *http.Request, _ string) {
 		if it := s.find(w, r); it != nil {
-			all := make([]any, len(it.comments))
-			for i, c := range it.comments {
-				all[i] = c
+			var all []any
+			since := r.URL.Query().Get("since")
+			for _, c := range it.comments {
+				if since == "" || c["updated_at"].(string) >= since {
+					all = append(all, c)
+				}
 			}
 			s.paginate(w, r, all)
 		}
@@ -189,6 +212,7 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 		}
 		it := s.newItem(in.Title, in.Body, login, "NONE")
 		it.pr, it.head, it.base, it.draft = true, in.Head, in.Base, in.Draft
+		it.headRepo = "demo/demo"
 		writeJSON(w, 201, s.prJSON(it))
 	})
 	h("GET "+R+"/pulls/{n}", func(w http.ResponseWriter, r *http.Request, _ string) {
@@ -280,6 +304,7 @@ func (s *ghServer) addComment(it *srvItem, login, assoc, body string) map[string
 		"id": s.nextComment, "body": body, "author_association": assoc,
 		"user":       map[string]any{"login": login},
 		"created_at": s.clock.Now().UTC().Format(time.RFC3339),
+		"updated_at": s.clock.Now().UTC().Format(time.RFC3339),
 	}
 	it.comments = append(it.comments, c)
 	return c
@@ -310,8 +335,9 @@ func (s *ghServer) prJSON(it *srvItem) map[string]any {
 	m := map[string]any{
 		"number": it.number, "state": state, "title": it.title, "body": it.body, "draft": it.draft, "merged": it.merged,
 		"html_url": "https://example.invalid/pull/" + strconv.Itoa(it.number),
-		"head":     map[string]any{"ref": it.head, "sha": s.git.head(it.head)},
-		"base":     map[string]any{"ref": it.base},
+		"head": map[string]any{"ref": it.head, "sha": s.git.head(it.head),
+			"repo": map[string]any{"full_name": it.headRepo, "fork": it.headRepo != "demo/demo"}},
+		"base": map[string]any{"ref": it.base},
 	}
 	if it.merged {
 		m["merged_by"] = map[string]any{"login": it.mergedBy}

@@ -29,6 +29,20 @@
 // api.ComputeState, and from nothing else. Output is not read. No text from
 // an agent can set a state.
 //
+// # For the gate's author
+//
+// Use Compare's regression list, never a test for one state, to decide
+// whether something stopped working. A criterion can stop working by going
+// to "not working yet" or to "could not confirm". Only a judged report
+// (JudgedStates, EvidenceEntries) may feed the gate: a baseline and a run at
+// the source are marked and refused there.
+//
+// A check that cannot run (exit 126 or 127, or a signal other than the
+// deadline) on the judged commit is run once at the source. If it runs
+// there, the change stopped it and the state is "not working yet". If it
+// cannot run there either, the check is broken and the state is "could not
+// confirm". Result.Cause records which.
+//
 // # Limits
 //
 // These are stated here and again in EngineeringNotes.

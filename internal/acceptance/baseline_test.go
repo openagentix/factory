@@ -29,7 +29,7 @@ func TestBaseline_FlagsChecksThatAlreadyPass(t *testing.T) {
 	}
 	// The three states are not changed by the baseline.
 	want := map[int]api.AcceptanceState{1: api.StateWorking, 2: api.StateNotWorking, 3: api.StateWorking, 4: api.StateCouldNotConfirm}
-	if got := StatesOf(b.Report.Results); !reflect.DeepEqual(got, want) {
+	if got := statesOf(b.Report.Results); !reflect.DeepEqual(got, want) {
 		t.Errorf("states = %v", got)
 	}
 	if !b.WasWorking(1) || b.WasWorking(2) || b.WasWorking(4) || b.WasWorking(99) {

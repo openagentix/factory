@@ -43,7 +43,7 @@ func TestCompare(t *testing.T) {
 }
 
 func TestStatesOf(t *testing.T) {
-	got := StatesOf([]Result{{ID: 1, State: api.StateWorking}, {ID: 2, State: api.StateNotWorking}})
+	got := statesOf([]Result{{ID: 1, State: api.StateWorking}, {ID: 2, State: api.StateNotWorking}})
 	want := map[int]api.AcceptanceState{1: api.StateWorking, 2: api.StateNotWorking}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v", got)

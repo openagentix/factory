@@ -39,6 +39,7 @@ func Baseline(ctx context.Context, r *repo.Repo, req Request, opts Options) (*Ba
 	if rep == nil {
 		return nil, err
 	}
+	rep.kind = KindBaseline
 	b := &BaselineReport{Report: rep}
 	for _, res := range rep.Results {
 		if res.State == api.StateWorking {

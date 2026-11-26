@@ -15,7 +15,10 @@ func TestEvidenceEntries(t *testing.T) {
 		{ID: 5, State: api.StateWorking, Check: "go test ./e"},
 	}
 	before := map[int]api.AcceptanceState{1: api.StateNotWorking, 2: api.StateWorking, 3: api.StateCouldNotConfirm}
-	got := EvidenceEntries(results, before)
+	got, err := EvidenceEntries(&Report{kind: KindJudged, Results: results}, before)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []api.AcceptanceEntry{
 		{ID: 1, State: api.StateWorking, Before: api.StateNotWorking, Check: "go test ./a"},
 		{ID: 2, State: api.StateNotWorking, Before: api.StateWorking, Check: "go test ./b"},
@@ -37,13 +40,18 @@ func TestEvidenceEntries_PassTheRecordsOwnValidation(t *testing.T) {
 	tr := newTestRepo(t)
 	tr.writeManifest(40, crit(1, "a", "true"), crit(2, "b", "false"), crit(3, "c", ""))
 	c := tr.commit("x")
-	rep, err := RunAtSource(t.Context(), tr.open(), SourceRequest{Source: c, Goal: 40}, testOptions())
+	tr.write("more.txt", "x")
+	judged := tr.commit("change")
+	rep, err := Run(t.Context(), tr.open(), Request{Judged: judged, Source: c, Goal: 40}, testOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Build on a record that is valid apart from the acceptance entries.
 	ev := validBundle(t)
-	ev.Acceptance = EvidenceEntries(rep.Results, nil)
+	ev.Acceptance, err = EvidenceEntries(rep, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := ev.Validate(); err != nil {
 		t.Errorf("the bundle is not valid: %v", err)
 	}

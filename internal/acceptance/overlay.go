@@ -50,7 +50,7 @@ func buildOverlay(ctx context.Context, r *repo.Repo, judged, source, acceptanceP
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return "", 0, err
 	}
-	if err := copyTree(srcDir, dstDir); err != nil {
+	if err := copyTree(srcDir, dstDir, acceptancePath); err != nil {
 		return "", 0, err
 	}
 	left := 1 // the commit
@@ -62,6 +62,16 @@ func buildOverlay(ctx context.Context, r *repo.Repo, judged, source, acceptanceP
 	})
 	commit, _, err := r.Import(ctx, a, judged, "acceptance checks laid over the change under test", overlayAuthor, repo.ImportOptions{Limits: lim})
 	return commit, left, err
+}
+
+// AcceptanceNameError says that a file or directory under the acceptance path
+// of the source has a name that is not plain ASCII (letters, digits, - _ .).
+// The run is refused. The orchestrator can send Path back to the acceptance
+// task as the reason.
+type AcceptanceNameError struct{ Path string }
+
+func (e *AcceptanceNameError) Error() string {
+	return fmt.Sprintf("the acceptance files hold the name %q, which is not plain ASCII (letters, digits, - _ .), so the checks cannot be used", repo.Visible(e.Path, 200))
 }
 
 // NameCollisionError says that the change under test holds names that collide
@@ -130,14 +140,14 @@ func removeFolded(root string, parts []string) error {
 
 // copyTree copies plain files and directories. A link or any other kind of
 // entry is left out.
-func copyTree(src, dst string) error {
+func copyTree(src, dst, rel string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
 		if !plainName(e.Name()) {
-			return fmt.Errorf("the acceptance source holds the name %q, which is not plain ASCII (letters, digits, - _ .)", repo.Visible(e.Name(), 100))
+			return &AcceptanceNameError{Path: rel + "/" + e.Name()}
 		}
 		s, d := filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())
 		fi, err := os.Lstat(s)
@@ -149,7 +159,7 @@ func copyTree(src, dst string) error {
 			if err := os.MkdirAll(d, 0o755); err != nil {
 				return err
 			}
-			if err := copyTree(s, d); err != nil {
+			if err := copyTree(s, d, rel+"/"+e.Name()); err != nil {
 				return err
 			}
 		case fi.Mode().IsRegular():

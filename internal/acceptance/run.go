@@ -57,6 +57,17 @@ type Report struct {
 	// ref points to (a commit, trees and files), or 0 when no overlay was
 	// needed. The caller decides when to call repo.Repo.Prune.
 	ObjectsLeft int
+	// kind is set only by this package.
+	kind Kind
+}
+
+// Kind says which kind of run made the report. Only a judged report may feed
+// the gate (see JudgedStates).
+func (r *Report) Kind() Kind {
+	if r == nil {
+		return KindUnknown
+	}
+	return r.kind
 }
 
 // ErrSameCommit is returned when the judged commit and the acceptance source
@@ -77,7 +88,11 @@ type SourceRequest struct {
 // that this case is chosen on purpose and cannot be reached by passing one
 // commit twice to Run.
 func RunAtSource(ctx context.Context, r *repo.Repo, req SourceRequest, opts Options) (*Report, error) {
-	return run(ctx, r, Request{Judged: req.Source, Source: req.Source, Goal: req.Goal, AcceptancePath: req.AcceptancePath}, opts, true)
+	rep, err := run(ctx, r, Request{Judged: req.Source, Source: req.Source, Goal: req.Goal, AcceptancePath: req.AcceptancePath}, opts, true)
+	if rep != nil {
+		rep.kind = KindAtSource
+	}
+	return rep, err
 }
 
 // Run runs the check of every criterion of a goal and gives each criterion
@@ -108,7 +123,11 @@ func RunAtSource(ctx context.Context, r *repo.Repo, req SourceRequest, opts Opti
 // to (see Report.ObjectsLeft). The caller must call repo.Repo.Prune on a
 // schedule.
 func Run(ctx context.Context, r *repo.Repo, req Request, opts Options) (*Report, error) {
-	return run(ctx, r, req, opts, false)
+	rep, err := run(ctx, r, req, opts, false)
+	if rep != nil {
+		rep.kind = KindJudged
+	}
+	return rep, err
 }
 
 func run(ctx context.Context, r *repo.Repo, req Request, opts Options, sameOK bool) (*Report, error) {
@@ -192,10 +211,54 @@ func run(ctx context.Context, r *repo.Repo, req Request, opts Options, sameOK bo
 				return rep, fmt.Errorf("acceptance: criterion %d: the check runner gave %d outcomes, want 1", c.ID, len(outs))
 			}
 			fillFromOutcome(&res, c, outs[0])
+			if res.Cause == CauseCheckBroken && !sameOK {
+				// It could not run on the judged commit. Whose fault? Run
+				// it once at the source, on its own fresh copy.
+				if err := rerunAtSource(runCtx, r, source, c, opts, &res); err != nil {
+					if err2 := ctx.Err(); err2 != nil {
+						return rep, err2
+					}
+					if runCtx.Err() != nil {
+						rep.TotalLimitReached = true
+						res.State = api.ComputeState(c, api.CheckNotRun)
+						res.Note, res.Cause = NoteTotalLimit, CauseNone
+						break
+					}
+					return rep, fmt.Errorf("acceptance: criterion %d: %w", c.ID, err)
+				}
+			}
 		}
 		rep.Results = append(rep.Results, res)
 	}
 	return rep, nil
+}
+
+// rerunAtSource decides whose fault a check that could not run is. If the
+// check runs at the source, the change stopped it: not working yet. If it
+// cannot run there either, the check is broken: could not confirm.
+func rerunAtSource(ctx context.Context, r *repo.Repo, source string, c api.ManifestCriterion, opts Options, res *Result) error {
+	outs, err := verify.RunChecks(ctx, r.Dir(), source, []api.Check{{Name: fmt.Sprintf("criterion-%d", c.ID), Run: c.Run}}, opts.Check)
+	if err != nil {
+		return err
+	}
+	if len(outs) != 1 {
+		return fmt.Errorf("the check runner gave %d outcomes, want 1", len(outs))
+	}
+	if checkCouldNotRun(outs[0]) {
+		return nil // broken at the source too: the state stays could not confirm
+	}
+	res.State = api.ComputeState(c, api.CheckFailed)
+	res.Note, res.Cause = NoteChangeStoppedCheck, CauseChange
+	return nil
+}
+
+// checkCouldNotRun reports a check that was not started, was not found or not
+// executable, or was killed by a signal other than the deadline.
+func checkCouldNotRun(o verify.CheckOutcome) bool {
+	if o.TimedOut {
+		return false
+	}
+	return o.Err != "" || o.Result.ExitCode == 126 || o.Result.ExitCode == 127 || o.Result.ExitCode < 0
 }
 
 // fillFromOutcome sets the facts and the state from what the runner reported.
@@ -209,7 +272,7 @@ func fillFromOutcome(res *Result, c api.ManifestCriterion, o verify.CheckOutcome
 	switch {
 	case o.Err != "":
 		outcome = api.CheckNotRun
-		res.Note = NoteCouldNotRun
+		res.Note, res.Cause = NoteCouldNotRun, CauseCheckBroken
 	case o.TimedOut:
 		outcome = api.CheckFailed
 		res.Note = NoteTimedOut
@@ -219,7 +282,7 @@ func fillFromOutcome(res *Result, c api.ManifestCriterion, o verify.CheckOutcome
 		// Not executable, not found, or killed by a signal: a broken check
 		// says nothing about the work.
 		outcome = api.CheckNotRun
-		res.Note = NoteCouldNotRun
+		res.Note, res.Cause = NoteCouldNotRun, CauseCheckBroken
 	default:
 		outcome = api.CheckFailed
 	}

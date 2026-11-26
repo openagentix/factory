@@ -44,7 +44,7 @@ func TestRun_StatesComeFromTheExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[int]api.AcceptanceState{1: api.StateWorking, 2: api.StateNotWorking, 3: api.StateCouldNotConfirm, 4: api.StateWorking}
-	if got := StatesOf(rep.Results); !reflect.DeepEqual(got, want) {
+	if got := statesOf(rep.Results); !reflect.DeepEqual(got, want) {
 		t.Errorf("states = %v, want %v", got, want)
 	}
 	r2 := stateOf(t, rep, 2)
@@ -173,7 +173,7 @@ func TestRun_EachCheckHasItsOwnCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[int]api.AcceptanceState{1: api.StateWorking, 2: api.StateNotWorking, 3: api.StateWorking, 4: api.StateWorking, 5: api.StateNotWorking}
-	if got := StatesOf(rep.Results); !reflect.DeepEqual(got, want) {
+	if got := statesOf(rep.Results); !reflect.DeepEqual(got, want) {
 		t.Errorf("states = %v, want %v", got, want)
 	}
 }

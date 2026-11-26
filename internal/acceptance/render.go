@@ -42,6 +42,8 @@ func stateLine(r Result) string {
 		line += ". No check exists for it."
 	case r.Note == NoteTotalLimit:
 		line += ". Time ran out before this was checked."
+	case r.Note == NoteChangeStoppedCheck:
+		line += ". This change stopped its check from running."
 	case r.Note == NoteCouldNotRun:
 		line += ". Its check could not run."
 	case s == api.StateNotWorking:

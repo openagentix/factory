@@ -113,6 +113,9 @@ func TestRun_ABrokenCheckIsCouldNotConfirm(t *testing.T) {
 	if NoteCouldNotRun != "its check could not run" {
 		t.Errorf("note = %q", NoteCouldNotRun)
 	}
+	if r := stateOf(t, rep, 1); r.Cause != CauseCheckBroken {
+		t.Errorf("cause = %q", r.Cause)
+	}
 	if !strings.Contains(RenderText(rep.Results), "Its check could not run.") {
 		t.Errorf("render lacks the note:\n%s", RenderText(rep.Results))
 	}

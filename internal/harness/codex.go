@@ -39,13 +39,13 @@ func (c *Codex) Command(s Spec) (Command, error) {
 	if prog == "" {
 		prog = "codex"
 	}
-	args := []string{"exec", "--json", "--sandbox", "workspace-write", "--add-dir", s.OutDir}
+	args := []string{"exec", "--json", "--sandbox=workspace-write", "--add-dir=" + s.OutDir}
 	for _, w := range s.Writable {
-		args = append(args, "--add-dir", w)
+		args = append(args, "--add-dir="+w)
 	}
-	args = append(args, "--ephemeral", "-o", filepath.Join(s.OutDir, "last-message.txt"))
+	args = append(args, "--ephemeral", "--output-last-message="+filepath.Join(s.OutDir, "last-message.txt"))
 	if s.Model != "" {
-		args = append(args, "-m", s.Model)
+		args = append(args, "--model="+s.Model)
 	}
 	args = append(args, "-")
 	cmd := Command{Program: prog, Args: args, Env: s.env(), Dir: s.Workspace, StdinFile: s.PromptFile}

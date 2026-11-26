@@ -257,7 +257,7 @@ func (s *Stub) Command(sp Spec) (Command, error) {
 	}
 	cmd := Command{
 		Program: prog,
-		Args:    []string{"stub-harness", "--script", sp.StubScript, "--workspace", sp.Workspace, "--out", sp.OutDir},
+		Args:    []string{"stub-harness", "--script=" + sp.StubScript, "--workspace=" + sp.Workspace, "--out=" + sp.OutDir},
 		Env:     sp.env(),
 		Dir:     sp.Workspace,
 	}

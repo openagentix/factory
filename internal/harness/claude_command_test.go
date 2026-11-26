@@ -42,9 +42,9 @@ func TestClaudeCommand(t *testing.T) {
 		{
 			name:   "defaults are print mode, stream json and dontAsk",
 			mutate: func(s *Spec) {},
-			has: []string{"-p", "--output-format", "stream-json", "--verbose",
-				"--permission-mode", "dontAsk", "--add-dir", "/factory/out", "--no-session-persistence"},
-			hasNot:  []string{"--max-budget-usd", "--plugin-dir", "--model"},
+			has: []string{"-p", "--output-format=stream-json", "--verbose",
+				"--permission-mode=dontAsk", "--add-dir=/factory/out", "--no-session-persistence"},
+			hasNot:  []string{"--max-budget-usd=", "--plugin-dir=", "--model="},
 			allowed: []string{"Read", "Glob", "Grep", "Edit", "Write", "Bash(go test ./...:*)", "Bash(gofmt -l .:*)"},
 			wantEnv: []string{"FACTORY_DEADLINE_SECONDS=600", "FACTORY_IN=/factory/in", "FACTORY_OUT=/factory/out"},
 		},
@@ -54,7 +54,7 @@ func TestClaudeCommand(t *testing.T) {
 				s.Billing = api.BillingMetered
 				s.MaxCostUSD = 1.5
 			},
-			has:     []string{"--max-budget-usd", "1.5"},
+			has:     []string{"--max-budget-usd=1.5"},
 			wantEnv: []string{"FACTORY_MAX_COST_USD=1.5"},
 		},
 		{
@@ -63,14 +63,14 @@ func TestClaudeCommand(t *testing.T) {
 				s.Billing = api.BillingPlan
 				s.MaxCostUSD = 1.5
 			},
-			hasNot: []string{"--max-budget-usd"},
+			hasNot: []string{"--max-budget-usd=1.5"},
 		},
 		{
 			name: "no budget flag when billing unknown",
 			mutate: func(s *Spec) {
 				s.MaxCostUSD = 1.5
 			},
-			hasNot: []string{"--max-budget-usd"},
+			hasNot: []string{"--max-budget-usd=1.5"},
 		},
 		{
 			name: "plugin method with a path loads the plugin and allows Skill",
@@ -78,7 +78,7 @@ func TestClaudeCommand(t *testing.T) {
 				s.Method = "plugin:superpowers"
 				s.PluginDirs = map[string]string{"superpowers": "/plugins/superpowers"}
 			},
-			has:     []string{"--plugin-dir", "/plugins/superpowers"},
+			has:     []string{"--plugin-dir=/plugins/superpowers"},
 			allowed: []string{"Skill"},
 		},
 		{
@@ -86,7 +86,7 @@ func TestClaudeCommand(t *testing.T) {
 			mutate: func(s *Spec) {
 				s.Method = "plugin:superpowers"
 			},
-			hasNot: []string{"--plugin-dir"},
+			hasNot: []string{"--plugin-dir=/plugins/superpowers", "--plugin-dir=/plugins/other"},
 		},
 		{
 			name: "a path for another plugin is not used",
@@ -94,17 +94,17 @@ func TestClaudeCommand(t *testing.T) {
 				s.Method = "plugin:superpowers"
 				s.PluginDirs = map[string]string{"other": "/plugins/other"}
 			},
-			hasNot: []string{"--plugin-dir"},
+			hasNot: []string{"--plugin-dir=/plugins/superpowers", "--plugin-dir=/plugins/other"},
 		},
 		{
 			name:   "model",
 			mutate: func(s *Spec) { s.Model = "sonnet" },
-			has:    []string{"--model", "sonnet"},
+			has:    []string{"--model=sonnet"},
 		},
 		{
 			name:   "extra writable path",
 			mutate: func(s *Spec) { s.Writable = []string{"/cache"} },
-			has:    []string{"/cache"},
+			has:    []string{"--add-dir=/cache"},
 		},
 		{name: "missing workspace", mutate: func(s *Spec) { s.Workspace = "" }, wantFail: true},
 		{name: "missing out dir", mutate: func(s *Spec) { s.OutDir = "" }, wantFail: true},
@@ -168,12 +168,11 @@ func TestClaudeAllowlistFollowsItsFlag(t *testing.T) {
 	}
 }
 
-func TestBudgetValueFollowsFlag(t *testing.T) {
+func TestBudgetUsesTheEqualsForm(t *testing.T) {
 	s := baseSpec()
 	s.Billing, s.MaxCostUSD = api.BillingMetered, 2
 	cmd, _ := NewClaude().Command(s)
-	i := index(cmd.Args, "--max-budget-usd")
-	if i < 0 || cmd.Args[i+1] != "2" {
+	if index(cmd.Args, "--max-budget-usd=2") < 0 {
 		t.Fatalf("budget args wrong: %v", cmd.Args)
 	}
 }

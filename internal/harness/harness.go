@@ -11,10 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/openagentix/factory/internal/api"
 )
@@ -83,6 +87,12 @@ type Summary struct {
 }
 
 // Adapter is the one interface the three harnesses implement.
+//
+// Command adds only the variables of its own to Command.Env (the FACTORY_*
+// variables). It does not copy, filter or remove anything in the inherited
+// environment. Removing git host tokens, the credential helper and the agent
+// socket from the environment is the runner's job, and the runner must do it
+// before it starts the program.
 type Adapter interface {
 	// Name is the harness name used in result.json.
 	Name() string
@@ -108,49 +118,134 @@ var forbidden = []string{
 // permission checks or the sandbox.
 var ErrForbidden = errors.New("harness: command holds a flag that skips permission checks")
 
-// gitReadOnly are the git subcommands a policy may allow. The worker never
-// commits, so no other git command is allowed.
-var gitReadOnly = map[string]bool{
-	"status": true, "diff": true, "log": true, "show": true,
-	"rev-parse": true, "ls-files": true, "blame": true,
+var (
+	modelPattern  = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]][A-Za-z0-9._:/\[\]-]*$`)
+	pluginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+)
+
+// refusedPrograms are shells and wrappers. A policy command that starts
+// with one of them could run anything, so it is never an allowlist entry.
+// git is refused too: the worker does not use git, and the harness allows
+// its own read-only commands by itself.
+var refusedPrograms = map[string]bool{
+	"git": true, "sh": true, "bash": true, "zsh": true, "dash": true, "fish": true,
+	"ksh": true, "csh": true, "tcsh": true, "env": true, "sudo": true, "doas": true,
+	"xargs": true, "eval": true, "exec": true, "nohup": true, "time": true,
+	"command": true, "builtin": true, "nice": true, "timeout": true, "setsid": true,
 }
 
-func (s Spec) validate() error {
-	var missing []string
-	if s.Workspace == "" {
-		missing = append(missing, "Workspace")
-	}
-	if s.OutDir == "" {
-		missing = append(missing, "OutDir")
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("harness: spec needs %s", strings.Join(missing, " and "))
-	}
-	for i, c := range s.Commands {
-		if strings.TrimSpace(c) == "" {
-			return fmt.Errorf("harness: spec.Commands[%d] is empty", i)
+// shellMeta are characters that mean something to a shell. A policy command
+// is a list of plain words, so none may appear.
+const shellMeta = ";|&$<>(){}`'\"\\*?!#~"
+
+func hasControl(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return true
 		}
-		for _, f := range forbidden {
-			if strings.Contains(c, f) {
-				return fmt.Errorf("%w: policy command %q", ErrForbidden, c)
-			}
-		}
-		if err := checkGit(c); err != nil {
-			return err
+	}
+	return false
+}
+
+// checkCommand validates one policy command as a list of plain words.
+//
+// This is not a sandbox. A permitted test command still runs the
+// repository's own code, which can do what the user can do. The check only
+// keeps the allowlist entry honest: one program with its arguments, with no
+// shell syntax and no wrapper that would run something else.
+func checkCommand(c string) error {
+	if strings.TrimSpace(c) == "" {
+		return errors.New("is empty")
+	}
+	if hasControl(c) {
+		return errors.New("holds a control character")
+	}
+	if i := strings.IndexAny(c, shellMeta); i >= 0 {
+		return fmt.Errorf("holds the shell character %q", c[i])
+	}
+	first := strings.Fields(c)[0]
+	if refusedPrograms[strings.ToLower(filepath.Base(first))] {
+		return fmt.Errorf("starts with %q, which is a shell, a wrapper or git", first)
+	}
+	if strings.HasPrefix(first, "-") {
+		return errors.New("must start with a program")
+	}
+	return nil
+}
+
+// checkDir validates a directory or file path that enters a command: an
+// absolute, clean path with no component that starts with a dash.
+func checkDir(name, p string) error {
+	switch {
+	case hasControl(p):
+		return fmt.Errorf("harness: %s holds a control character", name)
+	case !filepath.IsAbs(p) || filepath.Clean(p) != p || p == "/":
+		return fmt.Errorf("harness: %s must be an absolute, clean path: %q", name, p)
+	}
+	for _, part := range strings.Split(p, "/") {
+		if strings.HasPrefix(part, "-") {
+			return fmt.Errorf("harness: %s has a component that starts with a dash: %q", name, p)
 		}
 	}
 	return nil
 }
 
-// checkGit refuses a policy command that would let the worker change git
-// state. The worker does not commit. The orchestrator does.
-func checkGit(c string) error {
-	f := strings.Fields(c)
-	if len(f) == 0 || f[0] != "git" {
-		return nil
+func (s Spec) validate() error {
+	if s.Workspace == "" || s.OutDir == "" {
+		return errors.New("harness: spec needs Workspace and OutDir")
 	}
-	if len(f) < 2 || !gitReadOnly[f[1]] {
-		return fmt.Errorf("harness: command %q is not allowed: the worker does not use git to change state", c)
+	for name, p := range map[string]string{"Workspace": s.Workspace, "OutDir": s.OutDir} {
+		if err := checkDir(name, p); err != nil {
+			return err
+		}
+	}
+	for name, p := range map[string]string{"InDir": s.InDir, "PromptFile": s.PromptFile, "StubScript": s.StubScript} {
+		if p == "" {
+			continue
+		}
+		if err := checkDir(name, p); err != nil {
+			return err
+		}
+	}
+	for i, w := range s.Writable {
+		if err := checkDir(fmt.Sprintf("Writable[%d]", i), w); err != nil {
+			return err
+		}
+	}
+	if s.Model != "" && !modelPattern.MatchString(s.Model) {
+		return fmt.Errorf("harness: model %q is not a plain model name", s.Model)
+	}
+	if hasControl(s.Method) {
+		return errors.New("harness: method holds a control character")
+	}
+	if name, ok := strings.CutPrefix(s.Method, api.MethodPluginPrefix); ok && !pluginPattern.MatchString(name) {
+		return fmt.Errorf("harness: plugin name %q is not a plain name", name)
+	}
+	for name, p := range s.PluginDirs {
+		if !pluginPattern.MatchString(name) {
+			return fmt.Errorf("harness: plugin name %q is not a plain name", name)
+		}
+		if err := checkDir("PluginDirs["+name+"]", p); err != nil {
+			return err
+		}
+	}
+	switch s.Billing {
+	case "", api.BillingMetered, api.BillingPlan, api.BillingUnknown:
+	default:
+		return fmt.Errorf("harness: billing %q is not known", s.Billing)
+	}
+	if math.IsNaN(s.MaxCostUSD) || math.IsInf(s.MaxCostUSD, 0) || s.MaxCostUSD < 0 {
+		return errors.New("harness: MaxCostUSD must be a finite number, zero or more")
+	}
+	for i, c := range s.Commands {
+		for _, f := range forbidden {
+			if strings.Contains(c, f) {
+				return fmt.Errorf("%w: policy command %q", ErrForbidden, c)
+			}
+		}
+		if err := checkCommand(c); err != nil {
+			return fmt.Errorf("harness: Commands[%d] %q %w", i, c, err)
+		}
 	}
 	return nil
 }

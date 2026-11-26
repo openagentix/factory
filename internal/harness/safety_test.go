@@ -26,7 +26,7 @@ func manySpecs() []Spec {
 	var out []Spec
 	for _, method := range []string{"", api.MethodBuiltin, "plugin:superpowers", "plugin:gsd", "prompts/build.md"} {
 		for _, billing := range []string{"", api.BillingMetered, api.BillingPlan, api.BillingUnknown} {
-			for _, cmds := range [][]string{nil, {"go test ./..."}, {"go test ./...", "go vet ./...", "git diff", "git status"}, {"make test:*"}} {
+			for _, cmds := range [][]string{nil, {"go test ./..."}, {"go test ./...", "go vet ./...", "ls -la"}, {"make test"}} {
 				for _, model := range []string{"", "sonnet", "gpt-x"} {
 					s := baseSpec()
 					s.Method, s.Billing, s.Commands, s.Model = method, billing, cmds, model
@@ -86,25 +86,30 @@ func TestPolicyCommandWithAForbiddenFlagIsRefused(t *testing.T) {
 	}
 }
 
-func TestPolicyCannotLetTheWorkerChangeGit(t *testing.T) {
-	bad := []string{"git commit -m x", "git push", "git add .", "git", "git checkout main", "git reset --hard", "git config user.name x"}
+func TestPolicyCommandsAreValidated(t *testing.T) {
+	bad := []string{
+		"git status", "git", "git commit -m x", "/usr/bin/git commit", "env git push",
+		"git status --output=/tmp/x", "sh", "bash -c x", "zsh -c x", "/bin/dash", "fish", "env",
+		"python3 -m pytest; rm -rf ~", "a | b", "a && b", "a & b", "echo $HOME", "echo `x`",
+		"x > y", "x < y", "x \"y\"", "x 'y'", "x\\y", "x\ny", "x\x00", "x\ty\x1b", "(x)", "{x}",
+		"nohup x", "time x", "sudo x", "xargs x", "eval x", "exec x", "/usr/bin/env x", "GIT status", "", "  ",
+	}
 	for _, a := range allAdapters() {
-		if a.Name() == "stub" {
-			continue
-		}
 		for _, c := range bad {
 			s := baseSpec()
+			s.StubScript = "/in/script.json"
 			s.Commands = []string{c}
 			if _, err := a.Command(s); err == nil {
 				t.Errorf("%s accepted %q", a.Name(), c)
 			}
 		}
-	}
-	for _, c := range []string{"git status", "git diff --stat", "git log --oneline"} {
-		s := baseSpec()
-		s.Commands = []string{c}
-		if _, err := NewClaude().Command(s); err != nil {
-			t.Errorf("read-only %q refused: %v", c, err)
+		for _, c := range []string{"go test ./...", "gofmt -l .", "python3 -m pytest -q", "make test"} {
+			s := baseSpec()
+			s.StubScript = "/in/script.json"
+			s.Commands = []string{c}
+			if _, err := a.Command(s); err != nil {
+				t.Errorf("%s refused %q: %v", a.Name(), c, err)
+			}
 		}
 	}
 }
@@ -152,7 +157,7 @@ func TestNoSourceFileNamesACredentialStore(t *testing.T) {
 		}
 		low := strings.ToLower(string(b))
 		for _, w := range banned {
-			if strings.Contains(low, w) {
+			if strings.Contains(low, strings.ToLower(w)) {
 				t.Errorf("%s mentions %q", f, w)
 			}
 		}

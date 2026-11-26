@@ -198,7 +198,7 @@ func TestStubCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"stub-harness", "--script", "/in/script.json", "--workspace", "/work", "--out", "/factory/out"}
+	want := []string{"stub-harness", "--script=/in/script.json", "--workspace=/work", "--out=/factory/out"}
 	if cmd.Program != "/bin/oxf" || strings.Join(cmd.Args, " ") != strings.Join(want, " ") || cmd.StdinFile != "" {
 		t.Errorf("command = %+v", cmd)
 	}

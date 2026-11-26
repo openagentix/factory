@@ -26,8 +26,8 @@ func TestCodexCommand(t *testing.T) {
 	if cmd.Program != "codex" || cmd.Dir != "/work" || cmd.StdinFile != "/factory/in/prompt.md" {
 		t.Errorf("command = %+v", cmd)
 	}
-	want := []string{"exec", "--json", "--sandbox", "workspace-write", "--add-dir", "/factory/out",
-		"--ephemeral", "-o", "/factory/out/last-message.txt", "-m", "gpt-test"}
+	want := []string{"exec", "--json", "--sandbox=workspace-write", "--add-dir=/factory/out",
+		"--ephemeral", "--output-last-message=/factory/out/last-message.txt", "--model=gpt-test"}
 	for _, w := range want {
 		if index(cmd.Args, w) < 0 {
 			t.Errorf("args %v lack %q", cmd.Args, w)
@@ -38,9 +38,6 @@ func TestCodexCommand(t *testing.T) {
 	}
 	if cmd.Args[len(cmd.Args)-1] != "-" {
 		t.Errorf("the prompt must come from standard input, last arg = %q", cmd.Args[len(cmd.Args)-1])
-	}
-	if i := index(cmd.Args, "--sandbox"); cmd.Args[i+1] != "workspace-write" {
-		t.Errorf("sandbox = %q", cmd.Args[i+1])
 	}
 	for _, a := range cmd.Args {
 		if strings.Contains(a, "budget") {

@@ -33,7 +33,7 @@ func (c *Claude) Command(s Spec) (Command, error) {
 	if prog == "" {
 		prog = "claude"
 	}
-	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk"}
+	args := []string{"-p", "--output-format=stream-json", "--verbose", "--permission-mode=dontAsk"}
 	tools := []string{"Read", "Glob", "Grep", "Edit", "Write"}
 	plugin := s.pluginName()
 	var pluginPath string
@@ -48,19 +48,19 @@ func (c *Claude) Command(s Spec) (Command, error) {
 	}
 	args = append(args, "--allowedTools")
 	args = append(args, tools...)
-	args = append(args, "--add-dir", s.OutDir)
+	args = append(args, "--add-dir="+s.OutDir)
 	for _, w := range s.Writable {
-		args = append(args, "--add-dir", w)
+		args = append(args, "--add-dir="+w)
 	}
 	args = append(args, "--no-session-persistence")
 	if s.Billing == api.BillingMetered && s.MaxCostUSD > 0 {
-		args = append(args, "--max-budget-usd", strconv.FormatFloat(s.MaxCostUSD, 'f', -1, 64))
+		args = append(args, "--max-budget-usd="+strconv.FormatFloat(s.MaxCostUSD, 'f', -1, 64))
 	}
 	if pluginPath != "" {
-		args = append(args, "--plugin-dir", pluginPath)
+		args = append(args, "--plugin-dir="+pluginPath)
 	}
 	if s.Model != "" {
-		args = append(args, "--model", s.Model)
+		args = append(args, "--model="+s.Model)
 	}
 	cmd := Command{Program: prog, Args: args, Env: s.env(), Dir: s.Workspace, StdinFile: s.PromptFile}
 	if err := checkForbidden(cmd); err != nil {

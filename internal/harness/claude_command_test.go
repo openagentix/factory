@@ -103,8 +103,8 @@ func TestClaudeCommand(t *testing.T) {
 		},
 		{
 			name:   "extra writable path",
-			mutate: func(s *Spec) { s.Writable = []string{"/cache"} },
-			has:    []string{"--add-dir=/cache"},
+			mutate: func(s *Spec) { s.Writable = []string{"/work/cache"} },
+			has:    []string{"--add-dir=/work/cache"},
 		},
 		{name: "missing workspace", mutate: func(s *Spec) { s.Workspace = "" }, wantFail: true},
 		{name: "missing out dir", mutate: func(s *Spec) { s.OutDir = "" }, wantFail: true},

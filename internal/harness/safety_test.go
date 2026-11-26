@@ -32,7 +32,7 @@ func manySpecs() []Spec {
 					s.Method, s.Billing, s.Commands, s.Model = method, billing, cmds, model
 					s.MaxCostUSD = 2.5
 					s.PluginDirs = map[string]string{"superpowers": "/plugins/sp", "gsd": "/plugins/gsd"}
-					s.Writable = []string{"/cache"}
+					s.Writable = []string{"/work/cache"}
 					s.Deadline = time.Hour
 					s.StubScript = "/in/script.json"
 					out = append(out, s)
@@ -92,7 +92,12 @@ func TestPolicyCommandsAreValidated(t *testing.T) {
 		"git status --output=/tmp/x", "sh", "bash -c x", "zsh -c x", "/bin/dash", "fish", "env",
 		"python3 -m pytest; rm -rf ~", "a | b", "a && b", "a & b", "echo $HOME", "echo `x`",
 		"x > y", "x < y", "x \"y\"", "x 'y'", "x\\y", "x\ny", "x\x00", "x\ty\x1b", "(x)", "{x}",
-		"nohup x", "time x", "sudo x", "xargs x", "eval x", "exec x", "/usr/bin/env x", "GIT status", "", "  ",
+		"nohup x", "time x",
+		"./run-tests", "../x test", "/usr/local/bin/go test", "bin/tool x", ".hidden x", "tools/make test",
+		"rm", "rm -rf x", "curl http://x", "wget x", "nc x 1", "ssh host", "scp a b", "busybox sh", "npx x",
+		"find . -name x", "awk x", "sed x", "perl x", "ruby x", "node x", "deno x", "bun x", "node -e x", "perl -e x",
+		"python3 -c x", "go test -c", "make -e x", "x --eval y", "find . -exec x", "find . -delete", "x -exec y", "x -delete",
+		"go run main.go", "go generate ./...", "Bash", "Read x", "Edit x", "Write x", "Skill x", "Bash(x)", "x(y)", "sudo x", "xargs x", "eval x", "exec x", "/usr/bin/env x", "GIT status", "", "  ",
 	}
 	for _, a := range allAdapters() {
 		for _, c := range bad {
@@ -103,7 +108,8 @@ func TestPolicyCommandsAreValidated(t *testing.T) {
 				t.Errorf("%s accepted %q", a.Name(), c)
 			}
 		}
-		for _, c := range []string{"go test ./...", "gofmt -l .", "python3 -m pytest -q", "make test"} {
+		for _, c := range []string{"go test ./...", "gofmt -l .", "python3 -m pytest -q", "make test",
+			"go build ./...", "go vet ./...", "pytest", "pytest -q tests", "npm test", "npm run lint", "pnpm test", "yarn test", "cargo test", "make build"} {
 			s := baseSpec()
 			s.StubScript = "/in/script.json"
 			s.Commands = []string{c}
@@ -160,6 +166,15 @@ func TestNoSourceFileNamesACredentialStore(t *testing.T) {
 			if strings.Contains(low, strings.ToLower(w)) {
 				t.Errorf("%s mentions %q", f, w)
 			}
+		}
+	}
+}
+
+func TestPolicyLimitIsStated(t *testing.T) {
+	text := PolicyLimit()
+	for _, w := range []string{"not a sandbox", "code the agent wrote"} {
+		if !strings.Contains(text, w) {
+			t.Errorf("PolicyLimit() lacks %q: %s", w, text)
 		}
 	}
 }

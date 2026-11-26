@@ -336,3 +336,69 @@ func TestStubCommandAllowsTheStub(t *testing.T) {
 		t.Errorf("env = %v", cmd.Env)
 	}
 }
+
+func TestStubRefusesALinkIntoGitState(t *testing.T) {
+	e := newStubEnv(t)
+	hooks := filepath.Join(e.ws, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(e.ws, ".git"), filepath.Join(e.ws, "g")); err != nil {
+		t.Fatal(err)
+	}
+	for _, script := range []string{
+		`{"files":[{"path":"g/hooks/pre-commit","content":"evil"}]}`,
+		`{"delete":["g/hooks"]}`,
+		`{"touchProtected":"g/config"}`,
+	} {
+		if code, _, err := e.run(t, script); err == nil || code == 0 {
+			t.Errorf("%s: code=%d err=%v", script, code, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(hooks, "pre-commit")); err == nil {
+		t.Error("a hook was written into .git")
+	}
+	if _, err := os.Stat(hooks); err != nil {
+		t.Error("git state was deleted")
+	}
+}
+
+func TestStubRefusesAHardLinkedFile(t *testing.T) {
+	e := newStubEnv(t)
+	outside := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(outside, filepath.Join(e.ws, "hl")); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	if code, _, err := e.run(t, `{"files":[{"path":"hl","content":"overwritten"}]}`); err == nil || code == 0 {
+		t.Errorf("code=%d err=%v", code, err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "keep" {
+		t.Errorf("the file outside was changed: %q", b)
+	}
+}
+
+func TestStubWriteReplacesALinkInsteadOfFollowingIt(t *testing.T) {
+	e := newStubEnv(t)
+	outside := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(e.ws, "sl")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, err := e.run(t, `{"files":[{"path":"sl","content":"new"}],"result":`+goodResult+`}`); err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "keep" {
+		t.Errorf("the link was followed: %q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.ws, "sl")); string(b) != "new" {
+		t.Errorf("sl = %q", b)
+	}
+	if ents, _ := filepath.Glob(filepath.Join(e.ws, ".stub-*")); len(ents) != 0 {
+		t.Errorf("temporary files left behind: %v", ents)
+	}
+}

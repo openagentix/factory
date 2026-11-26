@@ -150,12 +150,39 @@ func hasControl(s string) bool {
 	return false
 }
 
+// PolicyLimit states what a policy command list does and does not do. The
+// web app shows it next to the policy.
+func PolicyLimit() string {
+	return "The command policy is not a sandbox. It narrows what the agent may start " +
+		"directly. An allowed test or build command still runs code the agent wrote: " +
+		"test files, conftest files, Makefile targets and package scripts. " +
+		"Treat the policy as a guard rail, not as a wall."
+}
+
+// refusedFirst are programs that are never a policy entry: shells and
+// wrappers (above), and tools that delete files, reach the network, or run
+// text as code.
+var refusedFirst = map[string]bool{
+	"rm": true, "curl": true, "wget": true, "nc": true, "ssh": true, "scp": true,
+	"busybox": true, "npx": true, "find": true, "awk": true, "sed": true,
+	"perl": true, "ruby": true, "node": true, "deno": true, "bun": true,
+	// Names of the harness's own tool rules.
+	"bash": true, "read": true, "edit": true, "write": true, "skill": true,
+}
+
+// refusedWords are words that turn a command into an evaluator or a delete.
+var refusedWords = map[string]bool{"-c": true, "-e": true, "--eval": true, "-exec": true, "-delete": true}
+
 // checkCommand validates one policy command as a list of plain words.
 //
-// This is not a sandbox. A permitted test command still runs the
-// repository's own code, which can do what the user can do. The check only
-// keeps the allowlist entry honest: one program with its arguments, with no
-// shell syntax and no wrapper that would run something else.
+// Limit, in plain words (see PolicyLimit): this is not a sandbox. A permitted
+// test or build command still runs code the agent wrote, such as test files,
+// conftest files, Makefile targets and package scripts. The check only keeps
+// each allowlist entry honest: one named program with plain arguments, no
+// shell syntax, no wrapper, no path to a program, and nothing that runs text
+// as code. The plain forms projects need are allowed: go test, go build,
+// go vet, python3 -m pytest, pytest, npm test, npm run NAME, pnpm test,
+// yarn test, cargo test and make TARGET.
 func checkCommand(c string) error {
 	if strings.TrimSpace(c) == "" {
 		return errors.New("is empty")
@@ -166,12 +193,25 @@ func checkCommand(c string) error {
 	if i := strings.IndexAny(c, shellMeta); i >= 0 {
 		return fmt.Errorf("holds the shell character %q", c[i])
 	}
-	first := strings.Fields(c)[0]
-	if refusedPrograms[strings.ToLower(filepath.Base(first))] {
-		return fmt.Errorf("starts with %q, which is a shell, a wrapper or git", first)
+	words := strings.Fields(c)
+	first := words[0]
+	if strings.Contains(first, "/") || strings.HasPrefix(first, ".") {
+		return fmt.Errorf("starts with %q: name a program, not a path", first)
 	}
 	if strings.HasPrefix(first, "-") {
 		return errors.New("must start with a program")
+	}
+	name := strings.ToLower(first)
+	if refusedPrograms[name] || refusedFirst[name] {
+		return fmt.Errorf("starts with %q, which is a shell, a wrapper, git or a tool that runs anything", first)
+	}
+	for _, w := range words[1:] {
+		if refusedWords[w] {
+			return fmt.Errorf("holds %q, which runs text as code or deletes files", w)
+		}
+	}
+	if name == "go" && len(words) > 1 && (words[1] == "run" || words[1] == "generate") {
+		return fmt.Errorf("go %s is not allowed", words[1])
 	}
 	return nil
 }
@@ -213,6 +253,9 @@ func (s Spec) validate() error {
 	for i, w := range s.Writable {
 		if err := checkDir(fmt.Sprintf("Writable[%d]", i), w); err != nil {
 			return err
+		}
+		if w != s.OutDir && !pathInside(s.Workspace, w) {
+			return fmt.Errorf("harness: Writable[%d] %q must be inside the workspace or be the output directory", i, w)
 		}
 	}
 	if s.Model != "" && !modelPattern.MatchString(s.Model) {
@@ -307,4 +350,10 @@ func addTokens(total int64, counts ...int64) (int64, bool) {
 		total += c
 	}
 	return total, saturated
+}
+
+// pathInside reports whether p is root or below it. Both are clean absolute
+// paths.
+func pathInside(root, p string) bool {
+	return p == root || strings.HasPrefix(p, strings.TrimSuffix(root, "/")+"/")
 }

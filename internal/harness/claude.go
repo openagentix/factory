@@ -69,12 +69,8 @@ func (c *Claude) Command(s Spec) (Command, error) {
 	return cmd, nil
 }
 
-// bashRule turns a policy command into a Claude Code rule. A command that
-// already ends in a wildcard is kept as it is.
+// bashRule turns a policy command into a Claude Code rule. The command has
+// already been checked: plain words, no wildcard.
 func bashRule(cmd string) string {
-	cmd = strings.TrimSpace(cmd)
-	if strings.HasSuffix(cmd, ":*") {
-		return "Bash(" + cmd + ")"
-	}
-	return "Bash(" + cmd + ":*)"
+	return "Bash(" + strings.TrimSpace(cmd) + ":*)"
 }

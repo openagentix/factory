@@ -278,25 +278,63 @@ func target(root, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(real, rest, filepath.Base(clean)), nil
+	resolved := filepath.Join(real, rest)
+	// The check above looked at the words of the path. A link inside the
+	// workspace can point at .git, so look at the resolved path too.
+	if within, err := filepath.Rel(root, resolved); err == nil {
+		for _, part := range strings.Split(filepath.ToSlash(within), "/") {
+			if strings.EqualFold(part, ".git") {
+				return "", fmt.Errorf("stub script: path %q reaches git state through a link", rel)
+			}
+		}
+	}
+	return filepath.Join(resolved, filepath.Base(clean)), nil
 }
 
-// writeSafe writes a file inside root. A link at the target is replaced, not
-// followed.
+// writeSafe writes a file inside root. It refuses a directory, and an
+// existing regular file that has more than one hard link, because writing it
+// would change a file that may live outside root. The content goes to a new
+// temporary file in the same directory (created with O_EXCL, so no link is
+// followed) and is renamed into place. A link at the target is therefore
+// replaced and never followed.
+//
+// A check-then-write race remains: another process could change a link
+// between the checks and the rename. That is acceptable here. The stub is
+// test and demo tooling, it runs only when OXF_ALLOW_STUB=1 is set, and the
+// only other writer in the directory is the stub's own run.
 func writeSafe(root, rel string, data []byte) error {
 	t, err := target(root, rel)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(t), 0o755); err != nil {
+	dir := filepath.Dir(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if fi, err := os.Lstat(t); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		if err := os.Remove(t); err != nil {
-			return err
+	if fi, err := os.Lstat(t); err == nil {
+		if fi.IsDir() {
+			return fmt.Errorf("stub script: %q is a directory", rel)
+		}
+		if fi.Mode().IsRegular() && linkCount(fi) > 1 {
+			return fmt.Errorf("stub script: %q has more than one hard link", rel)
 		}
 	}
-	return os.WriteFile(t, data, 0o644)
+	tmp, err := os.CreateTemp(dir, ".stub-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if err := errors.Join(werr, cerr, os.Chmod(name, 0o644)); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, t); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // removeSafe deletes a path inside root. A link is removed itself and never

@@ -18,6 +18,9 @@ func TestHostileValuesAreRefused(t *testing.T) {
 		{"writable flag", func(s *Spec) { s.Writable = []string{"--permission-mode=acceptEdits"} }},
 		{"writable settings", func(s *Spec) { s.Writable = []string{"--settings"} }},
 		{"writable short flag", func(s *Spec) { s.Writable = []string{"-x"} }},
+		{"writable outside the workspace", func(s *Spec) { s.Writable = []string{"/etc"} }},
+		{"writable sibling of the workspace", func(s *Spec) { s.Writable = []string{"/work-other/x"} }},
+		{"writable home", func(s *Spec) { s.Writable = []string{"/home/user"} }},
 		{"writable relative", func(s *Spec) { s.Writable = []string{"cache"} }},
 		{"writable dotdot", func(s *Spec) { s.Writable = []string{"/a/../b"} }},
 		{"writable dash component", func(s *Spec) { s.Writable = []string{"/a/-b"} }},
@@ -140,7 +143,7 @@ func TestEveryDashedArgumentIsADesignedFlag(t *testing.T) {
 
 func TestValuesUseTheEqualsForm(t *testing.T) {
 	s := baseSpec()
-	s.Model, s.Writable = "sonnet", []string{"/cache"}
+	s.Model, s.Writable = "sonnet", []string{"/work/cache"}
 	s.Billing, s.MaxCostUSD = api.BillingMetered, 2
 	s.Method, s.PluginDirs = "plugin:p", map[string]string{"p": "/plugins/p"}
 	for _, a := range []Adapter{NewClaude(), NewCodex()} {
@@ -153,6 +156,18 @@ func TestValuesUseTheEqualsForm(t *testing.T) {
 			case "--model", "--add-dir", "--max-budget-usd", "--plugin-dir", "--permission-mode",
 				"--output-format", "--sandbox", "--output-last-message":
 				t.Errorf("%s: %q at %d must be written as --flag=value", a.Name(), arg, i)
+			}
+		}
+	}
+}
+
+func TestWritableMayBeInsideTheWorkspaceOrTheOutDir(t *testing.T) {
+	for _, w := range []string{"/work/cache", "/work/a/b", "/factory/out"} {
+		s := baseSpec()
+		s.Writable = []string{w}
+		for _, a := range []Adapter{NewClaude(), NewCodex()} {
+			if _, err := a.Command(s); err != nil {
+				t.Errorf("%s refused %q: %v", a.Name(), w, err)
 			}
 		}
 	}

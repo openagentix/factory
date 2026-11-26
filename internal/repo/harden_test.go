@@ -104,7 +104,11 @@ func TestZeroValueRepoFailsEveryMethodAndRunsNothing(t *testing.T) {
 		err6 := r.SetRef(ctx, "refs/heads/factory/x", ZeroID, ZeroID)
 		err7 := r.SetDefaultMirror(ctx, ZeroID, ZeroID)
 		err8 := r.Prune(ctx, 2*time.Hour)
-		for i, err := range []error{err1, err2, err3, err4, err5, err6, err7, err8} {
+		rt, _ := os.OpenRoot(t.TempDir())
+		_, _, err9 := r.ImportRoot(ctx, rt, "", "m", testAuthor, ImportOptions{})
+		_, err10 := r.ExportRoot(ctx, ZeroID, rt, Limits{})
+		rt.Close()
+		for i, err := range []error{err1, err2, err3, err4, err5, err6, err7, err8, err9, err10} {
 			if err == nil || !strings.Contains(err.Error(), "not open") {
 				t.Errorf("%s: method %d: %v", name, i, err)
 			}

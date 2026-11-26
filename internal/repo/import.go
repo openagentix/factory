@@ -102,7 +102,50 @@ type entry struct {
 // using them, and Prune removes unreferenced ones later. Imports into one
 // repository from one process run one after the other. Import stops after Limits.MaxDuration with a
 // *TimeoutError.
-func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, author Author, opts ImportOptions) (commit string, changed bool, err error) {
+func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, author Author, opts ImportOptions) (string, bool, error) {
+	root, err := openDirOnce(srcDir)
+	if err != nil {
+		return "", false, err
+	}
+	defer root.Close()
+	return r.ImportRoot(ctx, root, parent, message, author, opts)
+}
+
+// openDirOnce opens a directory by path, once. It refuses a link or a
+// non-directory, and checks that what it opened is the directory it looked
+// at, so a path that is swapped between the look and the open is caught
+// there. After that the path is never used again. This is as far as a path can
+// be trusted: a caller that needs more must open the directory itself before
+// the agent runs, and use ImportRoot or ExportRoot.
+func openDirOnce(dir string) (*os.Root, error) {
+	before, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if before.Mode()&fs.ModeSymlink != 0 || !before.IsDir() {
+		return nil, fmt.Errorf("%s is not a plain directory", quote(dir))
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Lstat(".")
+	if err != nil || !os.SameFile(before, opened) {
+		root.Close()
+		return nil, fmt.Errorf("%s changed while it was opened", quote(dir))
+	}
+	return root, nil
+}
+
+// ImportRoot is Import for a directory that the caller has already opened.
+// It reads the tree only through root, with the root's own methods, and never
+// opens the path of root again, so a swap of that path (for a link, a copy
+// or another directory) while it runs changes nothing. The caller opens root
+// before the agent starts, and closes it. Every other rule of Import applies.
+func (r *Repo) ImportRoot(ctx context.Context, root *os.Root, parent, message string, author Author, opts ImportOptions) (commit string, changed bool, err error) {
+	if root == nil {
+		return "", false, errors.New("no directory to import")
+	}
 	lim := opts.Limits.WithDefaults()
 	parentCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, lim.MaxDuration)
@@ -137,15 +180,6 @@ func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, autho
 			return "", false, err
 		}
 	}
-
-	if err := checkPlainDir(srcDir); err != nil {
-		return "", false, err
-	}
-	root, err := os.OpenRoot(srcDir)
-	if err != nil {
-		return "", false, err
-	}
-	defer root.Close()
 
 	ow, err := openObjWriter(r.dir)
 	if err != nil {
@@ -199,18 +233,6 @@ func (r *Repo) Import(ctx context.Context, srcDir, parent, message string, autho
 		return "", false, err
 	}
 	return strings.TrimSpace(string(out)), true, nil
-}
-
-// checkPlainDir refuses a directory that is a link, or not a directory.
-func checkPlainDir(dir string) error {
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return err
-	}
-	if fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
-		return fmt.Errorf("%s is not a plain directory", quote(dir))
-	}
-	return nil
 }
 
 // scanner lists the directory and applies every rule that needs no git.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -13,8 +14,17 @@ import (
 const (
 	DefaultConcurrencyKey = "{{ .Kind }}-{{ .Number }}"
 	DefaultDeadline       = "30m"
-	DefaultMaxAttempts    = 2
+	DefaultMaxAttempts    = 3
 	MaxMaxAttempts        = 5
+	// DefaultCeiling is the highest dial level when a task sets none. Level 3
+	// is shown but not active in the first release.
+	DefaultCeiling = LevelAutopilot
+)
+
+// Method values. A method may also be plugin:<name> or a relative file path.
+const (
+	MethodBuiltin      = "builtin"
+	MethodPluginPrefix = "plugin:"
 )
 
 // Harness names a coding agent program a worker can launch.
@@ -100,8 +110,14 @@ func (t Trigger) Kind() string {
 	if t.IssueLabeled != nil {
 		kinds = append(kinds, "issueLabeled")
 	}
+	if t.IssueCommented != nil {
+		kinds = append(kinds, "issueCommented")
+	}
 	if t.PullRequestOpened != nil {
 		kinds = append(kinds, "pullRequestOpened")
+	}
+	if t.PullRequestMerged != nil {
+		kinds = append(kinds, "pullRequestMerged")
 	}
 	if t.CheckFailed != nil {
 		kinds = append(kinds, "checkFailed")
@@ -126,6 +142,13 @@ func (t *Task) ApplyDefaults() {
 	if t.Spec.ConcurrencyKey == "" {
 		t.Spec.ConcurrencyKey = DefaultConcurrencyKey
 	}
+	if t.Spec.Method == "" {
+		t.Spec.Method = MethodBuiltin
+	}
+	if t.Spec.Autonomy.Ceiling == nil {
+		c := DefaultCeiling
+		t.Spec.Autonomy.Ceiling = &c
+	}
 }
 
 // Validate checks the task. It returns nil or a ValidationErrors value.
@@ -140,16 +163,24 @@ func (t *Task) Validate() error {
 
 	if s.Prompt == "" {
 		p.add("spec.prompt", "must be set")
-	} else if !relativeNoParent(s.Prompt) {
-		p.add("spec.prompt", "must be a relative path without ..")
+	} else if !cleanRelativePath(s.Prompt) {
+		p.add("spec.prompt", "must be a clean relative path: no leading /, no empty, . or .. part")
+	}
+
+	if !validMethod(s.Method) {
+		p.add("spec.method", "must be builtin, plugin:<name>, or a clean relative file path")
+	}
+	for i, c := range s.Permissions.Commands {
+		if blank(c) {
+			p.add(fmt.Sprintf("spec.permissions.commands[%d]", i), "must not be empty")
+		}
+	}
+	if c := s.Autonomy.Ceiling; c != nil && !c.Valid() {
+		p.add("spec.autonomy.ceiling", "must be 0 to 3")
 	}
 
 	for i, g := range s.ProtectedPaths {
-		if g == "" {
-			p.add(fmt.Sprintf("spec.protectedPaths[%d]", i), "must not be empty")
-		} else if _, err := path.Match(g, ""); err != nil {
-			p.add(fmt.Sprintf("spec.protectedPaths[%d]", i), "invalid glob pattern: %v", err)
-		}
+		checkGlob(&p, fmt.Sprintf("spec.protectedPaths[%d]", i), g)
 	}
 
 	seen := map[string]bool{}
@@ -201,15 +232,85 @@ func validateTrigger(p *problems, tr Trigger) {
 // validCron checks only the shape: five fields. The scheduler checks the values.
 func validCron(s string) bool { return len(strings.Fields(s)) == 5 }
 
-// relativeNoParent reports whether p is a relative path with no .. part.
-func relativeNoParent(p string) bool {
-	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || (len(p) > 1 && p[1] == ':') {
+// cleanRelativePath reports whether p is a clean repository-relative path.
+// This one rule applies to every path field. It rejects an empty path, an
+// absolute path, a backslash, an empty segment (a doubled or trailing slash)
+// and a "." or ".." segment. A path is never cleaned for the caller, so a
+// pattern built from it always matches what it says.
+func cleanRelativePath(p string) bool {
+	if p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, `\`) || (len(p) > 1 && p[1] == ':') {
 		return false
 	}
-	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if part == ".." {
+	for _, part := range strings.Split(p, "/") {
+		if part == "" || part == "." || part == ".." {
 			return false
 		}
 	}
 	return true
+}
+
+// checkGlob checks a path pattern: clean and relative, and a valid glob.
+func checkGlob(p *problems, field, g string) {
+	switch {
+	case g == "":
+		p.add(field, "must not be empty")
+	case !cleanRelativePath(g):
+		p.add(field, "must be a clean relative pattern: no leading /, no backslash, no empty, . or .. part")
+	default:
+		if _, err := path.Match(g, ""); err != nil {
+			p.add(field, "invalid glob pattern: %v", err)
+		}
+	}
+}
+
+var pluginName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validMethod checks a method value: builtin, plugin:<name> or a relative
+// file path with no .. part.
+func validMethod(m string) bool {
+	switch {
+	case m == MethodBuiltin:
+		return true
+	case strings.HasPrefix(m, MethodPluginPrefix):
+		return pluginName.MatchString(strings.TrimPrefix(m, MethodPluginPrefix))
+	}
+	return cleanRelativePath(m)
+}
+
+// Trigger reference kinds besides the task trigger kinds.
+const (
+	// TriggerFactory is a run the factory started itself after another run:
+	// acceptance, review, onboard or a rebuild.
+	TriggerFactory = "factory"
+	// TriggerPerson is a run a person started: take the wheel, or an action
+	// in the web app.
+	TriggerPerson = "person"
+)
+
+// triggerKinds are the kinds a run's trigger reference may name: the six task
+// trigger kinds, factory and person.
+var triggerKinds = []string{
+	"issueLabeled", "issueCommented", "pullRequestOpened", "pullRequestMerged", "checkFailed", "schedule",
+	TriggerFactory, TriggerPerson,
+}
+
+func validTriggerKind(k string) bool {
+	for _, t := range triggerKinds {
+		if t == k {
+			return true
+		}
+	}
+	return false
+}
+
+// addNested adds the problems of a nested value under a field prefix.
+func (p *problems) addNested(prefix string, err error) {
+	var ve ValidationErrors
+	if errors.As(err, &ve) {
+		for _, e := range ve {
+			p.list = append(p.list, FieldError{Path: prefix + "." + e.Path, Msg: e.Msg})
+		}
+	} else if err != nil {
+		p.add(prefix, "%v", err)
+	}
 }

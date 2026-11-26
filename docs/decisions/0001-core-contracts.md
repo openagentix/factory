@@ -300,7 +300,7 @@ The **last good point** of a goal is the most recent staging state in which ever
 
 ## The run record and the evidence bundle
 
-The **run record** is stored in SQLite. Its field names follow the planned OpenAgentix `AgentRun`, so that kind can back it later: `id`, `task`, `attempt`, `goal`, `ticket`, `trigger` (kind and reference), `mode` (`unattended` or `wheel`), `method`, `methodUsed`, `input` (resolved task and prompt hash), `limits`, `phase`, `result`, `usage` (with its source), `provenance` (the evidence bundle), `outputs` (branch, commit, pull request), `createdAt`, `startedAt`, `finishedAt`. The phases are `queued`, `held` (waiting for the cap, a throttle or a staging freeze), `working`, `verifying`, `publishing`, `succeeded`, `failed`, `needs_human` and `cancelled`.
+The **run record** is stored in SQLite. Its field names follow the planned OpenAgentix `AgentRun`, so that kind can back it later: `id`, `task`, `attempt`, `goal`, `ticket`, `trigger` (kind and reference; the kind is one of the six trigger kinds, `factory` for a run the factory started itself after another run, such as `acceptance`, `review`, `onboard` or a rebuild, or `person` for take the wheel or an action in the web app), `mode` (`unattended` or `wheel`), `method`, `methodUsed`, `input` (resolved task and prompt hash), `limits`, `phase`, `result`, `usage` (with its source), `provenance` (the evidence bundle), `outputs` (branch, commit, pull request), `createdAt`, `startedAt`, `finishedAt`. The phases are `queued`, `held` (waiting for the cap, a throttle or a staging freeze), `working`, `verifying`, `publishing`, `succeeded`, `failed`, `needs_human` and `cancelled`.
 
 The orchestrator also stores each staging state and the list of passed changes, the dial levels and their log, and the outcome of each accepted change. The trust record is a query over these and outcomes read from the git host, never a second source of truth.
 
@@ -321,7 +321,7 @@ The **evidence bundle** is built by the orchestrator in the verify stage. The re
   "protectedPaths": { "touched": [], "ok": true },
   "testFilesChanged": [], "testFilesAdded": ["internal/booking/move_test.go"],
   "checks": [ { "name": "test", "exitCode": 0, "durationSeconds": 41, "ranBy": "orchestrator" } ],
-  "acceptance": [ { "id": 1, "state": "working", "before": "not_working" } ],
+  "acceptance": [ { "id": 1, "state": "working", "before": "not_working", "check": "go test ./acceptance/40 -run TestMoveBooking" } ],
   "review": { "run": "r_01H9A", "harness": "codex", "verdict": "agrees", "singleOpinion": false },
   "risk": { "level": "low", "reasons": ["review from the other harness", "served criteria working"] },
   "gate": "passed",
@@ -330,7 +330,7 @@ The **evidence bundle** is built by the orchestrator in the verify stage. The re
 }
 ```
 
-`acceptance[].state` and `before` are `working`, `not_working` or `could_not_confirm`. `gate` is `pending`, `passed`, `failed` or `exception`. `usage.enforced` is true only when a governance provider enforced the limit; otherwise the web app says "reported, not enforced". A run with no change still records worker, usage, limits and outputs, with diff, checks and risk empty. The agent pull request body has three parts: Summary, Evidence, Risk.
+`acceptance[].state` and `before` are `working`, `not_working` or `could_not_confirm`. `check` holds the manifest command that produced the state. It is required for `working` and `not_working`, and empty for `could_not_confirm`. `gate` is `pending`, `passed`, `failed` or `exception`. `usage.enforced` is true only when a governance provider enforced the limit; otherwise the web app says "reported, not enforced". A run with no change still records worker, usage, limits and outputs, with diff, checks and risk empty. The agent pull request body has three parts: Summary, Evidence, Risk.
 
 ## Interfaces that vary by where it runs
 

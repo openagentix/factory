@@ -1,8 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const validFactoryYAML = "apiVersion: " + APIVersion + `
@@ -15,6 +18,14 @@ spec:
     harness: claude-code
   maxOpenAgentPullRequests: 3
   pollInterval: 2m
+  acceptancePath: acceptance
+  start: "make run"
+  protectedPaths: [".github/**", "Makefile"]
+  riskPaths:
+    contract: ["api/**"]
+    security: ["internal/auth/**"]
+    dependencies: ["go.mod", "go.sum"]
+    documents: ["docs/**", "*.md"]
 `
 
 func validFactory() *Factory {
@@ -37,7 +48,7 @@ func TestParseFactory_Valid(t *testing.T) {
 
 func TestParseFactory_Strict(t *testing.T) {
 	_, err := ParseFactory([]byte(validFactoryYAML + "extra: 1\n"))
-	if err == nil || !strings.Contains(err.Error(), "extra") {
+	if err == nil || !strings.Contains(err.Error(), "field extra not found") {
 		t.Fatalf("err = %v", err)
 	}
 	_, err = ParseFactory(nil)
@@ -64,6 +75,54 @@ func TestFactoryValidate(t *testing.T) {
 		{"bad harness", func(f *Factory) { f.Spec.DefaultWorker.Harness = "" }, "spec.defaultWorker.harness: "},
 		{"negative cap", func(f *Factory) { f.Spec.MaxOpenAgentPullRequests = -1 }, "spec.maxOpenAgentPullRequests: "},
 		{"bad poll interval", func(f *Factory) { f.Spec.PollInterval = "often" }, "spec.pollInterval: "},
+		{"acceptance path parent", func(f *Factory) { f.Spec.AcceptancePath = "../x" }, "spec.acceptancePath: "},
+		{"acceptance path absolute", func(f *Factory) { f.Spec.AcceptancePath = "/x" }, "spec.acceptancePath: "},
+		{"acceptance path dot", func(f *Factory) { f.Spec.AcceptancePath = "." }, "spec.acceptancePath: "},
+		{"acceptance path nested ok", func(f *Factory) { f.Spec.AcceptancePath = "tests/acceptance" }, ""},
+		{"acceptance path dot segment", func(f *Factory) { f.Spec.AcceptancePath = "./acceptance" }, "spec.acceptancePath: "},
+		{"acceptance path trailing slash", func(f *Factory) { f.Spec.AcceptancePath = "acceptance/" }, "spec.acceptancePath: "},
+		{"acceptance path doubled slash", func(f *Factory) { f.Spec.AcceptancePath = "a//b" }, "spec.acceptancePath: "},
+		{"acceptance path star", func(f *Factory) { f.Spec.AcceptancePath = "accept*" }, "spec.acceptancePath: "},
+		{"acceptance path question", func(f *Factory) { f.Spec.AcceptancePath = "a?b" }, "spec.acceptancePath: "},
+		{"acceptance path bracket", func(f *Factory) { f.Spec.AcceptancePath = "a[1]" }, "spec.acceptancePath: "},
+		{"acceptance path brace", func(f *Factory) { f.Spec.AcceptancePath = "a{b,c}" }, "spec.acceptancePath: "},
+		{"acceptance path space", func(f *Factory) { f.Spec.AcceptancePath = "my acceptance" }, "spec.acceptancePath: "},
+		{"protected absolute", func(f *Factory) { f.Spec.ProtectedPaths = []string{"/etc/**"} }, "spec.protectedPaths[0]: "},
+		{"protected parent", func(f *Factory) { f.Spec.ProtectedPaths = []string{"a/../../b/**"} }, "spec.protectedPaths[0]: "},
+		{"protected dot segment", func(f *Factory) { f.Spec.ProtectedPaths = []string{"./.github/**"} }, "spec.protectedPaths[0]: "},
+		{"risk absolute", func(f *Factory) { f.Spec.RiskPaths.Security = []string{"/etc/**"} }, "spec.riskPaths.security[0]: "},
+		{"risk parent", func(f *Factory) { f.Spec.RiskPaths.Dependencies = []string{"../go.mod"} }, "spec.riskPaths.dependencies[0]: "},
+		{"risk dot segment", func(f *Factory) { f.Spec.RiskPaths.Contract = []string{"./api/**"} }, "spec.riskPaths.contract[0]: "},
+		{"bad protected glob", func(f *Factory) { f.Spec.ProtectedPaths = []string{"[a"} }, "spec.protectedPaths[0]: "},
+		{"empty protected glob", func(f *Factory) { f.Spec.ProtectedPaths = []string{""} }, "spec.protectedPaths[0]: "},
+		{"bad risk glob", func(f *Factory) { f.Spec.RiskPaths.Contract = []string{"[a"} }, "spec.riskPaths.contract[0]: "},
+		{"empty risk glob", func(f *Factory) { f.Spec.RiskPaths.Documents = []string{""} }, "spec.riskPaths.documents[0]: "},
+		{"github moved to security", func(f *Factory) {
+			f.Spec.ProtectedPaths = []string{}
+			f.Spec.RiskPaths.Security = append(f.Spec.RiskPaths.Security, ".github/**")
+		}, ""},
+		{"same path protected and risk", func(f *Factory) {
+			f.Spec.RiskPaths.Security = append(f.Spec.RiskPaths.Security, ".github/**")
+		}, `spec.riskPaths.security[1]: ".github/**" overlaps ".github/**" in spec.protectedPaths[0]`},
+		{"risk under protected", func(f *Factory) {
+			f.Spec.RiskPaths.Security = []string{".github/workflows/**"}
+		}, `spec.riskPaths.security[0]: ".github/workflows/**" overlaps ".github/**" in spec.protectedPaths[0]`},
+		{"protected under risk", func(f *Factory) {
+			f.Spec.ProtectedPaths = []string{"api/v1/**"}
+		}, `spec.riskPaths.contract[0]: "api/**" overlaps "api/v1/**" in spec.protectedPaths[0]`},
+		{"risk file under fixed dir", func(f *Factory) {
+			f.Spec.RiskPaths.Security = []string{".factory/factory.yaml"}
+		}, `spec.riskPaths.security[0]: ".factory/factory.yaml" overlaps ".factory/**" in the fixed protected paths`},
+		{"sibling paths do not overlap", func(f *Factory) {
+			f.Spec.ProtectedPaths = []string{".github/**"}
+			f.Spec.RiskPaths.Security = []string{".githubx/**"}
+		}, ""},
+		{"risk path in fixed factory dir", func(f *Factory) {
+			f.Spec.RiskPaths.Contract = []string{".factory/**"}
+		}, `spec.riskPaths.contract[0]: ".factory/**" overlaps ".factory/**" in the fixed protected paths`},
+		{"risk path in acceptance path", func(f *Factory) {
+			f.Spec.RiskPaths.Documents = []string{"acceptance/**"}
+		}, `spec.riskPaths.documents[0]: "acceptance/**" overlaps "acceptance/**" in the fixed protected paths`},
 		{"zero poll interval", func(f *Factory) { f.Spec.PollInterval = "0s" }, "spec.pollInterval: "},
 	}
 	for _, tt := range tests {
@@ -94,5 +153,238 @@ func TestFactoryDefaults(t *testing.T) {
 	}
 	if err := f.Validate(); err != nil {
 		t.Errorf("defaults must validate: %v", err)
+	}
+}
+
+func TestFactoryNewFieldsParse(t *testing.T) {
+	f := validFactory()
+	if f.Spec.AcceptancePath != "acceptance" || f.Spec.Start != "make run" {
+		t.Errorf("spec: %+v", f.Spec)
+	}
+	r := f.Spec.RiskPaths
+	if r.Contract[0] != "api/**" || r.Security[0] != "internal/auth/**" || len(r.Dependencies) != 2 || len(r.Documents) != 2 {
+		t.Errorf("riskPaths: %+v", r)
+	}
+	_, err := ParseFactory([]byte(validFactoryYAML + "  riskPaths: {}\n"))
+	if err == nil {
+		t.Error("duplicate key must fail")
+	}
+	_, err = ParseFactory([]byte(strings.Replace(validFactoryYAML, "    contract:", "    tests: [\"x\"]\n    contract:", 1)))
+	if err == nil || !strings.Contains(err.Error(), "tests") {
+		t.Errorf("unknown risk kind must fail, got %v", err)
+	}
+}
+
+func TestFactoryNewDefaults(t *testing.T) {
+	min := "apiVersion: " + APIVersion + `
+kind: Factory
+metadata: { name: main }
+spec:
+  repository: acme/widgets
+  defaultWorker: { harness: claude-code }
+`
+	f, err := ParseFactory([]byte(min))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Spec.AcceptancePath != DefaultAcceptancePath || DefaultAcceptancePath != "acceptance" {
+		t.Errorf("acceptancePath = %q", f.Spec.AcceptancePath)
+	}
+	if len(f.Spec.ProtectedPaths) != 1 || f.Spec.ProtectedPaths[0] != ".github/**" {
+		t.Errorf("protectedPaths = %v", f.Spec.ProtectedPaths)
+	}
+	// An explicit empty list removes the default.
+	f, err = ParseFactory([]byte(min + "  protectedPaths: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Spec.ProtectedPaths) != 0 {
+		t.Errorf("explicit empty list must stay empty: %v", f.Spec.ProtectedPaths)
+	}
+}
+
+func TestFixedProtectedPaths(t *testing.T) {
+	tests := []struct {
+		acceptance string
+		want       []string
+	}{
+		{"acceptance", []string{".factory/**", "acceptance/**"}},
+		{"tests/acceptance", []string{".factory/**", "tests/acceptance/**"}},
+		{"", []string{".factory/**", "acceptance/**"}},
+	}
+	for _, tt := range tests {
+		f := validFactory()
+		f.Spec.AcceptancePath = tt.acceptance
+		got := f.FixedProtectedPaths()
+		if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+			t.Errorf("acceptancePath %q: got %v, want %v", tt.acceptance, got, tt.want)
+		}
+	}
+}
+
+func TestPatternsOverlap(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{".github/**", ".github/**", true},
+		{".github/**", ".github/workflows/**", true},
+		{".github/workflows/**", ".github/**", true},
+		{".github/**", ".github/workflows/ci.yml", true},
+		{"go.mod", "go.mod", true},
+		{"api/**", "api/*.go", true},
+		{"docs/**", "docs/read*", true},
+		{"docs/**", "docs", true},
+		{"docs/**", "docs2/**", false},
+		{".github/**", ".githubx/**", false},
+		{"go.mod", "go.sum", false},
+		{"api/**", "internal/**", false},
+		// Limit of the rule: a pattern that starts with a glob character is
+		// compared by exact string only.
+		{"**/*_test.go", "api/**", false},
+		{"**/*_test.go", "**/*_test.go", true},
+		{"*.md", "docs/**", false},
+	}
+	for _, tt := range tests {
+		if got := patternsOverlap(tt.a, tt.b); got != tt.want {
+			t.Errorf("patternsOverlap(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+		if got := patternsOverlap(tt.b, tt.a); got != tt.want {
+			t.Errorf("patternsOverlap(%q, %q) = %v, want %v (reversed)", tt.b, tt.a, got, tt.want)
+		}
+	}
+}
+
+func TestCheckTaskProtectedPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		protected []string
+		wantErr   string
+	}{
+		{"none", nil, ""},
+		{"no overlap", []string{"**/*_test.go"}, ""},
+		{"same as a risk path", []string{"api/**"}, `spec.protectedPaths[0]: "api/**" overlaps "api/**" in spec.riskPaths.contract[0] of the factory file`},
+		{"under a risk path", []string{"ok/**", "internal/auth/login/**"}, `spec.protectedPaths[1]: "internal/auth/login/**" overlaps "internal/auth/**" in spec.riskPaths.security[0] of the factory file`},
+		{"over a risk path", []string{"internal/**"}, `spec.protectedPaths[0]: "internal/**" overlaps "internal/auth/**"`},
+		{"document path", []string{"docs/guide.md"}, `in spec.riskPaths.documents[0]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := validTask()
+			task.Spec.ProtectedPaths = tt.protected
+			err := CheckTaskProtectedPaths(task, validFactory())
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+const minimalFactoryYAML = "apiVersion: " + APIVersion + `
+kind: Factory
+metadata: { name: main }
+spec:
+  repository: acme/widgets
+  defaultWorker: { harness: claude-code }
+`
+
+func TestFactoryRoundTripKeepsEmptyProtectedPaths(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra string
+		want  []string
+	}{
+		{"default stays the default", "", []string{".github/**"}},
+		{"explicit empty stays empty", "  protectedPaths: []\n", []string{}},
+		{"explicit list stays", "  protectedPaths: [\"a/**\"]\n", []string{"a/**"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseFactory([]byte(minimalFactoryYAML + tt.extra))
+			if err != nil {
+				t.Fatal(err)
+			}
+			y, err := yaml.Marshal(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			back, err := ParseFactory(y)
+			if err != nil {
+				t.Fatalf("re-parse yaml: %v\n%s", err, y)
+			}
+			if strings.Join(back.Spec.ProtectedPaths, ",") != strings.Join(tt.want, ",") || len(back.Spec.ProtectedPaths) != len(tt.want) {
+				t.Errorf("yaml round trip: %v, want %v\n%s", back.Spec.ProtectedPaths, tt.want, y)
+			}
+			j, err := json.Marshal(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fromJSON Factory
+			if err := decodeJSONStrict(j, &fromJSON); err != nil {
+				t.Fatalf("re-parse json: %v\n%s", err, j)
+			}
+			if fromJSON.Spec.ProtectedPaths == nil || len(fromJSON.Spec.ProtectedPaths) != len(tt.want) {
+				t.Errorf("json round trip: %v, want %v\n%s", fromJSON.Spec.ProtectedPaths, tt.want, j)
+			}
+		})
+	}
+	// A spec that was never defaulted writes no key at all.
+	out, _ := yaml.Marshal(FactorySpec{Repository: "a/b"})
+	if strings.Contains(string(out), "protectedPaths") {
+		t.Errorf("nil list must not be written: %s", out)
+	}
+}
+
+func TestValidateFactoryAndTasks(t *testing.T) {
+	task := func(name string, protected ...string) *Task {
+		x := validTask()
+		x.Metadata.Name = name
+		x.Spec.ProtectedPaths = protected
+		return x
+	}
+	tests := []struct {
+		name    string
+		factory func() *Factory
+		tasks   []*Task
+		want    []string // every one must be in the error; empty means valid
+	}{
+		{"valid", validFactory, []*Task{task("implement", "**/*_test.go"), task("review")}, nil},
+		{"no tasks", validFactory, nil, nil},
+		{"overlap names the task", validFactory, []*Task{task("implement"), task("fix-ci", "api/v1/**")},
+			[]string{`tasks.fix-ci.spec.protectedPaths[0]: "api/v1/**" overlaps "api/**"`}},
+		{"every task reported", validFactory, []*Task{task("a", "api/**"), task("b", "go.mod")},
+			[]string{"tasks.a.spec.protectedPaths[0]", "tasks.b.spec.protectedPaths[0]"}},
+		{"task own error names the task", validFactory, []*Task{func() *Task { x := task("implement"); x.Spec.Prompt = ""; return x }()},
+			[]string{"tasks.implement.spec.prompt: "}},
+		{"factory error", func() *Factory { f := validFactory(); f.Spec.Repository = ""; return f }, []*Task{task("implement")},
+			[]string{"spec.repository: "}},
+		{"duplicate task name", validFactory, []*Task{task("implement"), task("implement")},
+			[]string{"tasks.implement.metadata.name: duplicate"}},
+		{"nil task", validFactory, []*Task{nil}, []string{"tasks[0]: "}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateFactoryAndTasks(tt.factory(), tt.tasks)
+			if len(tt.want) == 0 {
+				if err != nil {
+					t.Fatalf("unexpected: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("want error")
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %v lacks %q", err, w)
+				}
+			}
+		})
 	}
 }

@@ -58,6 +58,38 @@ func TestTaskValidate(t *testing.T) {
 		{"duplicate check", func(x *Task) { x.Spec.Checks = append(x.Spec.Checks, x.Spec.Checks[0]) }, "spec.checks[1].name: duplicate"},
 		{"bad glob", func(x *Task) { x.Spec.ProtectedPaths = []string{"[abc"} }, "spec.protectedPaths[0]: "},
 		{"empty glob", func(x *Task) { x.Spec.ProtectedPaths = []string{""} }, "spec.protectedPaths[0]: "},
+		{"method builtin", func(x *Task) { x.Spec.Method = "builtin" }, ""},
+		{"method plugin", func(x *Task) { x.Spec.Method = "plugin:superpowers" }, ""},
+		{"method plugin dotted", func(x *Task) { x.Spec.Method = "plugin:open-gsd.v2" }, ""},
+		{"method file", func(x *Task) { x.Spec.Method = "methods/mine.md" }, ""},
+		{"prompt dot segment", func(x *Task) { x.Spec.Prompt = "./prompts/x.md" }, "spec.prompt: "},
+		{"prompt doubled slash", func(x *Task) { x.Spec.Prompt = "prompts//x.md" }, "spec.prompt: "},
+		{"prompt trailing slash", func(x *Task) { x.Spec.Prompt = "prompts/" }, "spec.prompt: "},
+		{"prompt middle dot", func(x *Task) { x.Spec.Prompt = "a/./x.md" }, "spec.prompt: "},
+		{"prompt backslash", func(x *Task) { x.Spec.Prompt = `a\x.md` }, "spec.prompt: "},
+		{"method dot segment", func(x *Task) { x.Spec.Method = "./m.md" }, "spec.method: "},
+		{"method doubled slash", func(x *Task) { x.Spec.Method = "a//m.md" }, "spec.method: "},
+		{"method trailing slash", func(x *Task) { x.Spec.Method = "a/" }, "spec.method: "},
+		{"protected absolute", func(x *Task) { x.Spec.ProtectedPaths = []string{"/etc/**"} }, "spec.protectedPaths[0]: "},
+		{"protected parent", func(x *Task) { x.Spec.ProtectedPaths = []string{"../x/**"} }, "spec.protectedPaths[0]: "},
+		{"protected dot segment", func(x *Task) { x.Spec.ProtectedPaths = []string{"./x/**"} }, "spec.protectedPaths[0]: "},
+		{"protected double star ok", func(x *Task) { x.Spec.ProtectedPaths = []string{"**/*_test.go"} }, ""},
+		{"method plugin no name", func(x *Task) { x.Spec.Method = "plugin:" }, "spec.method: "},
+		{"method plugin bad name", func(x *Task) { x.Spec.Method = "plugin:a b" }, "spec.method: "},
+		{"method absolute", func(x *Task) { x.Spec.Method = "/etc/m.md" }, "spec.method: "},
+		{"method parent", func(x *Task) { x.Spec.Method = "../m.md" }, "spec.method: "},
+		{"method nested parent", func(x *Task) { x.Spec.Method = "a/../../m.md" }, "spec.method: "},
+		{"commands ok", func(x *Task) { x.Spec.Permissions.Commands = []string{"go test ./..."} }, ""},
+		{"empty command", func(x *Task) { x.Spec.Permissions.Commands = []string{"go build", " "} }, "spec.permissions.commands[1]: "},
+		{"ceiling zero", func(x *Task) { x.Spec.Autonomy.Ceiling = levelPtr(0) }, ""},
+		{"ceiling three", func(x *Task) { x.Spec.Autonomy.Ceiling = levelPtr(3) }, ""},
+		{"ceiling four", func(x *Task) { x.Spec.Autonomy.Ceiling = levelPtr(4) }, "spec.autonomy.ceiling: "},
+		{"ceiling negative", func(x *Task) { x.Spec.Autonomy.Ceiling = levelPtr(-1) }, "spec.autonomy.ceiling: "},
+		{"issue commented", func(x *Task) { x.Spec.Trigger = Trigger{IssueCommented: &IssueCommentedTrigger{}} }, ""},
+		{"pull request merged", func(x *Task) { x.Spec.Trigger = Trigger{PullRequestMerged: &PullRequestMergedTrigger{}} }, ""},
+		{"merged and commented", func(x *Task) {
+			x.Spec.Trigger = Trigger{IssueCommented: &IssueCommentedTrigger{}, PullRequestMerged: &PullRequestMergedTrigger{}}
+		}, "spec.trigger: exactly one trigger kind must be set"},
 		{"bad concurrency template", func(x *Task) { x.Spec.ConcurrencyKey = "{{ .Number" }, "spec.concurrencyKey: "},
 	}
 	for _, tt := range tests {
@@ -96,12 +128,20 @@ func TestTaskDefaults(t *testing.T) {
 	task := validTask()
 	task.Spec.Limits = Limits{}
 	task.Spec.ConcurrencyKey = ""
+	task.Spec.Method = ""
+	task.Spec.Autonomy = Autonomy{}
 	task.ApplyDefaults()
 	if task.Spec.Limits.Deadline != "30m" {
 		t.Errorf("deadline = %q", task.Spec.Limits.Deadline)
 	}
-	if task.Spec.Limits.MaxAttempts != 2 {
+	if task.Spec.Limits.MaxAttempts != 3 || DefaultMaxAttempts != 3 {
 		t.Errorf("maxAttempts = %d", task.Spec.Limits.MaxAttempts)
+	}
+	if task.Spec.Method != MethodBuiltin {
+		t.Errorf("method = %q", task.Spec.Method)
+	}
+	if c := task.Spec.Autonomy.Ceiling; c == nil || *c != LevelAutopilot || DefaultCeiling != LevelAutopilot {
+		t.Errorf("ceiling = %v", c)
 	}
 	if task.Spec.ConcurrencyKey != DefaultConcurrencyKey || DefaultConcurrencyKey != "{{ .Kind }}-{{ .Number }}" {
 		t.Errorf("concurrencyKey = %q", task.Spec.ConcurrencyKey)
@@ -127,11 +167,24 @@ spec:
 	if task.Spec.Trigger.PullRequestOpened == nil {
 		t.Error("pullRequestOpened {} must parse as set")
 	}
-	if task.Spec.Limits.Deadline != "30m" || task.Spec.Limits.MaxAttempts != 2 {
+	if task.Spec.Limits.Deadline != "30m" || task.Spec.Limits.MaxAttempts != 3 {
 		t.Errorf("defaults not applied: %+v", task.Spec.Limits)
 	}
 	_, err = ParseTask([]byte(strings.Replace(minimal, "prompts/review.md", "../x", 1)))
 	if err == nil || !strings.Contains(err.Error(), "spec.prompt") {
 		t.Errorf("want validation error, got %v", err)
+	}
+}
+
+func levelPtr(l Level) *Level { return &l }
+
+// Every task named in decision 0001 must be a valid task name.
+func TestTaskNamesFromTheRecord(t *testing.T) {
+	for _, name := range []string{TaskOnboard, TaskAcceptance, TaskImplement, TaskFixCI, TaskReview, TaskBrainstorm, TaskDecompose} {
+		task := validTask()
+		task.Metadata.Name = name
+		if err := task.Validate(); err != nil {
+			t.Errorf("task %q: %v", name, err)
+		}
 	}
 }

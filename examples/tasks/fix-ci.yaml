@@ -3,23 +3,26 @@ kind: Task
 metadata:
   name: fix-ci
 spec:
-  description: Propose a fix when a check fails on a pull request.
+  description: Propose a fix when a required check fails on an open agent pull request.
   trigger:
     checkFailed: {}
     throttle: { maxPerDay: 3 }
   worker:
     harness: claude-code
+  method: builtin
   prompt: prompts/fix-ci.md
+  permissions:
+    commands: ["go build ./...", "go test ./...", "go vet ./..."]
   protectedPaths:
     - "**/*_test.go"
-    - ".github/**"
   checks:
     - { name: test, run: "go test ./..." }
     - { name: vet, run: "go vet ./..." }
   limits:
     deadline: 20m
     maxCostUSD: 3
-    maxAttempts: 1
+    maxAttempts: 3
+  autonomy: { ceiling: 2 }
   outputs:
     pullRequest: { draft: true }
     comment: true

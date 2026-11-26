@@ -6,6 +6,20 @@ spec:
   repository: acme/widgets
   defaultWorker:
     harness: claude-code
-  # The review capacity brake. New pull request runs are held above this.
+  # The review capacity brake. New changes are held above this.
   maxOpenAgentPullRequests: 3
   pollInterval: 1m
+  # The root of the acceptance checks. Always protected, except for the
+  # acceptance task.
+  acceptancePath: acceptance
+  # Lets Try it start the application. Optional.
+  start: "make run"
+  # Adds to the fixed protected paths (.factory/** and the acceptance path).
+  # This list is the default.
+  protectedPaths: [".github/**"]
+  # No path may be in both a protected list and a risk list.
+  riskPaths:
+    contract: ["api/**"]
+    security: ["internal/auth/**"]
+    dependencies: ["go.mod", "go.sum"]
+    documents: ["docs/**", "*.md"]

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "issues": [
+    { "title": "Move endpoint", "body": "Let a customer move a booking.", "criteria": [1, 2], "dependsOn": [] },
+    { "title": "Confirmation email", "body": "Send an email after a move.", "criteria": [3], "dependsOn": [0] }
+  ]
+}

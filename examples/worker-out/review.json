@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "subject": "change",
+  "verdict": "agrees",
+  "points": [
+    { "severity": "minor", "text": "The error message is vague", "file": "internal/booking/move.go" }
+  ],
+  "criteria": [
+    { "id": 1, "opinion": "met", "note": "" }
+  ]
+}

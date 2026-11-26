@@ -1,9 +1,6 @@
 package api
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // SchemaVersion is the version of result.json and the evidence bundle.
 const SchemaVersion = 1
@@ -16,16 +13,30 @@ const (
 	StatusNoChange   = "no_change"
 )
 
-// Usage is cost and token use, with the source of the numbers.
+// Billing says how the usage was paid for.
+const (
+	// BillingMetered is an API key or gateway: dollars and tokens.
+	BillingMetered = "metered"
+	// BillingPlan is a subscription login: tokens and no dollar figure.
+	BillingPlan = "plan"
+	// BillingUnknown is for when the harness does not say.
+	BillingUnknown = "unknown"
+)
+
+// Usage is cost and token use. A dollar figure is valid only for metered
+// billing and is never estimated for plan usage.
 type Usage struct {
-	// CostUSD is nil when the harness does not report cost ("unknown").
-	CostUSD      *float64 `json:"costUSD,omitempty" yaml:"costUSD,omitempty"`
-	InputTokens  int64    `json:"inputTokens,omitempty" yaml:"inputTokens,omitempty"`
-	OutputTokens int64    `json:"outputTokens,omitempty" yaml:"outputTokens,omitempty"`
-	// Source says who counted, for example "harness".
-	Source string `json:"source,omitempty" yaml:"source,omitempty"`
+	Billing string `json:"billing,omitempty"`
+	// CostUSD is set only when Billing is metered.
+	CostUSD      *float64 `json:"costUSD,omitempty"`
+	InputTokens  int64    `json:"inputTokens,omitempty"`
+	OutputTokens int64    `json:"outputTokens,omitempty"`
+	// Source says who counted, for example "harness". The orchestrator
+	// writes it. A value from the worker is ignored.
+	Source string `json:"source,omitempty"`
 	// Enforced is true only when a governance provider enforced the limit.
-	Enforced bool `json:"enforced,omitempty" yaml:"enforced,omitempty"`
+	// The orchestrator writes it. A value from the worker is ignored.
+	Enforced bool `json:"enforced,omitempty"`
 }
 
 // HarnessInfo names the harness that ran and its version and model.
@@ -37,13 +48,15 @@ type HarnessInfo struct {
 
 // Result is the content of /factory/out/result.json.
 type Result struct {
-	SchemaVersion int         `json:"schemaVersion"`
-	Status        string      `json:"status"`
-	Summary       string      `json:"summary"`
-	Claims        []string    `json:"claims,omitempty"`
-	Questions     []string    `json:"questions,omitempty"`
-	Usage         Usage       `json:"usage"`
-	Harness       HarnessInfo `json:"harness"`
+	SchemaVersion int                `json:"schemaVersion"`
+	Status        string             `json:"status"`
+	Summary       string             `json:"summary"`
+	Claims        []Claim            `json:"claims,omitempty"`
+	Criteria      []CriterionOpinion `json:"criteria,omitempty"`
+	Rulings       []Ruling           `json:"rulings,omitempty"`
+	Questions     []string           `json:"questions,omitempty"`
+	Usage         Usage              `json:"usage"`
+	Harness       HarnessInfo        `json:"harness"`
 }
 
 // ParseResult reads result.json. Unknown fields are an error. The schema
@@ -53,6 +66,19 @@ func ParseResult(data []byte) (*Result, error) {
 	if err := decodeJSONStrict(data, &r); err != nil {
 		return nil, fmt.Errorf("result: %w", err)
 	}
+	// The orchestrator writes these two. Whatever the worker wrote is dropped.
+	r.Usage.Source, r.Usage.Enforced = "", false
+	if r.Usage.Billing == "" {
+		r.Usage.Billing = BillingUnknown
+	}
+	if err := r.Validate(); err != nil {
+		return nil, fmt.Errorf("result: %w", err)
+	}
+	return &r, nil
+}
+
+// Validate checks the result and reports every problem, with field paths.
+func (r *Result) Validate() error {
 	var p problems
 	if r.SchemaVersion != SchemaVersion {
 		p.add("schemaVersion", "must be %d", SchemaVersion)
@@ -62,11 +88,49 @@ func ParseResult(data []byte) (*Result, error) {
 	default:
 		p.add("status", "must be one of %s, %s, %s, %s", StatusSucceeded, StatusFailed, StatusNeedsHuman, StatusNoChange)
 	}
-	if strings.TrimSpace(r.Summary) == "" {
+	if blank(r.Summary) {
 		p.add("summary", "must be set")
 	}
-	if err := p.err(); err != nil {
-		return nil, fmt.Errorf("result: %w", err)
+	checkClaims(&p, "claims", r.Claims)
+	checkOpinions(&p, "criteria", r.Criteria)
+	checkRulings(&p, "rulings", r.Rulings)
+	for i, q := range r.Questions {
+		if blank(q) {
+			p.add(fmt.Sprintf("questions[%d]", i), "must not be empty")
+		}
 	}
-	return &r, nil
+	switch {
+	case r.Status == StatusNeedsHuman && len(r.Questions) == 0:
+		p.add("questions", "needs_human requires at least one question")
+	case (r.Status == StatusSucceeded || r.Status == StatusNoChange) && len(r.Questions) > 0:
+		p.add("questions", "status %s must have none", r.Status)
+	}
+	checkUsage(&p, "usage", r.Usage)
+	if blank(r.Harness.Name) {
+		p.add("harness.name", "must be set")
+	}
+	return p.err()
+}
+
+// checkUsage checks usage. An empty billing counts as unknown.
+func checkUsage(p *problems, field string, u Usage) {
+	switch u.Billing {
+	case "", BillingMetered, BillingPlan, BillingUnknown:
+	default:
+		p.add(field+".billing", "must be one of %s, %s, %s", BillingMetered, BillingPlan, BillingUnknown)
+	}
+	if u.CostUSD != nil {
+		switch {
+		case u.Billing != BillingMetered:
+			p.add(field+".costUSD", "is valid only with billing %s", BillingMetered)
+		case *u.CostUSD < 0:
+			p.add(field+".costUSD", "must be zero or more")
+		}
+	}
+	if u.InputTokens < 0 {
+		p.add(field+".inputTokens", "must be zero or more")
+	}
+	if u.OutputTokens < 0 {
+		p.add(field+".outputTokens", "must be zero or more")
+	}
 }

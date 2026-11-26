@@ -95,13 +95,14 @@ func (s *Store) GetRun(ctx context.Context, id string) (*api.Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: get run %q: %w", id, err)
 	}
-	return decodeRun(body)
+	return decodeRun(id, body)
 }
 
-func decodeRun(body string) (*api.Run, error) {
+// decodeRun reads a stored body. A body that fails is a *store.DamagedError.
+func decodeRun(id, body string) (*api.Run, error) {
 	r, err := api.ParseRun([]byte(body))
 	if err != nil {
-		return nil, fmt.Errorf("store: stored run is not valid: %w", err)
+		return nil, &store.DamagedError{ID: id, Err: err}
 	}
 	return r, nil
 }

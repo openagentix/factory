@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -21,9 +22,26 @@ var (
 	ErrBadTransition = errors.New("store: phase change not allowed")
 	// ErrAboveCeiling means a dial level is above the ceiling of the task.
 	ErrAboveCeiling = errors.New("store: dial level above the ceiling")
+	// ErrDamaged means a stored run does not decode or does not validate.
+	ErrDamaged = errors.New("store: stored run is damaged")
 	// ErrNewerSchema means the database was made by a newer version.
 	ErrNewerSchema = errors.New("store: database schema is newer than this program")
 )
+
+// DamagedError names a stored run that cannot be read. It matches ErrDamaged.
+type DamagedError struct {
+	ID  string
+	Err error
+}
+
+func (e *DamagedError) Error() string {
+	return fmt.Sprintf("store: stored run %q is damaged: %v", e.ID, e.Err)
+}
+
+func (e *DamagedError) Unwrap() error { return e.Err }
+
+// Is makes errors.Is(err, ErrDamaged) true.
+func (e *DamagedError) Is(target error) bool { return target == ErrDamaged }
 
 // RunFilter picks runs. A zero field matches everything. The fields combine
 // with AND.
@@ -50,10 +68,12 @@ type Store interface {
 	// CreateRun validates and stores a new run. It fails with ErrExists when
 	// the id is taken.
 	CreateRun(ctx context.Context, r *api.Run) error
-	// GetRun returns the run, or ErrNotFound.
+	// GetRun returns the run, ErrNotFound, or a *DamagedError.
 	GetRun(ctx context.Context, id string) (*api.Run, error)
-	// ListRuns returns the runs that match, oldest first.
-	ListRuns(ctx context.Context, f RunFilter) ([]*api.Run, error)
+	// ListRuns returns the runs that match, oldest first. A stored run that
+	// does not decode or validate is left out and its id is returned in the
+	// second value, so one bad row does not hide the others.
+	ListRuns(ctx context.Context, f RunFilter) ([]*api.Run, []string, error)
 	// UpdateRun validates and replaces a stored run. A changed phase must be
 	// an allowed transition, or the call fails with ErrBadTransition. The
 	// task, goal, ticket and creation time cannot change.
@@ -63,10 +83,12 @@ type Store interface {
 	// that share its attempts (implement and fix-ci). A run that a restart
 	// cut off does not count.
 	CountAttempts(ctx context.Context, ticket int) (int, error)
-	// FailInterrupted marks every run left in a non-terminal phase as failed
-	// and as cut off by a restart. Call it at start-up. It returns how many
-	// runs it changed.
-	FailInterrupted(ctx context.Context) (int, error)
+	// FailInterrupted marks every run that a previous process left in the
+	// working, verifying or publishing phase as failed and cut off by a
+	// restart. Queued and held runs lost no work and are left alone. Call it
+	// at start-up. It returns the ids it marked, and the ids of damaged runs
+	// it skipped.
+	FailInterrupted(ctx context.Context) (marked, damaged []string, err error)
 
 	// GetLevel returns the stored dial level of a task. When none was set it
 	// returns api.DefaultLevel and false.

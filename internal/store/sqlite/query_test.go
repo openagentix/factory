@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -53,16 +55,19 @@ func TestListRuns(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := s.ListRuns(ctx, tc.f)
+			got, damaged, err := s.ListRuns(ctx, tc.f)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(damaged) != 0 {
+				t.Errorf("damaged = %v", damaged)
 			}
 			if !reflect.DeepEqual(ids(got), tc.want) {
 				t.Errorf("got %v, want %v", ids(got), tc.want)
 			}
 		})
 	}
-	if _, err := s.ListRuns(ctx, store.RunFilter{Phase: "sleeping"}); err == nil {
+	if _, _, err := s.ListRuns(ctx, store.RunFilter{Phase: "sleeping"}); err == nil {
 		t.Error("an unknown phase filter should be an error")
 	}
 }
@@ -135,22 +140,27 @@ func TestFailInterrupted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	before, _ := s.CountAttempts(ctx, 5)
-	if before != 5 { // working, verifying, publishing, done, human
+	if before, _ := s.CountAttempts(ctx, 5); before != 5 { // working, verifying, publishing, done, human
 		t.Fatalf("attempts before = %d, want 5", before)
 	}
-	n, err := s.FailInterrupted(ctx)
-	if err != nil || n != 5 {
-		t.Fatalf("FailInterrupted = %d, %v; want 5", n, err)
+	marked, damaged, err := s.FailInterrupted(ctx)
+	if err != nil || len(damaged) != 0 {
+		t.Fatalf("FailInterrupted = %v, %v, %v", marked, damaged, err)
 	}
-	for _, id := range []string{"queued", "held", "working", "verifying", "publishing"} {
+	sort.Strings(marked)
+	if want := []string{"publishing", "verifying", "working"}; !reflect.DeepEqual(marked, want) {
+		t.Fatalf("marked %v, want %v", marked, want)
+	}
+	for _, id := range marked {
 		r, _ := s.GetRun(ctx, id)
 		if r.Phase != api.PhaseFailed || r.FinishedAt == nil || r.FinishedAt.Location() != time.UTC {
 			t.Errorf("%s: phase %s finished %v", id, r.Phase, r.FinishedAt)
 		}
 	}
-	for id, want := range map[string]api.Phase{"done": api.PhaseSucceeded, "human": api.PhaseNeedsHuman} {
-		if r, _ := s.GetRun(ctx, id); r.Phase != want {
+	// No work was lost for queued and held runs. They stay as they were.
+	for id, want := range map[string]api.Phase{"queued": api.PhaseQueued, "held": api.PhaseHeld,
+		"done": api.PhaseSucceeded, "human": api.PhaseNeedsHuman} {
+		if r, _ := s.GetRun(ctx, id); r.Phase != want || r.FinishedAt != nil && !want.IsTerminal() {
 			t.Errorf("%s changed to %s", id, r.Phase)
 		}
 	}
@@ -158,7 +168,56 @@ func TestFailInterrupted(t *testing.T) {
 	if after, _ := s.CountAttempts(ctx, 5); after != 2 {
 		t.Errorf("attempts after = %d, want 2", after)
 	}
-	if again, _ := s.FailInterrupted(ctx); again != 0 {
-		t.Errorf("second call changed %d runs", again)
+	if again, _, _ := s.FailInterrupted(ctx); len(again) != 0 {
+		t.Errorf("second call marked %v", again)
+	}
+}
+
+func corrupt(t *testing.T, s *Store, id string) {
+	t.Helper()
+	if _, err := s.db.Exec("UPDATE runs SET body = ? WHERE id = ?", `{"id": "`+id+`", "mystery": 1}`, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDamagedRowsDoNotBreakOthers(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	for _, id := range []string{"good", "bad", "badwork"} {
+		r := newRun(id, 3)
+		if id == "badwork" {
+			r.Phase = api.PhaseWorking
+		}
+		if err := s.CreateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := newRun("goodwork", 3)
+	w.Phase = api.PhaseWorking
+	if err := s.CreateRun(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	corrupt(t, s, "bad")
+	corrupt(t, s, "badwork")
+
+	_, err := s.GetRun(ctx, "bad")
+	var de *store.DamagedError
+	if !errors.Is(err, store.ErrDamaged) || !errors.As(err, &de) || de.ID != "bad" {
+		t.Errorf("GetRun error = %v, want a damaged error naming bad", err)
+	}
+	runs, damaged, err := s.ListRuns(ctx, store.RunFilter{Ticket: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(damaged)
+	if !reflect.DeepEqual(ids(runs), []string{"good", "goodwork"}) || !reflect.DeepEqual(damaged, []string{"bad", "badwork"}) {
+		t.Errorf("runs %v, damaged %v", ids(runs), damaged)
+	}
+	marked, damaged, err := s.FailInterrupted(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(marked, []string{"goodwork"}) || !reflect.DeepEqual(damaged, []string{"badwork"}) {
+		t.Errorf("marked %v, damaged %v", marked, damaged)
 	}
 }

@@ -83,7 +83,7 @@ func TestConcurrentUse(t *testing.T) {
 				if err := s.SetLevel(ctx, "implement", api.LevelGuided, api.LevelAutopilot); err != nil {
 					errs <- err
 				}
-				if _, err := s.ListRuns(ctx, store.RunFilter{Ticket: 7}); err != nil {
+				if _, _, err := s.ListRuns(ctx, store.RunFilter{Ticket: 7}); err != nil {
 					errs <- err
 				}
 			}

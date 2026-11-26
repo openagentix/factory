@@ -11,7 +11,7 @@ import (
 )
 
 // ListRuns returns the runs that match the filter, oldest first.
-func (s *Store) ListRuns(ctx context.Context, f store.RunFilter) ([]*api.Run, error) {
+func (s *Store) ListRuns(ctx context.Context, f store.RunFilter) ([]*api.Run, []string, error) {
 	var (
 		where []string
 		args  []any
@@ -24,39 +24,41 @@ func (s *Store) ListRuns(ctx context.Context, f store.RunFilter) ([]*api.Run, er
 	}
 	if f.Phase != "" {
 		if !f.Phase.Valid() {
-			return nil, fmt.Errorf("store: %q is not a run phase", f.Phase)
+			return nil, nil, fmt.Errorf("store: %q is not a run phase", f.Phase)
 		}
 		where, args = append(where, "phase = ?"), append(args, string(f.Phase))
 	}
 	if f.Task != "" {
 		where, args = append(where, "task = ?"), append(args, f.Task)
 	}
-	q := "SELECT body FROM runs"
+	q := "SELECT id, body FROM runs"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
 	q += " ORDER BY created_at, id"
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("store: list runs: %w", err)
+		return nil, nil, fmt.Errorf("store: list runs: %w", err)
 	}
 	defer rows.Close()
 	runs := []*api.Run{}
+	var damaged []string
 	for rows.Next() {
-		var body string
-		if err := rows.Scan(&body); err != nil {
-			return nil, fmt.Errorf("store: list runs: %w", err)
+		var id, body string
+		if err := rows.Scan(&id, &body); err != nil {
+			return nil, nil, fmt.Errorf("store: list runs: %w", err)
 		}
-		r, err := decodeRun(body)
+		r, err := decodeRun(id, body)
 		if err != nil {
-			return nil, err
+			damaged = append(damaged, id)
+			continue
 		}
 		runs = append(runs, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: list runs: %w", err)
+		return nil, nil, fmt.Errorf("store: list runs: %w", err)
 	}
-	return runs, nil
+	return runs, damaged, nil
 }
 
 // CountAttempts counts runs of the tasks that share a ticket's attempts and
@@ -73,56 +75,62 @@ func (s *Store) CountAttempts(ctx context.Context, ticket int) (int, error) {
 	return n, nil
 }
 
-// FailInterrupted ends every run a previous process left unfinished.
-func (s *Store) FailInterrupted(ctx context.Context) (int, error) {
+// FailInterrupted ends the runs a previous process left in the middle of
+// work. Queued and held runs are not touched.
+func (s *Store) FailInterrupted(ctx context.Context) ([]string, []string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("store: fail interrupted runs: %w", err)
+		return nil, nil, fmt.Errorf("store: fail interrupted runs: %w", err)
 	}
 	defer tx.Rollback()
 	rows, err := tx.QueryContext(ctx,
-		`SELECT body FROM runs WHERE phase NOT IN (?, ?, ?, ?)`,
-		string(api.PhaseSucceeded), string(api.PhaseFailed), string(api.PhaseNeedsHuman), string(api.PhaseCancelled))
+		`SELECT id, body FROM runs WHERE phase IN (?, ?, ?) ORDER BY created_at, id`,
+		string(api.PhaseWorking), string(api.PhaseVerifying), string(api.PhasePublishing))
 	if err != nil {
-		return 0, fmt.Errorf("store: fail interrupted runs: %w", err)
+		return nil, nil, fmt.Errorf("store: fail interrupted runs: %w", err)
 	}
-	var open []*api.Run
+	var (
+		open    []*api.Run
+		damaged []string
+	)
 	for rows.Next() {
-		var body string
-		if err := rows.Scan(&body); err != nil {
+		var id, body string
+		if err := rows.Scan(&id, &body); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("store: fail interrupted runs: %w", err)
+			return nil, nil, fmt.Errorf("store: fail interrupted runs: %w", err)
 		}
-		r, err := decodeRun(body)
+		r, err := decodeRun(id, body)
 		if err != nil {
-			rows.Close()
-			return 0, err
+			damaged = append(damaged, id)
+			continue
 		}
 		open = append(open, r)
 	}
 	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("store: fail interrupted runs: %w", err)
+		return nil, nil, fmt.Errorf("store: fail interrupted runs: %w", err)
 	}
 	now := s.now().UTC()
+	marked := []string{}
 	for _, r := range open {
 		end := latest(now, r.CreatedAt, r.StartedAt)
 		r.Phase = api.PhaseFailed
 		r.FinishedAt = &end
 		body, p, err := encodeRun(r)
 		if err != nil {
-			return 0, err
+			return nil, nil, err
 		}
 		_, err = tx.ExecContext(ctx,
 			`UPDATE runs SET phase = ?, finished_at = ?, cut_off = 1, body = ? WHERE id = ?`,
 			string(p.Phase), formatTime(end), string(body), p.ID)
 		if err != nil {
-			return 0, fmt.Errorf("store: fail interrupted run %q: %w", p.ID, err)
+			return nil, nil, fmt.Errorf("store: fail interrupted run %q: %w", p.ID, err)
 		}
+		marked = append(marked, p.ID)
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("store: fail interrupted runs: %w", err)
+		return nil, nil, fmt.Errorf("store: fail interrupted runs: %w", err)
 	}
-	return len(open), nil
+	return marked, damaged, nil
 }
 
 // latest returns the latest of now, the creation time and the start time, so

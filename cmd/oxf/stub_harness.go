@@ -14,6 +14,10 @@ import (
 // runner starts it as a process in place of a real harness, for tests and
 // demo mode. It is not in the usage text.
 func runStubHarness(args []string, stdout, stderr io.Writer) int {
+	if os.Getenv("OXF_ALLOW_STUB") != "1" {
+		fmt.Fprintln(stderr, "stub-harness: refused. It writes and deletes files in the directories it is given, so it runs only when OXF_ALLOW_STUB=1 is set by the local runner or a test.")
+		return 2
+	}
 	fs := flag.NewFlagSet("stub-harness", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	script := fs.String("script", "", "path of the stub script")

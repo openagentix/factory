@@ -215,3 +215,124 @@ func TestStubReadIncompleteWithoutFinal(t *testing.T) {
 		t.Errorf("sum=%+v err=%v", sum, err)
 	}
 }
+
+func TestStubRefusesWritesThroughASymlink(t *testing.T) {
+	e := newStubEnv(t)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(e.ws, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, script := range []string{
+		`{"files":[{"path":"link/evil.txt","content":"x"}]}`,
+		`{"files":[{"path":"link/deeper/evil.txt","content":"x"}]}`,
+		`{"touchProtected":"link/evil.txt"}`,
+	} {
+		code, _, err := e.run(t, script)
+		if err == nil || code == 0 {
+			t.Errorf("%s: code=%d err=%v", script, code, err)
+		}
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Errorf("something was written outside the workspace: %v", ents)
+	}
+}
+
+func TestStubDeleteNeverFollowsALink(t *testing.T) {
+	e := newStubEnv(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep.txt"), []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(e.ws, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, err := e.run(t, `{"delete":["link"],"result":`+goodResult+`}`); err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if _, err := os.Lstat(filepath.Join(e.ws, "link")); !os.IsNotExist(err) {
+		t.Error("the link itself should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep.txt")); err != nil {
+		t.Errorf("the target of the link must survive: %v", err)
+	}
+}
+
+func TestStubDeleteThroughALinkedParentIsRefused(t *testing.T) {
+	e := newStubEnv(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep.txt"), []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(e.ws, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, err := e.run(t, `{"delete":["link/keep.txt"]}`); err == nil || code == 0 {
+		t.Errorf("code=%d err=%v", code, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep.txt")); err != nil {
+		t.Errorf("file outside was deleted: %v", err)
+	}
+}
+
+func TestStubRefusesTheWorkspaceRootAndGitInAnyCase(t *testing.T) {
+	for _, script := range []string{
+		`{"delete":["."]}`, `{"delete":[""]}`, `{"delete":["a/.."]}`, `{"files":[{"path":".","content":"x"}]}`,
+		`{"files":[{"path":".GIT/config","content":"x"}]}`, `{"files":[{"path":"a/.Git/x","content":"x"}]}`,
+		`{"delete":[".gIt"]}`, `{"touchProtected":".GIT/hooks/pre-commit"}`,
+	} {
+		e := newStubEnv(t)
+		code, _, err := e.run(t, script)
+		if err == nil || code == 0 {
+			t.Errorf("%s: code=%d err=%v", script, code, err)
+		}
+		if _, err := os.Stat(filepath.Join(e.ws, "old", "gone.txt")); err != nil {
+			t.Errorf("%s: the workspace was damaged: %v", script, err)
+		}
+		if _, err := os.Stat(filepath.Join(e.ws, ".GIT")); err == nil {
+			t.Errorf("%s: .GIT was written", script)
+		}
+	}
+}
+
+func TestStubOutputFilesDoNotFollowLinks(t *testing.T) {
+	e := newStubEnv(t)
+	outside := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(e.out, "result.json")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, err := e.run(t, `{"result":`+goodResult+`}`); err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "keep" {
+		t.Errorf("a link in the out directory was followed: %q", b)
+	}
+}
+
+func TestStubDirectoriesMustBeAbsoluteAndExist(t *testing.T) {
+	e := newStubEnv(t)
+	for _, o := range []StubOptions{
+		{Script: []byte(`{}`), Workspace: "rel", OutDir: e.out},
+		{Script: []byte(`{}`), Workspace: e.ws, OutDir: "rel"},
+		{Script: []byte(`{}`), Workspace: filepath.Join(e.ws, "missing"), OutDir: e.out},
+		{Script: []byte(`{}`), Workspace: "/", OutDir: e.out},
+	} {
+		if code, err := RunStub(context.Background(), o); err == nil || code == 0 {
+			t.Errorf("%+v: code=%d err=%v", o, code, err)
+		}
+	}
+}
+
+func TestStubCommandAllowsTheStub(t *testing.T) {
+	s := baseSpec()
+	s.StubScript = "/in/script.json"
+	cmd, err := NewStub("oxf").Command(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index(cmd.Env, "OXF_ALLOW_STUB=1") < 0 {
+		t.Errorf("env = %v", cmd.Env)
+	}
+}

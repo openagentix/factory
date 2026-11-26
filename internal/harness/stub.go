@@ -85,11 +85,22 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 	if dec.More() {
 		return stubUsageExit, errors.New("stub script: extra data after the object")
 	}
-	if opts.Workspace == "" || opts.OutDir == "" {
-		return stubUsageExit, errors.New("stub: workspace and out directory are required")
+	wsRoot, err := resolveRoot(opts.Workspace, false)
+	if err != nil {
+		return stubUsageExit, fmt.Errorf("stub workspace: %w", err)
+	}
+	outRoot, err := resolveRoot(opts.OutDir, true)
+	if err != nil {
+		return stubUsageExit, fmt.Errorf("stub out directory: %w", err)
 	}
 	if err := sc.check(); err != nil {
 		return stubUsageExit, err
+	}
+	// Resolve every target before acting, so a bad path changes nothing.
+	for _, p := range sc.paths() {
+		if _, err := target(wsRoot, p); err != nil {
+			return stubUsageExit, err
+		}
 	}
 	res := sc.result()
 	if !sc.OmitResult {
@@ -109,17 +120,17 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 	}
 
 	for _, p := range sc.Delete {
-		if err := os.RemoveAll(filepath.Join(opts.Workspace, p)); err != nil {
+		if err := removeSafe(wsRoot, p); err != nil {
 			return stubUsageExit, err
 		}
 	}
 	for _, f := range sc.Files {
-		if err := writeUnder(opts.Workspace, f.Path, []byte(f.Content)); err != nil {
+		if err := writeSafe(wsRoot, f.Path, []byte(f.Content)); err != nil {
 			return stubUsageExit, err
 		}
 	}
 	if sc.TouchProtected != "" {
-		if err := writeUnder(opts.Workspace, sc.TouchProtected, []byte("changed by the stub\n")); err != nil {
+		if err := writeSafe(wsRoot, sc.TouchProtected, []byte("changed by the stub\n")); err != nil {
 			return stubUsageExit, err
 		}
 	}
@@ -139,10 +150,7 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 			return stubUsageExit, err
 		}
 	}
-	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
-		return stubUsageExit, err
-	}
-	if err := os.WriteFile(filepath.Join(opts.OutDir, "events.jsonl"), log.Bytes(), 0o644); err != nil {
+	if err := writeSafe(outRoot, "events.jsonl", log.Bytes()); err != nil {
 		return stubUsageExit, err
 	}
 	if !sc.OmitResult {
@@ -150,7 +158,7 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 		if err != nil {
 			return stubUsageExit, err
 		}
-		if err := os.WriteFile(filepath.Join(opts.OutDir, "result.json"), append(b, '\n'), 0o644); err != nil {
+		if err := writeSafe(outRoot, "result.json", append(b, '\n')); err != nil {
 			return stubUsageExit, err
 		}
 	}
@@ -185,8 +193,8 @@ func (sc StubScript) result() api.Result {
 	return r
 }
 
-// check refuses paths that leave the workspace or touch git state.
-func (sc StubScript) check() error {
+// paths lists every workspace path the script acts on.
+func (sc StubScript) paths() []string {
 	paths := append([]string{}, sc.Delete...)
 	for _, f := range sc.Files {
 		paths = append(paths, f.Path)
@@ -194,16 +202,11 @@ func (sc StubScript) check() error {
 	if sc.TouchProtected != "" {
 		paths = append(paths, sc.TouchProtected)
 	}
-	for _, p := range paths {
-		if !filepath.IsLocal(p) {
-			return fmt.Errorf("stub script: path %q must stay inside the workspace", p)
-		}
-		for _, part := range strings.Split(filepath.ToSlash(p), "/") {
-			if part == ".git" {
-				return fmt.Errorf("stub script: path %q is git state, which a worker does not touch", p)
-			}
-		}
-	}
+	return paths
+}
+
+// check refuses events of an unknown kind. Paths are checked by target.
+func (sc StubScript) check() error {
 	for i, e := range sc.Events {
 		if !(api.Event{Kind: e.Kind}).ValidKind() {
 			return fmt.Errorf("stub script: events[%d].kind %q is not known", i, e.Kind)
@@ -212,12 +215,105 @@ func (sc StubScript) check() error {
 	return nil
 }
 
-func writeUnder(root, rel string, data []byte) error {
-	p := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+// resolveRoot checks a directory given on the command line and returns it
+// with its symbolic links resolved. The directory must be absolute and
+// clean. When create is set, a missing directory is made.
+func resolveRoot(dir string, create bool) (string, error) {
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == "/" {
+		return "", fmt.Errorf("%q must be an absolute, clean path", dir)
+	}
+	if create {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("%q is not a directory", dir)
+	}
+	return real, nil
+}
+
+func inside(root, p string) bool {
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// target maps a relative path to a real path inside root. It refuses the
+// root itself, a path that leaves root, a .git component in any letter case,
+// and any path whose parent resolves through a symbolic link to outside
+// root. It creates nothing.
+func target(root, rel string) (string, error) {
+	clean := filepath.Clean(rel)
+	if rel == "" || clean == "." || !filepath.IsLocal(clean) {
+		return "", fmt.Errorf("stub script: path %q must name something inside the workspace", rel)
+	}
+	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
+		if strings.EqualFold(part, ".git") {
+			return "", fmt.Errorf("stub script: path %q is git state, which a worker does not touch", rel)
+		}
+	}
+	parent := filepath.Join(root, filepath.Dir(clean))
+	existing := parent
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		next := filepath.Dir(existing)
+		if next == existing {
+			break
+		}
+		existing = next
+	}
+	real, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	if !inside(root, real) {
+		return "", fmt.Errorf("stub script: path %q leaves the workspace through a link", rel)
+	}
+	rest, err := filepath.Rel(existing, parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(real, rest, filepath.Base(clean)), nil
+}
+
+// writeSafe writes a file inside root. A link at the target is replaced, not
+// followed.
+func writeSafe(root, rel string, data []byte) error {
+	t, err := target(root, rel)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o644)
+	if err := os.MkdirAll(filepath.Dir(t), 0o755); err != nil {
+		return err
+	}
+	if fi, err := os.Lstat(t); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(t); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(t, data, 0o644)
+}
+
+// removeSafe deletes a path inside root. A link is removed itself and never
+// followed.
+func removeSafe(root, rel string) error {
+	t, err := target(root, rel)
+	if err != nil {
+		return err
+	}
+	fi, err := os.Lstat(t)
+	if err != nil {
+		return nil
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return os.Remove(t)
+	}
+	return os.RemoveAll(t)
 }
 
 // stubLine is one line of the stub's standard output.
@@ -258,8 +354,9 @@ func (s *Stub) Command(sp Spec) (Command, error) {
 	cmd := Command{
 		Program: prog,
 		Args:    []string{"stub-harness", "--script=" + sp.StubScript, "--workspace=" + sp.Workspace, "--out=" + sp.OutDir},
-		Env:     sp.env(),
-		Dir:     sp.Workspace,
+		// The subcommand refuses to run without this variable.
+		Env: append(sp.env(), "OXF_ALLOW_STUB=1"),
+		Dir: sp.Workspace,
 	}
 	if err := checkForbidden(cmd); err != nil {
 		return Command{}, err

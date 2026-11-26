@@ -9,6 +9,7 @@ import (
 )
 
 func TestStubHarnessSubcommand(t *testing.T) {
+	t.Setenv("OXF_ALLOW_STUB", "1")
 	d := t.TempDir()
 	ws, out := filepath.Join(d, "ws"), filepath.Join(d, "out")
 	if err := os.MkdirAll(ws, 0o755); err != nil {
@@ -35,7 +36,27 @@ func TestStubHarnessSubcommand(t *testing.T) {
 	}
 }
 
+func TestStubHarnessNeedsTheEnvironmentVariable(t *testing.T) {
+	d := t.TempDir()
+	script := filepath.Join(d, "s.json")
+	if err := os.WriteFile(script, []byte(`{"files":[{"path":"a.txt","content":"x"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"", "0", "yes"} {
+		t.Setenv("OXF_ALLOW_STUB", v)
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"stub-harness", "--script=" + script, "--workspace=" + d, "--out=" + d}, &stdout, &stderr)
+		if code != 2 || !strings.Contains(stderr.String(), "OXF_ALLOW_STUB=1") {
+			t.Errorf("value %q: code=%d stderr=%q", v, code, stderr.String())
+		}
+		if _, err := os.Stat(filepath.Join(d, "a.txt")); err == nil {
+			t.Fatal("the stub acted without permission")
+		}
+	}
+}
+
 func TestStubHarnessBadArguments(t *testing.T) {
+	t.Setenv("OXF_ALLOW_STUB", "1")
 	tests := [][]string{
 		{"stub-harness"},
 		{"stub-harness", "--script", "/nonexistent/x.json", "--workspace", "/tmp", "--out", "/tmp"},

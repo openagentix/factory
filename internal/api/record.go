@@ -76,6 +76,9 @@ type AcceptanceEntry struct {
 	ID     int             `json:"id"`
 	State  AcceptanceState `json:"state"`
 	Before AcceptanceState `json:"before"`
+	// Check is the command that gave the state. It is required for working
+	// and not working, which come only from a check that ran.
+	Check string `json:"check,omitempty"`
 }
 
 // ReviewSummary is the review of a change as the evidence bundle records it.
@@ -153,10 +156,11 @@ func (p Phase) Valid() bool {
 // nextPhases lists the phase changes a run may make. A held run waits for the
 // cap, a throttle or a staging freeze, and then starts to work. A run that
 // made no change still goes through verifying and publishing. The record does
-// not list the changes, so this table is a choice.
+// not list the changes, so this table is a choice. A queued or held run may
+// fail before it works, for example after a lost claim or a restart.
 var nextPhases = map[Phase][]Phase{
-	PhaseQueued:     {PhaseHeld, PhaseWorking, PhaseCancelled},
-	PhaseHeld:       {PhaseWorking, PhaseCancelled},
+	PhaseQueued:     {PhaseHeld, PhaseWorking, PhaseFailed, PhaseCancelled},
+	PhaseHeld:       {PhaseWorking, PhaseFailed, PhaseCancelled},
 	PhaseWorking:    {PhaseVerifying, PhaseFailed, PhaseNeedsHuman, PhaseCancelled},
 	PhaseVerifying:  {PhasePublishing, PhaseFailed, PhaseNeedsHuman, PhaseCancelled},
 	PhasePublishing: {PhaseSucceeded, PhaseFailed, PhaseNeedsHuman, PhaseCancelled},

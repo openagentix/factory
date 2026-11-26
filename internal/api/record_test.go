@@ -22,7 +22,7 @@ const evidenceJSON = `{
   "protectedPaths": { "touched": [], "ok": true },
   "testFilesChanged": [], "testFilesAdded": ["internal/booking/move_test.go"],
   "checks": [ { "name": "test", "exitCode": 0, "durationSeconds": 41, "ranBy": "orchestrator" } ],
-  "acceptance": [ { "id": 1, "state": "working", "before": "not_working" } ],
+  "acceptance": [ { "id": 1, "state": "working", "before": "not_working", "check": "go test ./acceptance/40 -run TestMoveBooking" } ],
   "review": { "run": "r_01H9A", "harness": "codex", "verdict": "agrees", "singleOpinion": false },
   "risk": { "level": "low", "reasons": ["review from the other harness", "served criteria working"] },
   "gate": "passed",
@@ -56,7 +56,7 @@ func TestEvidenceJSON(t *testing.T) {
 	if len(e.TestFilesChanged) != 0 || len(e.TestFilesAdded) != 1 {
 		t.Errorf("test files: %v %v", e.TestFilesChanged, e.TestFilesAdded)
 	}
-	if a := e.Acceptance[0]; a.ID != 1 || a.State != StateWorking || a.Before != StateNotWorking {
+	if a := e.Acceptance[0]; a.ID != 1 || a.State != StateWorking || a.Before != StateNotWorking || a.Check == "" {
 		t.Errorf("acceptance: %+v", a)
 	}
 	if e.Review == nil || e.Review.Harness != "codex" || e.Review.Verdict != VerdictAgrees || e.Review.SingleOpinion {
@@ -204,8 +204,8 @@ func TestCanTransition(t *testing.T) {
 	all := []Phase{PhaseQueued, PhaseHeld, PhaseWorking, PhaseVerifying, PhasePublishing,
 		PhaseSucceeded, PhaseFailed, PhaseNeedsHuman, PhaseCancelled}
 	allowed := map[Phase][]Phase{
-		PhaseQueued:     {PhaseHeld, PhaseWorking, PhaseCancelled},
-		PhaseHeld:       {PhaseWorking, PhaseCancelled},
+		PhaseQueued:     {PhaseHeld, PhaseWorking, PhaseFailed, PhaseCancelled},
+		PhaseHeld:       {PhaseWorking, PhaseFailed, PhaseCancelled},
 		PhaseWorking:    {PhaseVerifying, PhaseFailed, PhaseNeedsHuman, PhaseCancelled},
 		PhaseVerifying:  {PhasePublishing, PhaseFailed, PhaseNeedsHuman, PhaseCancelled},
 		PhasePublishing: {PhaseSucceeded, PhaseFailed, PhaseNeedsHuman, PhaseCancelled},

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -274,4 +275,28 @@ func validMethod(m string) bool {
 		return pluginName.MatchString(strings.TrimPrefix(m, MethodPluginPrefix))
 	}
 	return cleanRelativePath(m)
+}
+
+// triggerKinds are the trigger kinds a run record may name.
+var triggerKinds = []string{"issueLabeled", "issueCommented", "pullRequestOpened", "pullRequestMerged", "checkFailed", "schedule"}
+
+func validTriggerKind(k string) bool {
+	for _, t := range triggerKinds {
+		if t == k {
+			return true
+		}
+	}
+	return false
+}
+
+// addNested adds the problems of a nested value under a field prefix.
+func (p *problems) addNested(prefix string, err error) {
+	var ve ValidationErrors
+	if errors.As(err, &ve) {
+		for _, e := range ve {
+			p.list = append(p.list, FieldError{Path: prefix + "." + e.Path, Msg: e.Msg})
+		}
+	} else if err != nil {
+		p.add(prefix, "%v", err)
+	}
 }

@@ -1,0 +1,3 @@
+# Every file has the maintainers as code owners. See MAINTAINERS.md.
+# When there are area reviewers, add narrower paths below the catch-all (the last matching line wins).
+*  @initcron

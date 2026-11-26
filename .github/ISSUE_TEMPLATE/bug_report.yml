@@ -1,0 +1,53 @@
+name: Bug report
+description: Something does not work as the README or the docs say.
+labels: ["kind/bug", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do not report security problems here: see SECURITY.md and use private vulnerability reporting.
+        Do not paste secrets, tokens, login files or private data. Replace them with made-up values.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps or files that shows it.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: A release tag (for example 0.1.0) or a commit hash.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Operating system, CPU architecture, Go version, and which harness (Claude Code or Codex) and version, if it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Relevant output only. Remove secrets first.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This is not a security vulnerability (those go to private reporting).
+          required: true

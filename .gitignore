@@ -1,0 +1,18 @@
+# Local working memory and private strategy. Never commit.
+.planning/
+spikes/
+WHAT.txt
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Build output and local databases
+bin/
+*.db
+
+# Local notes for AI assistants. Never commit.
+CLAUDE.local.md
+.superpowers/

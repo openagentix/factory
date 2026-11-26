@@ -1,0 +1,13 @@
+OpenAgentix Factory
+Copyright 2026 The OpenAgentix contributors
+
+This product is licensed under the Apache License, Version 2.0. See the
+LICENSE file.
+
+Go modules that are compiled into the `oxf` program (today gopkg.in/yaml.v3)
+are used under their own licences. gopkg.in/yaml.v3 carries its own NOTICE:
+"Copyright 2011-2016 Canonical Ltd." with parts derived from libyaml (MIT).
+
+The factory starts the Claude Code and Codex programs that a person has
+already installed. It does not copy or ship their code. Each keeps its own
+licence and terms.

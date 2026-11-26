@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest a change or something new.
+labels: ["kind/feature", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the problem, not the solution. Larger changes need a decision record first (see CONTRIBUTING.md). Check ROADMAP.md: the idea may already be planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: Who has it, and what do they try to do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: Your idea, if you have one. Say what you considered and why not.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - API types and parsing
+        - Store
+        - Git host
+        - Runner
+        - Harness adapters
+        - Verification and evidence
+        - Orchestrator and the autonomy dial
+        - Co-pilot
+        - Server and web app
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Help
+      options:
+        - label: I could help build or test this.
+        - label: This feature would need to depend on a commercial product (if so, it does not belong here).

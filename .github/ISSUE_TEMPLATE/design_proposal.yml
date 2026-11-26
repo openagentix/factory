@@ -1,0 +1,54 @@
+name: Design proposal
+description: A change that needs a decision first (see CONTRIBUTING.md).
+labels: ["kind/design", "status/needs-triage", "status/needs-design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a new public contract (task file schema, API group, command-line flags, event types, evidence bundle, worker contract), a security-relevant change, or a new dependency. A decision record in docs/decisions is written before code.
+        Start with the problem. Do not report security vulnerabilities here: use private vulnerability reporting (SECURITY.md). Do not paste secrets or personal data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who has it, what do they try to do, and what happens today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you suggest, in plain words. Name the fields, values or interfaces that would become public.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other ways to solve it, including doing nothing, and why you did not choose them.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security impact
+      description: Who can call what, defaults, what is recorded, what leaves the machine. Write "none" and say why if none.
+    validations:
+      required: true
+  - type: textarea
+    id: compat
+    attributes:
+      label: Compatibility
+      description: What existing users must change, and how an upgrade works.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and decision records (docs/decisions).
+          required: true
+        - label: This does not depend on a commercial product.
+          required: true
+        - label: I could help write the decision record or build it.

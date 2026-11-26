@@ -1,0 +1,42 @@
+name: Goal
+description: A business outcome you want. This is the factory's own intake format.
+labels: ["factory:goal", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A goal says what you want to be true, not how to build it. The factory turns a goal into questions, a spec and tickets. Keep it short. Do not paste secrets or personal data.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Business outcome
+      description: What do you want to be true when this is done? Write it as a result, not as a task.
+      placeholder: Customers can move a booking to another time without calling us.
+    validations:
+      required: true
+  - type: textarea
+    id: audience
+    attributes:
+      label: Who it is for
+      description: Who benefits, and what do they do today?
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: How we will know it worked
+      description: What can be observed or measured. Name a number or a behaviour where you can.
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: Limits and things to avoid
+      description: Deadlines, areas of the code that must not change, and anything the factory must not do.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This goal contains no secrets or personal data.
+          required: true

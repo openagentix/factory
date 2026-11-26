@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
@@ -62,7 +63,8 @@ func loadMigrations() []migration {
 
 // Store is a SQLite backed store.Store.
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time
 }
 
 // Open opens the database file, makes it if needed, and upgrades the schema.
@@ -77,7 +79,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, now: func() time.Time { return time.Now().UTC() }}
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err

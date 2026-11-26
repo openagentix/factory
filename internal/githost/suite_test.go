@@ -270,7 +270,9 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 			if err != nil || got.State != PRMerged || got.MergedBy != "repo-owner" {
 				t.Fatalf("merged = %+v %v", got, err)
 			}
-			pr2, _ := w.host.OpenPullRequest(ctx, PRSpec{Head: "factory/run-2", Base: StagingBranch, Title: "x"})
+			must(t, w.host.PushBranch(ctx, w.repoDir, w.c2, "factory/run-2"))
+			pr2, err := w.host.OpenPullRequest(ctx, PRSpec{Head: "factory/run-2", Base: StagingBranch, Title: "x"})
+			must(t, err)
 			w.closePR(pr2.Number)
 			got, _ = w.host.GetPullRequest(ctx, pr2.Number)
 			if got.State != PRClosed || got.MergedBy != "" {

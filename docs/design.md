@@ -117,7 +117,7 @@ Planning is with the person and has no limit. After the plan is approved, every 
 
 | Interruption today | What the factory does instead |
 |---|---|
-| A permission prompt: "may I run this command?" | **Policy decides.** The run has an allowlist and a sandboxed worktree. Inside the policy it runs. Outside, it is denied and recorded. Nobody is asked |
+| A permission prompt: "may I run this command?" | **Policy decides.** The run has an allowlist and a sandboxed workspace directory. Inside the policy it runs. Outside, it is denied and recorded. Nobody is asked |
 | A checkpoint while the work is built: "continue?", "is this approach fine?" | **The agent rules, the factory records.** If the choice can be undone and is inside the ticket, the agent decides and writes a ruling: what, why, and the cost if wrong. The machine gate is the real approval |
 | A real question that only the person can answer | **It goes to the inbox.** The run ends. Other work goes on. The person answers a batch in one sitting, and the answer starts the next run |
 

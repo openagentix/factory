@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -33,17 +35,39 @@ const (
 	demoBeatDelay = 1500 * time.Millisecond
 )
 
+// commandEnv is for tests. The command line has no flag for any of it.
+type commandEnv struct {
+	Port     int
+	TempRoot string
+	Program  string
+	// Delays says that Dwell and BeatDelay are used as they are, also at zero.
+	Delays           bool
+	Dwell, BeatDelay time.Duration
+}
+
 // runCommand is "oxf run". Only --demo is built.
 func runCommand(args []string, stdout, stderr io.Writer) int {
+	return runCommandWith(args, stdout, stderr, commandEnv{})
+}
+
+func runCommandWith(args []string, stdout, stderr io.Writer, env commandEnv) int {
 	demoMode, once := false, false
+	for _, a := range args {
+		if a == "--demo" {
+			demoMode = true
+		}
+	}
 	for _, a := range args {
 		switch a {
 		case "--demo":
-			demoMode = true
 		case "--once":
 			once = true
 		default:
-			fmt.Fprintf(stderr, "oxf run: unknown argument %q. Usage: oxf run --demo [--once]\n", a)
+			w := stderr
+			if demoMode {
+				w = &prefixWriter{w: stderr} // every line of a demo starts with DEMO
+			}
+			fmt.Fprintf(w, "oxf run: unknown argument %q. Usage: oxf run --demo [--once]\n", a)
 			return 2
 		}
 	}
@@ -51,22 +75,37 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "oxf run: not built yet. Only 'oxf run --demo' works now.")
 		return 2
 	}
-	prog, err := os.Executable()
-	if err != nil {
-		fmt.Fprintln(stdout, "DEMO cannot find its own program, so it cannot start the stub agent.")
-		return 1
+	prog := env.Program
+	if prog == "" {
+		var err error
+		if prog, err = os.Executable(); err != nil {
+			fmt.Fprintln(&prefixWriter{w: stdout}, "The demo cannot find its own program, so it cannot start the stub agent.")
+			return 1
+		}
 	}
+	port := env.Port
+	if port == 0 {
+		port = demoPort
+	}
+	dwell, delay := demoDwell, demoBeatDelay
+	if env.Delays {
+		dwell, delay = env.Dwell, env.BeatDelay
+	}
+	// A closed output pipe must give an error from the write, not kill the
+	// process: the cleanup has to run. The signal is taken and dropped.
+	pipe := make(chan os.Signal, 1)
+	signal.Notify(pipe, syscall.SIGPIPE)
+	defer signal.Stop(pipe)
+	go func() {
+		for range pipe {
+		}
+	}()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	// The first signal stops the demo cleanly. A second one is not caught.
 	go func() { <-ctx.Done(); stop() }()
 	defer stop()
-	return runDemo(ctx, demoOptions{Once: once, Program: prog, Port: demoPort, Terminal: isTerminal(os.Stderr),
-		Dwell: demoDwell, BeatDelay: demoBeatDelay, Stdout: stdout, Stderr: stderr})
-}
-
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return runDemo(ctx, demoOptions{Once: once, Program: prog, Port: port, TempRoot: env.TempRoot, Terminal: isTerminal(os.Stderr),
+		Dwell: dwell, BeatDelay: delay, Stdout: stdout, Stderr: stderr})
 }
 
 // demoOptions is for tests. The command line has no flag for any of it.
@@ -78,6 +117,15 @@ type demoOptions struct {
 	Terminal         bool
 	Dwell, BeatDelay time.Duration
 	Stdout, Stderr   io.Writer
+	// Progress is told of named events: "link", "ready", "beat:NAME" and
+	// "waiting". It must return quickly. Tests use it to act at an event.
+	Progress func(event string)
+}
+
+func (o demoOptions) progress(event string) {
+	if o.Progress != nil {
+		o.Progress(event)
+	}
 }
 
 // prefixWriter puts "DEMO " before every line, so no line of the demo can
@@ -108,6 +156,26 @@ func (p *prefixWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
+// guardWriter turns a failed write into a stop request. After the first
+// failure every write fails, so nothing is half printed.
+type guardWriter struct {
+	w      io.Writer
+	failed func()
+	broken atomic.Bool
+}
+
+func (g *guardWriter) Write(b []byte) (int, error) {
+	if g.broken.Load() {
+		return 0, errors.New("the output is closed")
+	}
+	n, err := g.w.Write(b)
+	if err != nil {
+		g.broken.Store(true)
+		g.failed()
+	}
+	return n, err
+}
+
 // lazySource answers 503 until the demo is ready.
 type lazySource struct {
 	mu sync.RWMutex
@@ -136,14 +204,74 @@ func removeAll(dir string) {
 	_ = os.RemoveAll(dir)
 }
 
-// runDemo runs the demo until ctx ends, or with Once to the waiting point of
-// the story. Exit codes: 0 for a clean stop, 1 when it cannot start.
-func runDemo(ctx context.Context, o demoOptions) int {
-	out := &prefixWriter{w: o.Stdout}
-	errw := &prefixWriter{w: o.Stderr}
-	say := func(format string, a ...any) { fmt.Fprintf(out, format+"\n", a...) }
+// Names of the data directories. A demo that serves holds a link file with a
+// key, so an earlier one that was killed is cleaned at the next start. A
+// --once run has a name of its own: it holds no key and binds no port, so
+// another demo must never clean it away while it runs.
+const (
+	servedDirPrefix = "oxf-demo-"
+	onceDirPrefix   = "oxf-demo-once-"
+)
 
-	dir, err := os.MkdirTemp(o.TempRoot, "oxf-demo-")
+var servedDirName = regexp.MustCompile(`^oxf-demo-[0-9]+$`)
+
+// removeStaleDemos removes what a killed demo left in root, and returns how
+// many it removed. Only an entry that Lstat says is a real directory (never a
+// link), owned by this user, with mode 0700 exactly and a name a serving demo
+// makes, is removed. The directory of the caller (keep) is never touched. The
+// caller must have bound the port first, so that no other serving demo is
+// alive.
+func removeStaleDemos(root, keep string) int {
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		name := e.Name()
+		if !servedDirName.MatchString(name) || name == filepath.Base(keep) {
+			continue
+		}
+		full := filepath.Join(root, name)
+		fi, err := os.Lstat(full)
+		if err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+			continue
+		}
+		if fi.Mode()&(os.ModePerm|os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0o700 || !ownedByMe(fi) {
+			continue
+		}
+		removeAll(full)
+		if _, err := os.Lstat(full); err != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// runDemo runs the demo until ctx ends, or with Once to the waiting point of
+// the story. Exit codes (record 0003): 0 for a clean stop, and for --once only
+// when the story completed. 1 when the start is refused, the story did not go
+// as written, an output failed, or --once was stopped before it completed.
+func runDemo(parent context.Context, o demoOptions) (code int) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	var outBroken, errBroken atomic.Bool
+	outG := &guardWriter{w: o.Stdout, failed: func() { outBroken.Store(true); cancel() }}
+	errG := &guardWriter{w: o.Stderr, failed: func() { errBroken.Store(true); cancel() }}
+	out := &prefixWriter{w: outG}
+	errw := &prefixWriter{w: errG}
+	say := func(format string, a ...any) { fmt.Fprintf(out, format+"\n", a...) }
+	defer func() {
+		if code == 0 && (outG.broken.Load() || errG.broken.Load()) {
+			code = 1 // an output that failed is a failure, whatever else happened
+		}
+	}()
+
+	prefix := servedDirPrefix
+	if o.Once {
+		prefix = onceDirPrefix
+	}
+	dir, err := os.MkdirTemp(o.TempRoot, prefix)
 	if err != nil {
 		say("Cannot make a data directory: %v", err)
 		return 1
@@ -172,17 +300,28 @@ func runDemo(ctx context.Context, o demoOptions) int {
 		say("Port %d is busy. Another demo may be running. Stop it first.", o.Port)
 		return 1
 	}
+	// The port is ours, so no other serving demo is alive. What a killed one
+	// left behind is removed now.
+	root := o.TempRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	if n := removeStaleDemos(root, dir); n > 0 {
+		say("Removed %d data directories that an earlier demo left behind.", n)
+	}
 	if _, err := server.DeliverLink(errw, o.Terminal, dir, srv.Link()); err != nil {
 		_ = ln.Close()
 		say("Cannot hand over the link to the web app.")
 		return 1
 	}
 	defer func() { _ = server.RemoveLinkFile(dir) }()
+	o.progress("link")
 
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ctx, ln) }()
 
-	d, err := demo.New(ctx, demo.Config{DataDir: dir, Program: o.Program, Dwell: o.Dwell, BeatDelay: o.BeatDelay, Hub: hub})
+	d, err := demo.New(ctx, demo.Config{DataDir: dir, Program: o.Program, Dwell: o.Dwell, BeatDelay: o.BeatDelay, Hub: hub,
+		OnBeat: func(name string) { o.progress("beat:" + name) }})
 	var play sync.WaitGroup
 	if err != nil {
 		if ctx.Err() == nil {
@@ -190,17 +329,27 @@ func runDemo(ctx context.Context, o demoOptions) int {
 		}
 		_ = ln.Close()
 		<-served
-		return map[bool]int{true: 0, false: 1}[ctx.Err() != nil]
+		if ctx.Err() != nil {
+			return 0
+		}
+		return 1
 	}
 	lazy.set(d)
 	say("The demo line is ready. Open the link. The story runs for about a minute, then waits for you.")
+	o.progress("ready")
+	var storyFailed atomic.Bool
 	play.Add(1)
 	go func() {
 		defer play.Done()
-		if err := d.Play(ctx); err != nil && ctx.Err() == nil {
-			say("The story stopped: %v", err)
-		} else if err == nil {
+		switch err := d.Play(ctx); {
+		case err == nil:
 			say("The story is at its waiting point. It will not answer for you.")
+			o.progress("waiting")
+		case ctx.Err() != nil:
+			// stopped by the person
+		default:
+			storyFailed.Store(true)
+			say("The story did not go as written: %v. The screen shows what is true.", err)
 		}
 	}()
 	<-ctx.Done()
@@ -208,16 +357,20 @@ func runDemo(ctx context.Context, o demoOptions) int {
 	<-served
 	play.Wait()
 	d.Close()
+	if storyFailed.Load() {
+		return 1
+	}
 	return 0
 }
 
 // runOnce runs the story to its waiting point with no delays, prints what is
-// on the line and returns.
+// on the line and returns. It returns 0 only when the story completed.
 func runOnce(ctx context.Context, o demoOptions, dir string, say func(string, ...any)) int {
-	d, err := demo.New(ctx, demo.Config{DataDir: dir, Program: o.Program})
+	d, err := demo.New(ctx, demo.Config{DataDir: dir, Program: o.Program, OnBeat: func(name string) { o.progress("beat:" + name) }})
 	if err != nil {
 		if ctx.Err() != nil {
-			return 0
+			say("The run was stopped before the story ended, so it is not complete.")
+			return 1
 		}
 		say("Cannot build the demo: %v", err)
 		return 1
@@ -225,11 +378,16 @@ func runOnce(ctx context.Context, o demoOptions, dir string, say func(string, ..
 	defer d.Close()
 	if err := d.Play(ctx); err != nil {
 		if ctx.Err() != nil {
-			return 0
+			say("The run was stopped before the story ended, so it is not complete.")
+			return 1
 		}
-		say("The story stopped: %v", err)
+		say("The story did not go as written: %v. The screen shows what is true.", err)
+		if b, ferr := d.Floor(ctx); ferr == nil {
+			summarize(b, say)
+		}
 		return 1
 	}
+	o.progress("waiting")
 	b, err := d.Floor(ctx)
 	if err != nil {
 		say("Cannot read the line: %v", err)

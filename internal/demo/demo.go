@@ -57,6 +57,9 @@ type Config struct {
 	Now func() time.Time
 	// Deadline is how long one stub run may take. Zero means two minutes.
 	Deadline time.Duration
+	// OnBeat is called after each beat of the story is done. It must return
+	// quickly. Nil means none.
+	OnBeat func(name string)
 }
 
 func (d *Demo) deadline() time.Duration {
@@ -365,6 +368,9 @@ func (d *Demo) Step(ctx context.Context) (string, bool, error) {
 	}
 	d.next++
 	d.publish(ctx)
+	if d.cfg.OnBeat != nil {
+		d.cfg.OnBeat(b.name)
+	}
 	if d.next < len(d.beats) {
 		if err := d.pause(ctx, d.cfg.BeatDelay); err != nil {
 			return b.name, false, err

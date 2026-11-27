@@ -88,3 +88,61 @@ func TestDepsBlock(t *testing.T) {
 		t.Fatal("parsed bad json")
 	}
 }
+
+func TestRunMarkerText(t *testing.T) {
+	run, _ := RunMarker("run-1")
+	claim, _ := ClaimMarkerText("m1", "run-1")
+	tests := []struct {
+		name     string
+		body     string
+		wantText string
+		wantID   string
+		wantOK   bool
+	}{
+		{"text and marker", "Which colour?\n\n" + run, "Which colour?", "run-1", true},
+		{"trailing newline", "Which?\n" + run + "\n", "Which?", "run-1", true},
+		{"only a marker", run, "", "run-1", true},
+		{"claim is not a run marker", "claiming\n" + claim, "", "", false},
+		{"answer is not a run marker", "yes\n" + AnswerMarker(), "", "", false},
+		{"no marker", "plain", "", "", false},
+		{"marker in the middle stays text", "a " + run + " b\n\n" + run, "a " + run + " b", "run-1", true},
+		{"marker on the first line only", run + "\nmore", "", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text, id, ok := RunMarkerText(tc.body)
+			if text != tc.wantText || id != tc.wantID || ok != tc.wantOK {
+				t.Fatalf("got (%q, %q, %v), want (%q, %q, %v)", text, id, ok, tc.wantText, tc.wantID, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestMarkerIDBelongsToRun(t *testing.T) {
+	tests := []struct {
+		id, run string
+		want    bool
+	}{
+		{"run1", "run1", true},
+		{"run1.1", "run1", true},
+		{"run1.a_b-c", "run1", true},
+		{"run10", "run1", false},
+		{"run1x", "run1", false},
+		{"run1..", "run1", false},
+		{"run1.", "run1", false},
+		{"run1.1.2", "run1", false},
+		{"run1.1 ", "run1", false},
+		{"run", "run1", false},
+		{"", "run1", false},
+		{"run1", "", false},
+		{".1", "", false},
+		{"a.b", "a", true}, // the rule alone cannot tell run a.b from run a, slot b
+		{"a.b", "a.b", true},
+		{"run1." + strings.Repeat("x", 33), "run1", false},
+	}
+	for _, tc := range tests {
+		if got := MarkerIDBelongsToRun(tc.id, tc.run); got != tc.want {
+			t.Errorf("MarkerIDBelongsToRun(%q, %q) = %v, want %v", tc.id, tc.run, got, tc.want)
+		}
+	}
+}

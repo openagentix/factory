@@ -159,3 +159,42 @@ func ParseDeps(body string) (Deps, bool) {
 	}
 	return d, true
 }
+
+// RunMarkerText reads a factory comment body that ends with a run marker. It
+// gives the text before that final marker line, and the run id. ok is false
+// for any other body: no marker, a claim marker, an answer marker, a marker
+// that is not on the last line. The caller must check the author. A marker
+// inside the text stays part of the text.
+func RunMarkerText(body string) (text, runID string, ok bool) {
+	kind, id, _ := parseMarker(body)
+	if kind != markerRun {
+		return "", "", false
+	}
+	trimmed := strings.TrimRight(body, " \t\r\n")
+	if i := strings.LastIndex(trimmed, "\n"); i >= 0 {
+		return strings.TrimRight(trimmed[:i], " \t\r\n"), id, true
+	}
+	return "", id, true
+}
+
+// slotRE is what the part after the dot of a run marker id may be: a publish
+// slot (record 0003, "Publish steps"). It has no dot, so a slot can never
+// stand for another run id that holds a dot.
+var slotRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+
+// MarkerIDBelongsToRun says whether the id of a run marker, "<run id>" or
+// "<run id>.<slot>", is the marker of run runID. The id counts when it is
+// exactly the run id, or the run id, a dot and a slot of up to 32 letters,
+// digits, underscore or dash. A prefix alone never counts: run1 does not own
+// run10, run1x, "run1." or "run1..". A caller that knows other runs whose
+// ids hold a dot must also check that the id is not exactly one of them.
+func MarkerIDBelongsToRun(id, runID string) bool {
+	if runID == "" || !idRE.MatchString(runID) {
+		return false
+	}
+	if id == runID {
+		return true
+	}
+	slot, ok := strings.CutPrefix(id, runID+".")
+	return ok && slotRE.MatchString(slot)
+}

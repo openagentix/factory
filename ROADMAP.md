@@ -4,10 +4,11 @@ These are plans, not promises. Dates are not set. Scope can change. A release is
 
 ## Built today
 
-- Parts, not wired together, each with tests, under `internal/`: `api` (shared types with strict parsing), `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner` (one work stage as a local process), `staging` (the holding area: rebuild, Accept, Undo, kept in memory for now) , `floor` (the read model of the Floor screen) and `server` (the local web server: the key, the request checks, live events; it serves a placeholder page for now).
+- Parts, not wired together, each with tests, under `internal/`: `api` (shared types with strict parsing), `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner` (one work stage as a local process), `staging` (the holding area: rebuild, Accept, Undo, kept in memory for now) , `floor` (the read model of the Floor screen), `floor/collect` (fills the read model from the real sources), `server` (the local web server: the key, the request checks, live events) and `demo` (a made-up project and its story).
 - `oxf version`.
+- `oxf run --demo`: the Floor screen with a made-up project on a fake git host. Real factory code moves the line: the runner with a stub agent, the checks, the machine gate and the holding area. The second opinion is scripted. The buttons do not work yet, so the story stops where a person would act.
 - Four trial runs by hand that show an installed agent can be started unattended. See [the trial record](docs/trials/2026-11-26-unattended-runs.md).
-- The web app's Floor, Needs you and Goals screens, shown with sample data only. Built with `make web`.
+- The web app's Floor, Needs you and Goals screens, shown with the demo's data only. Built with `make web`.
 
 Nothing else works yet. There is no release.
 

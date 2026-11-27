@@ -297,7 +297,7 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 
 ## 10. The web app
 
-Detail in decision record 0004. The design the owner approved is `docs/design/factory-floor-mockup.html`, a mockup with made-up data. It is the contract for look, words and behaviour. **(owner)** Nothing in this section is built.
+Detail in decision record 0004. The design the owner approved is `docs/design/factory-floor-mockup.html`, a mockup with made-up data. It is the contract for look, words and behaviour. **(owner)** Built so far: the Floor, Needs you and Goals screens, shown by `oxf run --demo` with a made-up project, with their buttons switched off. Nothing else in this section is built.
 
 Stack: Svelte 5 with runes, SvelteKit as a static single-page app, Vite and strict TypeScript, with no utility style framework for now, embedded in the binary. The design's CSS variables are the tokens. Fonts are bundled under the SIL Open Font Licence 1.1. A strict content security policy. Live updates by server-sent events, read with `fetch` so the key is never in a cookie or a URL. **(call)**
 
@@ -316,9 +316,9 @@ Screens in v0.1:
 
 | Group | Screen | Shows | Status |
 |---|---|---|---|
-| Factory | Floor (home) | The tower, the gauges, the line, goal lanes, Needs a person, the shift log | Designed, not built |
-| Factory | Needs you | Questions, yes or no on a consequence, plans to approve, Accept, oldest first | Designed, not built |
-| Factory | Goals | Each goal with its lane, its course and its lines | Designed, not built |
+| Factory | Floor (home) | The tower, the gauges, the line, goal lanes, Needs a person, the shift log | Built, with the demo's data only; no actions yet |
+| Factory | Needs you | Questions, yes or no on a consequence, plans to approve, Accept, oldest first | Built, with the demo's data only; no actions yet |
+| Factory | Goals | Each goal with its lane, its course and its lines | Built, with the demo's data only; no actions yet |
 | Factory | Live | What this machine does now; a teammate's machine from its claim | Designed, not built |
 | Factory | Team | Trusted people and their machines | Designed, not built |
 | Engineering | Runs and changes | Runs, evidence with rulings and denials, the decision card | Designed, not built |
@@ -361,10 +361,10 @@ One Go binary, `oxf`.
 | `wheel` | The Model Context Protocol endpoint for planning or taking the wheel in a person's own session: list, claim, ask, submit |
 | `floor` | **Built.** The read model: its types, one pure function from records to a snapshot, reason codes, gauge rules, the journal |
 | `server` | JSON API with the key on every data route, request checks, live events, the actions, the embedded web app or a placeholder page. **Built**, without the actions, serving the placeholder page |
-| `demo` | The made-up project and story for `--demo`, with a driver that stands in for the orchestrator until it exists |
+| `demo` | The made-up project and story for `--demo`, with a driver that stands in for the orchestrator until it exists. **Built.** Each step of the story names the result it expects from the real code, and the story stops when the real result differs |
 | `web/` | The web app source. Its built files are embedded and not committed |
 
-Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner`, `staging`, `floor` and `server`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
+Built and tested: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner`, `staging`, `floor`, `floor/collect`, `server` and `demo`. They are wired together only in the demo, `oxf run --demo`. The collector, `floor/collect`, reads the store, the git host and the holding area and fills the read model's input; facts that no package stores yet come from a small ledger in memory. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
 
 Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 

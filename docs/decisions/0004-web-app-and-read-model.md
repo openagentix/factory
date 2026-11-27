@@ -1,6 +1,6 @@
 # 0004. The web app and its read model
 
-- Status: proposed, 2026-11-27. The read model is built and tested (`internal/floor`), pure and not wired to a server. Nothing else here is built. No screen, route or rule here has been run.
+- Status: proposed, 2026-11-27. Built and tested: the read model (`internal/floor`), the collector that fills it (`internal/floor/collect`), the server without the actions (`internal/server`), the Floor, Needs you and Goals screens with their buttons switched off, and the demo (`oxf run --demo`). The actions and the other screens are not built. The demo has been run. Nothing here has been run on a real repository.
 - Scope: the web app of the first release. Records 0001, 0002 and 0003 are the authority. Where this record changes them, "Changes to records 0001, 0002 and 0003" says so, and each was edited to agree.
 - **(owner)** marks the owner's call. **(call)** marks a call by the assistant, open to change.
 
@@ -29,13 +29,13 @@ Also different: bundled fonts, decoration-only reduced motion, numbers in senten
 
 ## The screens
 
-No screen is built. The read model behind the Floor is built, and nothing has been shown on a screen.
+The Floor, Needs you and Goals screens are built and shown with the demo's data only. Their buttons are switched off until the actions are built. The other screens say they are not built.
 
 | Group | Screen | Status |
 |---|---|---|
-| Factory | Floor (home) | Designed, not built |
-| Factory | Needs you | Designed, not built |
-| Factory | Goals | Designed, not built |
+| Factory | Floor (home) | Built, with the demo's data only; no actions yet |
+| Factory | Needs you | Built, with the demo's data only; no actions yet |
+| Factory | Goals | Built, with the demo's data only; no actions yet |
 | Factory | Live | Designed, not built |
 | Factory | Team | Designed, not built |
 | Engineering | Runs and changes | Designed, not built |
@@ -134,7 +134,7 @@ type Call = {
   facts: Record<string, Fact>; // fills the fixed sentence for this kind
   actions: ActionName[]; version: string;
 };
-type Untrusted = { text: string; truncated: boolean };
+type Untrusted = { text: string; truncated: boolean };   // a question is cut at 1,000 characters
 type JournalEntry = { journalSeq: number; time: string | null; kind: JournalKind | "unreadable";
                       goal?: number; ticket?: number; facts?: Record<string, Fact> };
 ```
@@ -386,6 +386,10 @@ The fonts and both runtimes are listed in `THIRD-PARTY.md`; their notices ship w
 - A band on every screen: "DEMO. A made-up project on a fake GitHub. The factory code that moves this line is real, except stations marked scripted."
 - A DEMO plate, a page title starting with "DEMO", `mode: "demo"` in every response, the chip "demo/booking (fake)", and a "scripted" tag on each scripted station.
 - Every printed line starts with `DEMO`. The link, or the path of the link file, is printed within 2 seconds of start.
+- **The story follows the real code.** Each step of the story names the exact result it expects from the real parts, by code. When the real result differs, the story stops, the command says "the story did not go as written", and the screen keeps showing what really happened. A fact is recorded only after the real call it describes has succeeded.
+- **Exit.** `--demo --once` plays the story to its waiting point and exits 0. It exits 1 when the story did not go as written, when it was stopped before the end, or when the start was refused. A demo that serves exits 0 on a signal, and 1 after a story that did not go as written or a failed write to its output. An output that is closed counts as a stop: the data directory and the link file are removed.
+- **What a terminal is.** Standard error counts as a terminal only when it is a character device that answers as a terminal. Anything else, `/dev/null` included, gets the link file.
+- **Left by a killed demo.** A killed demo cannot clean up. The next demo, once it holds the port, removes data directories an earlier demo left in the same temporary directory: only real directories with the demo's own name pattern, owned by the same user, with mode 0700, never through a link. A demo refused for a busy port removes nothing.
 
 ## Words
 
@@ -439,6 +443,9 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 - **A consequence waits for the machine that ran the gate**, which may never come back.
 - **The demo is a made-up project** and proves nothing about a real job.
 - The journal is in memory at first; a restart loses the shift log.
+- **A host that hides a ticket.** When a run or a change in the holding area names a goal or ticket the git host does not list, the host counts as not read. One case stays unseen: a host that stops listing a ticket whose changes were all accepted.
+- A killed `--demo --once` run leaves its data directory. It holds no key.
+- A question's comment may end with the run marker in its plain form or its slot form (record 0003). A marker look-alike inside the agent's own text is shown as plain text.
 - **A plan edit can slip through.** An edit between the server's re-read and the label reaching the host is caught only by the factory's comment that repeats the recorded lines.
 
 ## Not settled
@@ -450,3 +457,4 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 ## History
 
 - 2026-11-27: the record was aligned with the built read model (`internal/floor`) after three review rounds.
+- 2026-11-27: the status and the demo's rules were aligned with the built demo line (`internal/floor/collect`, `internal/demo`, `oxf run --demo`) after three review rounds.

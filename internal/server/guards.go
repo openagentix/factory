@@ -1,6 +1,10 @@
 package server
 
-import "net/http"
+import (
+	"net"
+	"net/http"
+	"strings"
+)
 
 // hostAllowed: the Host header is exactly 127.0.0.1:<port>, localhost:<port>
 // or [::1]:<port>. Anything else, a missing Host or more than one Host is
@@ -42,5 +46,33 @@ const (
 	keyLimited
 )
 
-// Stub until the key tests are written.
-func (s *Server) checkKey(r *http.Request) keyResult { return keyOK }
+// checkKey reads the key from the Authorization header only. A key in a
+// query string or a cookie is never looked at.
+//
+// The form is strict (a stricter reading than RFC 9110, which makes the
+// scheme case-insensitive): exactly "Bearer", one space, then the key. Two
+// Authorization headers are refused. A request with no header is not counted
+// against the limit. A request with any header that is not the key is.
+func (s *Server) checkKey(r *http.Request) keyResult {
+	v := r.Header["Authorization"]
+	if len(v) == 0 {
+		return keyMissing
+	}
+	if len(v) == 1 && strings.HasPrefix(v[0], bearerPrefix) && keyMatches(s.key, v[0][len(bearerPrefix):]) {
+		// The right key is never limited, so nobody can lock the person out.
+		return keyOK
+	}
+	if s.limiter.fail(remoteHost(r.RemoteAddr)) {
+		return keyLimited
+	}
+	return keyWrong
+}
+
+const bearerPrefix = "Bearer "
+
+func remoteHost(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return addr
+}

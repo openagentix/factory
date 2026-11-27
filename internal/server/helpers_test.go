@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -75,7 +76,9 @@ func newEnv(t *testing.T, mods ...func(*Config)) *testEnv {
 // key pulls the key out of the link. Tests never print it.
 func (e *testEnv) key() string { return strings.SplitN(e.s.Link(), "#t=", 2)[1] }
 
-func (e *testEnv) auth() map[string]string { return map[string]string{"Authorization": "Bearer " + e.key()} }
+func (e *testEnv) auth() map[string]string {
+	return map[string]string{"Authorization": "Bearer " + e.key()}
+}
 
 type req struct {
 	method, path, host, remote, body string
@@ -151,3 +154,9 @@ func assertErr(t *testing.T, rec *httptest.ResponseRecorder, status int, code Co
 }
 
 var errSecret = errors.New("boom")
+
+func serve(e *testEnv, r *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	e.s.Handler().ServeHTTP(rec, r)
+	return rec
+}

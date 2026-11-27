@@ -50,7 +50,7 @@ This is the sketch of what you would see. It is a design, not a screenshot.
 - **It watches the course of each goal.** Work that goes off course is hard to steer back, so it stops early and plans again with you.
 - **The process fits the job.** A quick lane for small things, a standard lane for a feature. Checking is the same in both.
 - **Keep your method.** If you use superpowers, Open GSD or your own prompts, the factory is designed to use what you have installed, by name. One trial run did this with one plugin. It ships none of their text.
-- **Two views.** The outcome view is what the whole team watches, in plain words, so a product owner or a teammate from another discipline can read it too. The engineering view shows every run, change and review. Which one opens first is a setting per person. An engineer can take over a piece of work, or approve each step.
+- **Two views.** The outcome view is what the whole team watches, in plain words, so a product owner or a teammate from another discipline can read it too. The engineering view shows every run, change and review. Simple by default, full control one deliberate step away: the outcome view opens first for everyone. An engineer who wants control opens the engineering view, sets a task to guided so they approve each step, or takes the wheel on a ticket. A person can set the engineering view as their own start page.
 
 An autonomy dial per task sets where the factory stops for a person. A trust record shows what happened after each accepted change. Both are described in the [design](docs/design.md).
 
@@ -71,7 +71,7 @@ go run ./cmd/oxf version
 | Kubernetes, later | A container per run |
 | [OpenAgentix](https://github.com/openagentix/openagentix), later | Enforced budgets, outbound rules and audit |
 
-OpenAgentix is the platform, a sibling project in the same organisation. The factory does not need it.
+OpenAgentix is the platform, a sibling project in the same organisation. The factory does not need it. On OpenAgentix the factory is designed to run as part of the platform, with budgets, isolation, outbound rules and audit enforced instead of reported. Designed, not built.
 
 ## Read more
 

@@ -47,6 +47,8 @@ The reason: an engineering team is ready for a long planning and brainstorming s
 
 The same task files and the same web app on every row.
 
+**On OpenAgentix the factory is native, by design, not a bolt-on.** Designed, not built. Its concepts map onto platform resources, as the platform provides them, rather than sitting beside them. The factory keeps its own API group and its own concepts (goal, spec, ticket, acceptance, gate, staging) and does not push them into the platform's group. The same task files and acceptance manifests run unchanged on a laptop and on OpenAgentix. That is the design test. What the platform enforces, a laptop only reports: budgets, isolation of a run from the person's files and from other runs, outbound rules and audit. That is the honest reason to move up. The limits named in this document, such as the same-user limit and no operating system sandbox for checks, are the ones this rung removes. The mapping is in the seams table in section 11. **(owner)**
+
 An existing repository starts with an **onboard** run that reads the repository, finds its test and lint commands and its CI, and proposes the factory configuration with a readiness report. It takes effect after Accept, like any other change. A new product starts from any template repository that has tests and CI, then onboards. v0.1 does not scaffold projects. **(call)**
 
 ## 3. Goals, non-goals, anti-goals
@@ -276,7 +278,7 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 
 Stack: the OpenAgentix console stack, so it can later mount in the console. Svelte 5 with runes, SvelteKit as a single-page app, Tailwind 4 with theme tokens, no component kit, strict content security policy, embedded in the binary. Live updates by server-sent events.
 
-Principle: **outcomes first, detail on demand.** The **outcome view** is what the whole team watches: goals, acceptance lists with three states, questions waiting for a person, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. The **engineering view** shows runs, evidence, decision cards and pull requests. Which view opens first is a setting per person. **(owner)**
+Principle: **outcomes first, detail on demand.** The **outcome view** is what the whole team watches: goals, acceptance lists with three states, questions waiting for a person, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. The **engineering view** shows runs, evidence, decision cards and pull requests. **Simple by default, full control one deliberate step away.** The outcome view opens first for everyone. A developer who wants control takes it on purpose: opens the engineering view, sets a task's dial to guided so they approve each step, or takes the wheel on a ticket. A person can set the engineering view as their own start page. **(owner)**
 
 ```
  Let customers reschedule bookings              ON COURSE
@@ -373,6 +375,9 @@ Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 | Triggers | Polling, local clock | `Trigger`, `Schedule` |
 | Evidence | JSON | Signed provenance |
 | Web app | Own binary | Console plugin |
+| Workspace | A plain directory | Platform `Workspace` |
+| Accept on a high-risk change | The login token | Platform approval request |
+| Model access and outbound network | The person's login, network open | Platform gateway with a key and an enforced budget per run, platform outbound rules |
 
 ## 12. Releases
 

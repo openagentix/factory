@@ -35,7 +35,7 @@ After the plan is approved, at the default dial level, nothing else reaches the 
 
 **Try it** starts the project's start command the same way the checks are run (see the verify stage). The person is told that it runs code the factory wrote and no person has read.
 
-**Outcome view**, what the whole team watches: goals, the acceptance list with its three states, plain questions waiting for a person, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. **Engineering view**: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. Which view opens first is a setting per person. An engineer can take the wheel on a ticket or set the dial to guided, while the factory builds the rest.
+**Outcome view**, what the whole team watches: goals, the acceptance list with its three states, plain questions waiting for a person, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. **Engineering view**: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. The outcome view opens first for everyone, and a person can set the engineering view as their own start page. An engineer who wants control takes it on purpose: opens the engineering view, sets a task's dial to guided, or takes the wheel on a ticket. The factory builds the rest.
 
 ## Lanes and planning
 
@@ -385,6 +385,8 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 | Container, later | Docker, with a worker image built on the person's machine | An API key |
 | Kubernetes, later | A Job | Metered model access |
 | OpenAgentix, later | A Job, or platform runs when `AgentRun` and `Workspace` exist | A gateway key per run, an enforced budget, an audit record |
+
+**On OpenAgentix** (designed, not built; the platform pieces are used as the platform provides them): the factory's concepts map onto platform resources. A run is a platform run resource and the workspace is a platform workspace. The propose and accept credentials are platform credential grants. The dial's ceiling comes from platform policy and can only be lowered there. A person's Accept on a high-risk change is a platform approval request. Model access goes through the platform gateway, with a key and an enforced budget per run, and outbound rules are the platform's. The evidence bundle becomes the platform's signed provenance record, and the web app mounts in the platform console. The factory keeps its own API group and concepts. The same task files and acceptance manifests run unchanged on a laptop and on OpenAgentix. What is enforced there and only reported on a laptop: budgets, isolation of a run from the person's files and from other runs, outbound rules and audit. The limits named in this record, the same-user limit and no operating system sandbox for checks, are the ones this rung removes.
 
 **Local runner rules**, and others that vary by place:
 

@@ -13,8 +13,15 @@ import (
 )
 
 // The packages that touch tokens and settings never read the environment, never
-// search PATH and never start a program whose path is not absolute. A test
-// file may do all of that; the rule is for product code.
+// search PATH and never start a program, with two named exceptions (see
+// allowed below). The scan is by import path, so a renamed import is caught,
+// and it flags any use of a guarded name, not only a call. A test file may do
+// all of that; the rule is for product code.
+//
+// One exception is honest to state: internal/settings calls os.UserConfigDir,
+// which reads the environment (HOME, and XDG_CONFIG_HOME on Linux). Record
+// 0003 allows that single read. The guard allows exactly that use, in the
+// function Open of machine_unix.go, and nothing else.
 
 var scanned = []string{".", "../settings", "../redact"}
 
@@ -45,30 +52,80 @@ func TestSourceNeverReadsEnvironmentOrPath(t *testing.T) {
 }
 
 func TestScannerSeesTheBadPatterns(t *testing.T) {
-	bad := `package x
-import ("os"; "os/exec")
-func f(p string) {
-	_ = os.Getenv("A")
-	_ = os.Environ()
-	_, _ = os.LookupEnv("A")
-	_ = os.ExpandEnv("$A")
-	_, _ = exec.LookPath("git")
-	_ = exec.Command("git")
-	_ = exec.Command(p)
-	_ = exec.CommandContext(nil, "git")
-}`
-	if got := scanSource(t, "bad.go", bad); len(got) != 8 {
-		t.Fatalf("found %d problems, want 8: %v", len(got), got)
+	cases := map[string]string{
+		"getenv":            `package x; import "os"; func f() { _ = os.Getenv("A") }`,
+		"environ":           `package x; import "os"; func f() { _ = os.Environ() }`,
+		"lookupenv":         `package x; import "os"; func f() { _, _ = os.LookupEnv("A") }`,
+		"expandenv":         `package x; import "os"; func f() { _ = os.ExpandEnv("$A") }`,
+		"renamed import":    `package x; import o "os"; func f() { _ = o.Getenv("A") }`,
+		"function value":    `package x; import "os"; var g = os.Getenv`,
+		"function argument": `package x; import "os"; func h(func(string) string) {}; func f() { h(os.Getenv) }`,
+		"syscall getenv":    `package x; import "syscall"; func f() { _, _ = syscall.Getenv("A") }`,
+		"syscall environ":   `package x; import "syscall"; func f() { _ = syscall.Environ() }`,
+		"dot import":        `package x; import . "os"; func f() { _ = Getenv("A") }`,
+		"home dir":          `package x; import "os"; func f() { _, _ = os.UserHomeDir() }`,
+		"config dir":        `package x; import "os"; func f() { _, _ = os.UserConfigDir() }`,
+		"look path":         `package x; import "os/exec"; func f() { _, _ = exec.LookPath("git") }`,
+		"command literal":   `package x; import "os/exec"; func f() { _ = exec.Command("/bin/ls") }`,
+		"command variable":  `package x; import "os/exec"; func f(tool string) { _ = exec.Command(tool) }`,
+		"context command":   `package x; import "os/exec"; func f(tool string) { _ = exec.CommandContext(nil, tool) }`,
+		"renamed exec":      `package x; import e "os/exec"; func f(p string) { _ = e.Command(p) }`,
+		"cmd literal":       `package x; import "os/exec"; func f() { _ = &exec.Cmd{Path: "/bin/ls"} }`,
+		"cmd value literal": `package x; import "os/exec"; var c = exec.Cmd{Path: "/bin/ls"}`,
 	}
-	good := `package x
-import "os/exec"
-func f(tool string) {
-	_ = exec.Command("/usr/bin/security")
-	_ = exec.CommandContext(nil, tool)
-}`
-	if got := scanSource(t, "good.go", good); len(got) != 0 {
-		t.Fatalf("false alarm: %v", got)
+	for name, src := range cases {
+		if got := scanSource(t, "bad.go", src); len(got) == 0 {
+			t.Errorf("%s: not flagged", name)
+		}
 	}
+	// The same calls are flagged in a file and function that are not on the list.
+	run := `package x; import "os/exec"; func other(tool string) { _ = exec.CommandContext(nil, tool) }`
+	if got := scanSource(t, "run.go", run); len(got) == 0 {
+		t.Error("exec in the wrong function of run.go is not flagged")
+	}
+	cfg := `package x; import "os"; func Elsewhere() { _, _ = os.UserConfigDir() }`
+	if got := scanSource(t, "machine_unix.go", cfg); len(got) == 0 {
+		t.Error("os.UserConfigDir in the wrong function is not flagged")
+	}
+}
+
+func TestScannerLetsTheKnownPlacesPass(t *testing.T) {
+	good := map[string][2]string{
+		"the one exec call":  {"run.go", `package x; import "os/exec"; func run(tool string) { _ = exec.CommandContext(nil, tool) }`},
+		"the one config dir": {"machine_unix.go", `package x; import "os"; func Open() { _ = os.UserConfigDir }`},
+		"a local named os":   {"a.go", `package x; func f() { os := map[string]string{}; _ = os["Getenv"]; type T struct{ Getenv int }; var o struct{ Getenv int }; _ = o.Getenv }`},
+		"harmless calls":     {"a.go", `package x; import "os"; func f() { _, _ = os.Open("/etc/passwd") }`},
+	}
+	for name, c := range good {
+		if got := scanSource(t, c[0], c[1]); len(got) != 0 {
+			t.Errorf("%s: false alarm: %v", name, got)
+		}
+	}
+}
+
+// guarded lists, by import path, the names that read the environment, search
+// PATH or start a program. Any use is a problem, a call or not.
+var guarded = map[string]map[string]bool{
+	"os": {
+		"Getenv": true, "Environ": true, "LookupEnv": true, "ExpandEnv": true,
+		"UserHomeDir": true, "UserCacheDir": true, "UserConfigDir": true,
+		"StartProcess": true,
+	},
+	"syscall": {"Getenv": true, "Environ": true, "StartProcess": true, "Exec": true, "ForkExec": true},
+	"os/exec": {"LookPath": true, "Command": true, "CommandContext": true},
+}
+
+// allowed are the only places that may use a guarded name. Key: the file name,
+// a colon, the function name.
+//
+//   - run.go:run starts the credential tool. Its path is checked by checkTool
+//     in the same function, and it is the only place that starts a program.
+//   - machine_unix.go:Open calls os.UserConfigDir. That reads the environment
+//     (XDG_CONFIG_HOME on Linux, HOME on both). Record 0003 allows this one
+//     read, to find the config directory. It is the single exception.
+var allowed = map[string]map[string]bool{
+	"run.go:run":           {"os/exec.CommandContext": true},
+	"machine_unix.go:Open": {"os.UserConfigDir": true},
 }
 
 func scanSource(t *testing.T, name, src string) []string {
@@ -79,47 +136,68 @@ func scanSource(t *testing.T, name, src string) []string {
 		t.Fatal(err)
 	}
 	var out []string
-	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+	// Local name of each import, by the import path, never by the name used.
+	local := map[string]string{}
+	for _, imp := range f.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			t.Fatal(err)
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
+		if _, g := guarded[path]; !g {
+			continue
 		}
-		pkg, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return true
+		n := path[strings.LastIndex(path, "/")+1:]
+		if imp.Name != nil {
+			n = imp.Name.Name
 		}
-		at := fset.Position(call.Pos()).String()
-		switch pkg.Name + "." + sel.Sel.Name {
-		case "os.Getenv", "os.Environ", "os.LookupEnv", "os.ExpandEnv", "exec.LookPath":
-			out = append(out, at+": "+pkg.Name+"."+sel.Sel.Name)
-		case "exec.Command", "exec.CommandContext":
-			i := 0
-			if sel.Sel.Name == "CommandContext" {
-				i = 1
+		switch n {
+		case ".":
+			if len(guarded[path]) > 0 {
+				out = append(out, fset.Position(imp.Pos()).String()+": dot import of "+path)
 			}
-			if len(call.Args) <= i || !absoluteProgram(call.Args[i]) {
-				out = append(out, at+": a program that is not absolute")
-			}
+		case "_":
+		default:
+			local[n] = path
 		}
-		return true
-	})
+	}
+	check := func(fn string, root ast.Node) {
+		ast.Inspect(root, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.CompositeLit); ok {
+				// A literal exec.Cmd would start a program without exec.Command.
+				if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "Cmd" {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Obj == nil && local[id.Name] == "os/exec" {
+						out = append(out, fset.Position(lit.Pos()).String()+": a literal os/exec.Cmd")
+					}
+				}
+				return true
+			}
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			id, ok := sel.X.(*ast.Ident)
+			if !ok || id.Obj != nil { // Obj is set for a local name that hides the import
+				return true
+			}
+			path, ok := local[id.Name]
+			if !ok || !guarded[path][sel.Sel.Name] {
+				return true
+			}
+			use := path + "." + sel.Sel.Name
+			if allowed[filepath.Base(name)+":"+fn][use] {
+				return true
+			}
+			out = append(out, fset.Position(sel.Pos()).String()+": "+use)
+			return true
+		})
+	}
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok {
+			check(fd.Name.Name, fd)
+		} else {
+			check("", d)
+		}
+	}
 	sort.Strings(out)
 	return out
-}
-
-// absoluteProgram accepts a string literal that starts with "/" and the
-// variable "tool", which only checkTool can fill (run.go checks it first).
-func absoluteProgram(e ast.Expr) bool {
-	switch v := e.(type) {
-	case *ast.BasicLit:
-		s, err := strconv.Unquote(v.Value)
-		return err == nil && strings.HasPrefix(s, "/")
-	case *ast.Ident:
-		return v.Name == "tool"
-	}
-	return false
 }

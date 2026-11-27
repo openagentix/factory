@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // hardenedGitConfig is put before every git command. It is a second layer.
@@ -53,6 +54,10 @@ func gitEnv() []string {
 	)
 }
 
+// gitStarts counts the git commands built. A test reads it to check that the
+// number of processes does not depend on the input. It changes no behaviour.
+var gitStarts atomic.Int64
+
 // buildGit builds every git command of this package. It is the only place
 // that starts the git program, and a test keeps it that way. There is no
 // shell: args is an argument list.
@@ -95,6 +100,7 @@ func buildGit(ctx context.Context, gitDir string, extra []string, args []string)
 		}
 	}
 	ownProcessGroup(cmd)
+	gitStarts.Add(1)
 	return cmd, cleanup, nil
 }
 

@@ -1,6 +1,7 @@
 package staging
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -150,7 +151,13 @@ func TestAcceptanceChangeMustEqualItsSource(t *testing.T) {
 func TestImplementChangeMayNotTouchAcceptancePath(t *testing.T) {
 	t.Parallel()
 	f := newFx(t)
-	st := f.add(f.entry(1, f.commit(f.def, put("acceptance/1/manifest.json", "{}")), f.def))
+	e := f.entry(1, f.commit(f.def, put("acceptance/1/manifest.json", "{}")), f.def)
+	if _, err := f.s.Add(f.ctx, e, f.decision(e)); !errors.Is(err, ErrNotAdmitted) {
+		t.Fatalf("Add: %v", err)
+	}
+	// Queued without admission, the step takes it out.
+	f.queue(e)
+	st := f.rebuild()
 	if len(st.Applied) != 0 || removedIDs(st.Removed)["run-1"] != RemovedProtectedPath {
 		t.Fatalf("%+v", st)
 	}

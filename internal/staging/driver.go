@@ -11,6 +11,7 @@ import (
 	"github.com/openagentix/factory/internal/gate"
 	"github.com/openagentix/factory/internal/githost"
 	"github.com/openagentix/factory/internal/repo"
+	"github.com/openagentix/factory/internal/verify"
 )
 
 // AcceptResult is what Accept returns. Outcome is OutcomeAccepted when the
@@ -62,6 +63,9 @@ func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, e
 		return State{}, ErrNotAdmitted
 	}
 	if err := s.probe(ctx, e); err != nil {
+		return State{}, err
+	}
+	if err := s.checkAdmissionPaths(ctx, e); err != nil {
 		return State{}, err
 	}
 	frozen, err := s.frozen(ctx)
@@ -427,4 +431,25 @@ func (s *Staging) isUnrecordedRetry(ctx context.Context, e Entry, addErr error) 
 		}
 	}
 	return true, nil
+}
+
+// checkAdmissionPaths applies the path rules to the change as it was built,
+// against its own parent. An acceptance change may touch only the directory of
+// its goal, and a change of any other task nothing under the acceptance path.
+func (s *Staging) checkAdmissionPaths(ctx context.Context, e Entry) error {
+	cs, err := verify.ChangedFiles(ctx, s.cfg.Repo.Dir(), e.Parent, e.Commit)
+	if err != nil {
+		return fmt.Errorf("staging: the change cannot be read: %w", err)
+	}
+	rep, err := verify.CheckProtected(s.cfg.Factory, s.cfg.Tasks[e.Task], cs)
+	if err != nil {
+		return err
+	}
+	if !rep.OK {
+		return fmt.Errorf("%w: the change touches protected paths: %s", ErrNotAdmitted, repo.Visible(strings.Join(rep.Touched, ", "), 300))
+	}
+	if out := s.outsideOwnGoal(e, cs); len(out) > 0 {
+		return fmt.Errorf("%w: an acceptance change writes outside its goal directory: %s", ErrNotAdmitted, repo.Visible(strings.Join(out, ", "), 300))
+	}
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,11 +69,12 @@ func (s *Staging) readStagingRef(ctx context.Context) (string, error) {
 
 // runState is what one rebuild knows while it runs.
 type runState struct {
-	def      string
-	sources  map[int]string                      // goal -> acceptance source commit
-	ids      map[int][]int                       // goal -> criterion ids in the manifest
-	cur      map[int]map[int]api.AcceptanceState // goal -> states at the previous step
-	asserted map[int]bool                        // goals whose checks must equal the source
+	def        string
+	sources    map[int]string                      // goal -> acceptance source commit
+	ids        map[int][]int                       // goal -> criterion ids in the manifest
+	cur        map[int]map[int]api.AcceptanceState // goal -> states at the previous step
+	asserted   map[int]bool                        // goals whose checks must equal the source
+	defSourced map[int]bool                        // goals whose checks are on the default commit, which is their source
 }
 
 func (s *Staging) rebuildOnce(ctx context.Context, pre []Removal) (State, bool, error) {
@@ -110,7 +112,7 @@ func (s *Staging) rebuildOnce(ctx context.Context, pre []Removal) (State, bool, 
 	}
 
 	st := State{Default: def, Commit: def}
-	rs := &runState{def: def, sources: map[int]string{}, ids: map[int][]int{}, cur: map[int]map[int]api.AcceptanceState{}, asserted: map[int]bool{}}
+	rs := &runState{def: def, sources: map[int]string{}, ids: map[int][]int{}, cur: map[int]map[int]api.AcceptanceState{}, asserted: map[int]bool{}, defSourced: map[int]bool{}}
 
 	// Step zero: the default commit alone.
 	failed, err := s.taskChecks(ctx, def)
@@ -127,11 +129,25 @@ func (s *Staging) rebuildOnce(ctx context.Context, pre []Removal) (State, bool, 
 		goals[e.Goal] = true
 	}
 	if !s.cfg.NoAcceptance {
+		onDefault, err := s.goalsOn(ctx, def)
+		if err != nil {
+			return State{}, false, err
+		}
+		for g := range onDefault {
+			goals[g] = true
+		}
 		for _, g := range sortedKeys(goals) {
-			if err := s.loadGoal(ctx, rs, g); err != nil {
+			if err := s.loadGoal(ctx, rs, g, onDefault[g]); err != nil {
 				return State{}, false, err
 			}
-			states, unrunnable, err := s.goalStates(ctx, rs, g, def)
+			var states map[int]api.AcceptanceState
+			var unrunnable bool
+			if rs.defSourced[g] {
+				rs.asserted[g] = true
+				states, err = s.stateAtSource(ctx, rs, g)
+			} else {
+				states, unrunnable, err = s.goalStates(ctx, rs, g, def)
+			}
 			if err != nil {
 				return State{}, false, err
 			}
@@ -205,10 +221,16 @@ func (s *Staging) taskChecks(ctx context.Context, commit string) ([]string, erro
 
 // loadGoal reads the acceptance source of a goal and the criterion ids of its
 // manifest at that source.
-func (s *Staging) loadGoal(ctx context.Context, rs *runState, goal int) error {
+func (s *Staging) loadGoal(ctx context.Context, rs *runState, goal int, onDefault bool) error {
 	src, err := s.cfg.AcceptanceSource(ctx, goal)
 	if err != nil {
 		return fmt.Errorf("staging: acceptance source of goal %d: %w", goal, err)
+	}
+	if src == "" && onDefault {
+		// The caller names no source and the checks are on the default
+		// commit: they are their own source.
+		src = rs.def
+		rs.defSourced[goal] = true
 	}
 	if !commitRE.MatchString(src) {
 		return fmt.Errorf("staging: the acceptance source of goal %d is not a full commit id", goal)
@@ -338,6 +360,9 @@ func (s *Staging) step(ctx context.Context, rs *runState, e Entry, prev string) 
 	if !rep.OK {
 		return s.removal(e, RemovedProtectedPath, "touches "+repo.Visible(strings.Join(rep.Touched, ", "), 300), nil), "", nil
 	}
+	if out := s.outsideOwnGoal(e, cs); len(out) > 0 {
+		return s.removal(e, RemovedProtectedPath, "an acceptance change writes outside its goal directory: "+repo.Visible(strings.Join(out, ", "), 300), nil), "", nil
+	}
 
 	if !s.cfg.NoAcceptance {
 		toAssert := map[int]bool{}
@@ -420,4 +445,71 @@ func (s *Staging) record(ctx context.Context, st State, oldRef, def string) (Sta
 	}
 	st.Published = true
 	return st, false, nil
+}
+
+// goalsOn returns the goals that have a manifest in a commit. The goals are
+// read from the paths that differ between an empty root commit and the commit,
+// because package repo offers no listing of a tree.
+func (s *Staging) goalsOn(ctx context.Context, commit string) (map[int]bool, error) {
+	dir, err := os.MkdirTemp("", "oxf-empty-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	empty, _, err := s.cfg.Repo.Import(ctx, dir, "", "empty root", s.cfg.Author, repo.ImportOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("staging: empty root: %w", err)
+	}
+	cs, err := verify.ChangedFiles(ctx, s.cfg.Repo.Dir(), empty, commit)
+	if err != nil {
+		return nil, err
+	}
+	prefix := s.acceptancePath() + "/"
+	out := map[int]bool{}
+	for _, p := range cs.Paths() {
+		rest, ok := strings.CutPrefix(p, prefix)
+		if !ok {
+			continue
+		}
+		num, file, ok := strings.Cut(rest, "/")
+		if !ok || file != acceptance.ManifestName {
+			continue
+		}
+		if g, err := strconv.Atoi(num); err == nil && g > 0 && strconv.Itoa(g) == num {
+			out[g] = true
+		}
+	}
+	return out, nil
+}
+
+// stateAtSource gives the state of each criterion of a goal on the commit
+// where its checks are, which is the default commit for a goal whose source is
+// the default commit. A judged run cannot be made there, as the judged commit
+// and the source are one, so this is the baseline of such a goal.
+func (s *Staging) stateAtSource(ctx context.Context, rs *runState, goal int) (map[int]api.AcceptanceState, error) {
+	rep, err := acceptance.RunAtSource(ctx, s.cfg.Repo, acceptance.SourceRequest{Source: rs.sources[goal], Goal: goal, AcceptancePath: s.acceptancePath()}, s.cfg.AcceptanceOptions)
+	if err != nil {
+		return nil, fmt.Errorf("staging: acceptance checks of goal %d at the default commit: %w", goal, err)
+	}
+	states := map[int]api.AcceptanceState{}
+	for _, res := range rep.Results {
+		states[res.ID] = res.State
+	}
+	return states, nil
+}
+
+// outsideOwnGoal lists the changed paths of an acceptance change that are not
+// under the directory of its own goal.
+func (s *Staging) outsideOwnGoal(e Entry, cs *verify.ChangeSet) []string {
+	if e.Task != api.TaskAcceptance {
+		return nil
+	}
+	dir := acceptance.GoalDir(s.acceptancePath(), e.Goal) + "/"
+	var out []string
+	for _, p := range cs.Paths() {
+		if !strings.HasPrefix(p, dir) {
+			out = append(out, p)
+		}
+	}
+	return out
 }

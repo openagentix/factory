@@ -51,6 +51,20 @@ func Detail(in Inputs, id string) (PieceDetail, bool) {
 	return d, true
 }
 
+// Undoable lists every change the Floor offers to take back, as the piece
+// details carry them. A change that is not in the list is not offered.
+func Undoable(in Inputs) []UndoRef {
+	f := Project(in)
+	c := newCtx(in)
+	out := []UndoRef{}
+	for _, p := range f.Pieces {
+		if ref := c.undoFor(p); ref != nil {
+			out = append(out, *ref)
+		}
+	}
+	return out
+}
+
 const detailItems = 20
 
 func cutAll(ss []string) []Untrusted {

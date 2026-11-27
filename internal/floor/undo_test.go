@@ -93,3 +93,27 @@ func TestDetailUndoNotForOtherPieces(t *testing.T) {
 		t.Errorf("accepted: %+v", d.Undo)
 	}
 }
+
+// Undoable lists every change that the Floor offers to take back: the same
+// refs that the piece details carry, and nothing else.
+func TestUndoableMatchesTheDetails(t *testing.T) {
+	in := undoInputs(entryID(57, "run-1"))
+	got := Undoable(in)
+	want := []UndoRef{{Change: "run-1", StagingSeq: 7, Commit: strings.Repeat("a", 40)}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("got %+v", got)
+	}
+	d, _ := Detail(in, "t57")
+	if d.Undo == nil || *d.Undo != got[0] {
+		t.Fatalf("detail %+v", d.Undo)
+	}
+	h := in.Holding.Val
+	h.Frozen = true
+	in.Holding = Some(h)
+	if got := Undoable(in); len(got) != 0 {
+		t.Errorf("frozen: %+v", got)
+	}
+	if got := Undoable(healthy()); len(got) != 0 {
+		t.Errorf("nothing: %+v", got)
+	}
+}

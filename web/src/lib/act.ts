@@ -26,6 +26,10 @@ export function actMessage(a: Act | undefined): string {
             return 'Sending.';
         case 'sent':
             return 'Sent. The line shows it when it is done.';
+        case 'running':
+            return 'This is being done. The line shows it when it is done.';
+        case 'again':
+            return 'The call is still there. Press again to send the same press once more.';
         case 'refused':
             return refusalText(a.code);
         default:
@@ -33,7 +37,7 @@ export function actMessage(a: Act | undefined): string {
     }
 }
 
-export const busy = (a: Act | undefined) => a !== undefined && (a.phase === 'sending' || a.phase === 'sent');
+export const busy = (a: Act | undefined) => a !== undefined && (a.phase === 'sending' || a.phase === 'sent' || a.phase === 'running');
 
 const SHOWS_SOMETHING = /[^\p{Cc}\p{Cf}\p{White_Space}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u2800]/u;
 

@@ -21,8 +21,11 @@ export type Env = KeyEnv & {
     matchMedia?: (q: string) => { matches: boolean };
 };
 
-/** One press of a button: sending, sent (waiting for the snapshot to show it), refused with the server's code, or failed with no answer. */
-export type Act = { phase: 'sending' | 'sent' | 'refused' | 'failed'; code?: string };
+/**
+ * One press of a button: sending; sent (done, waiting for a snapshot to show it); running (a 202: still being done); again (a later
+ * snapshot still has the call, so the button is live and a press sends the same key); refused with the server's code; or failed with no answer.
+ */
+export type Act = { phase: 'sending' | 'sent' | 'running' | 'again' | 'refused' | 'failed'; code?: string };
 export type ActionKind = 'answer' | 'yes' | 'no' | 'approve';
 const actKey = (c: Pick<Call, 'id' | 'version'>) => `${c.id}|${c.version}`;
 
@@ -125,7 +128,7 @@ export class AppState {
     async act(call: Call, action: ActionKind, text?: string): Promise<void> {
         const k = actKey(call);
         const cur = this.acts[k];
-        if (cur && (cur.phase === 'sending' || cur.phase === 'sent')) return;
+        if (cur && (cur.phase === 'sending' || cur.phase === 'sent' || cur.phase === 'running')) return;
         if (!(call.actions as string[]).includes(action) || this.client === null) return;
         const body: Record<string, string> = { version: call.version };
         if (action === 'answer') body.text = (text ?? '').replace(/\r\n?/g, '\n');
@@ -139,7 +142,7 @@ export class AppState {
         const r = await this.client.write(`/api/v1/calls/${encodeURIComponent(call.id)}/${action}`, body, held.key);
         // A snapshot may have dropped this press while it was sent. Then nothing is left to say.
         if (!(k in this.acts)) return;
-        const next: Act = r.ok ? { phase: 'sent' } : r.status === 0 ? { phase: 'failed' } : { phase: 'refused', code: r.code };
+        const next: Act = r.ok ? { phase: r.status === 202 ? 'running' : 'sent' } : r.status === 0 ? { phase: 'failed' } : { phase: 'refused', code: r.code };
         this.acts = { ...this.acts, [k]: next };
     }
 
@@ -202,8 +205,12 @@ export class AppState {
         const keep: Record<string, Act> = {};
         let changed = false;
         for (const [k, v] of Object.entries(this.acts)) {
-            if (live.has(k)) keep[k] = v;
-            else changed = true;
+            if (!live.has(k)) changed = true;
+            // A press that was accepted, and a snapshot that still has the call at the same version: the person is not locked out.
+            else if (v.phase === 'sent' || v.phase === 'running') {
+                keep[k] = { phase: 'again' };
+                changed = true;
+            } else keep[k] = v;
         }
         for (const k of [...this.idem.keys()]) if (!live.has(k)) this.idem.delete(k);
         if (changed) this.acts = keep;

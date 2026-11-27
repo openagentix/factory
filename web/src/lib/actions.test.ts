@@ -62,9 +62,12 @@ describe('the buttons that are built', () => {
         // The page read the snapshot again, got the same one, and keeps the call: no optimistic update.
         await vi.waitFor(() => expect(fake.served()).toBeGreaterThan(1));
         expect(call(container, 'q-58-9001')).not.toBeNull();
-        expect(btn(container, 'Send answer').getAttribute('aria-disabled')).toBe('true');
+        // A snapshot that still has the call at the same version gives the person the button back, with the same key.
+        await vi.waitFor(() => expect(btn(container, 'Send answer').getAttribute('aria-disabled')).toBeNull());
         await userEvent.click(btn(container, 'Send answer'));
-        expect(fake.writes).toHaveLength(1); // a second press while sent sends nothing
+        await vi.waitFor(() => expect(fake.writes).toHaveLength(2));
+        expect(fake.writes[1]!.headers['Idempotency-Key']).toBe(fake.writes[0]!.headers['Idempotency-Key']);
+        expect(fake.writes[1]!.body).toBe(fake.writes[0]!.body);
         // Only a snapshot without the call at that version removes it.
         const next: Any = clone(FIXTURES.demo);
         next.calls = next.calls.filter((c: Any) => c.id !== 'q-58-9001');
@@ -219,6 +222,47 @@ describe('the buttons that are built', () => {
         await vi.waitFor(() => expect(container.querySelector('[data-call="q-58-9001"]')).toBeNull());
         await vi.waitFor(() => expect(document.activeElement?.closest('.call') ?? document.activeElement?.closest('.calls')).not.toBeNull());
         expect(document.activeElement).not.toBe(document.body);
+    });
+});
+
+describe('a press that is accepted and the call stays', () => {
+    it('after a 202 the page says it is being done, and a later snapshot that still has the call gives the button back with the same key', async () => {
+        const { container, fake } = await mountWrites(() => new Response('{"mode":"demo","result":"running"}', { status: 202 }));
+        await userEvent.click(btn(container, 'Yes, that is what I want'));
+        const msg = () => txt(call(container, 'c-55-r_55a').querySelector('.act-msg'));
+        await vi.waitFor(() => expect(fake.writes).toHaveLength(1));
+        await vi.waitFor(() => expect(msg()).toContain('being done'));
+        // The write asked for a snapshot. It still has the call at the same version.
+        await vi.waitFor(() => expect(fake.served()).toBeGreaterThan(1));
+        await vi.waitFor(() => expect(btn(container, 'Yes, that is what I want').getAttribute('aria-disabled')).toBeNull());
+        expect(call(container, 'c-55-r_55a')).not.toBeNull(); // no optimistic change
+        await userEvent.click(btn(container, 'Yes, that is what I want'));
+        await vi.waitFor(() => expect(fake.writes).toHaveLength(2));
+        expect(fake.writes[1]!.headers['Idempotency-Key']).toBe(fake.writes[0]!.headers['Idempotency-Key']);
+        // Once the call is gone from a snapshot the key goes too: a call at a new version is a new press.
+        const next: Any = clone(FIXTURES.demo);
+        const c = next.calls.find((x: Any) => x.id === 'c-55-r_55a');
+        c.version = 'f'.repeat(64);
+        const seen = fake.served();
+        fake.setSnapshot(next);
+        fake.event('floor');
+        await vi.waitFor(() => expect(fake.served()).toBeGreaterThan(seen));
+        await vi.waitFor(async () => {
+            await userEvent.click(btn(container, 'Yes, that is what I want'));
+            expect(fake.writes.length).toBeGreaterThanOrEqual(3);
+        });
+        expect(fake.writes[2]!.headers['Idempotency-Key']).not.toBe(fake.writes[0]!.headers['Idempotency-Key']);
+        expect(JSON.parse(fake.writes[2]!.body).version).toBe('f'.repeat(64));
+    });
+
+    it('a press that is still being sent is not sent twice', async () => {
+        let release: (r: Response) => void = () => {};
+        const { container, fake } = await mountWrites(() => new Promise<Response>((res) => (release = res)));
+        const b = btn(container, 'Approve the plan');
+        await userEvent.click(b);
+        await userEvent.click(b);
+        expect(fake.writes).toHaveLength(1);
+        release(ok());
     });
 });
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 type result struct {
@@ -54,16 +55,22 @@ func (w *countWriter) Write(p []byte) (int, error) {
 // run starts the tool with a deadline, a scrubbed environment and no
 // terminal, and waits for it. The error never holds the output of the tool.
 func (s *system) run(ctx context.Context, args []string) (result, error) {
-	tool, err := checkTool(s.tool)
+	return execTool(ctx, s.tool, s.env, s.timeout, s.waitDelay, args)
+}
+
+// execTool is the one place that starts a program (see guard_test.go). It
+// checks the path first.
+func execTool(ctx context.Context, path string, env []string, timeout, waitDelay time.Duration, args []string) (result, error) {
+	tool, err := checkTool(path)
 	if err != nil {
 		return result{}, err
 	}
-	ctx2, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx2, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx2, tool, args...)
-	cmd.Env = append([]string{}, s.env...)
+	cmd.Env = append([]string{}, env...)
 	cmd.Dir = "/"
-	cmd.WaitDelay = s.waitDelay
+	cmd.WaitDelay = waitDelay
 	out := &capWriter{max: maxOutput, cancel: cancel}
 	errc := &countWriter{}
 	cmd.Stdout = out

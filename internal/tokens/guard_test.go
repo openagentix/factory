@@ -72,6 +72,14 @@ func TestScannerSeesTheBadPatterns(t *testing.T) {
 		"renamed exec":      `package x; import e "os/exec"; func f(p string) { _ = e.Command(p) }`,
 		"cmd literal":       `package x; import "os/exec"; func f() { _ = &exec.Cmd{Path: "/bin/ls"} }`,
 		"cmd value literal": `package x; import "os/exec"; var c = exec.Cmd{Path: "/bin/ls"}`,
+		"cmd variable":      `package x; import "os/exec"; func f() { var c exec.Cmd; c.Path = "/bin/ls"; _ = c.Run() }`,
+		"cmd new":           `package x; import "os/exec"; func f() { c := new(exec.Cmd); _ = c }`,
+		"cmd parameter":     `package x; import "os/exec"; func f(c *exec.Cmd) { _ = c }`,
+		"raw syscall":       `package x; import "syscall"; func f() { syscall.RawSyscall(syscall.SYS_EXECVE, 0, 0, 0) }`,
+		"syscall":           `package x; import "syscall"; func f() { syscall.Syscall(59, 0, 0, 0) }`,
+		"syscall6":          `package x; import "syscall"; func f() { syscall.Syscall6(59, 0, 0, 0, 0, 0, 0) }`,
+		"raw syscall6":      `package x; import "syscall"; func f() { syscall.RawSyscall6(59, 0, 0, 0, 0, 0, 0) }`,
+		"closure in a var":  `package x; import "os/exec"; var f = func(tool string) { _ = exec.CommandContext(nil, tool) }`,
 	}
 	for name, src := range cases {
 		if got := scanSource(t, "bad.go", src); len(got) == 0 {
@@ -83,6 +91,14 @@ func TestScannerSeesTheBadPatterns(t *testing.T) {
 	if got := scanSource(t, "run.go", run); len(got) == 0 {
 		t.Error("exec in the wrong function of run.go is not flagged")
 	}
+	method := `package x; import "os/exec"; type s struct{}; func (s) execTool(tool string) { _ = exec.CommandContext(nil, tool) }`
+	if got := scanSource(t, "run.go", method); len(got) == 0 {
+		t.Error("a method named like the allowed function is not flagged")
+	}
+	other := `package x; import "os/exec"; func execTool(tool string) { _ = exec.CommandContext(nil, tool) }`
+	if got := scanSource(t, "other.go", other); len(got) == 0 {
+		t.Error("the allowed function name in another file is not flagged")
+	}
 	cfg := `package x; import "os"; func Elsewhere() { _, _ = os.UserConfigDir() }`
 	if got := scanSource(t, "machine_unix.go", cfg); len(got) == 0 {
 		t.Error("os.UserConfigDir in the wrong function is not flagged")
@@ -91,10 +107,11 @@ func TestScannerSeesTheBadPatterns(t *testing.T) {
 
 func TestScannerLetsTheKnownPlacesPass(t *testing.T) {
 	good := map[string][2]string{
-		"the one exec call":  {"run.go", `package x; import "os/exec"; func run(tool string) { _ = exec.CommandContext(nil, tool) }`},
-		"the one config dir": {"machine_unix.go", `package x; import "os"; func Open() { _ = os.UserConfigDir }`},
-		"a local named os":   {"a.go", `package x; func f() { os := map[string]string{}; _ = os["Getenv"]; type T struct{ Getenv int }; var o struct{ Getenv int }; _ = o.Getenv }`},
-		"harmless calls":     {"a.go", `package x; import "os"; func f() { _, _ = os.Open("/etc/passwd") }`},
+		"the one exec call":    {"run.go", `package x; import "os/exec"; func execTool(tool string) { _ = exec.CommandContext(nil, tool) }`},
+		"exec type in prepare": {"exec_unix.go", `package x; import "os/exec"; func prepare(c *exec.Cmd) { _ = c }`},
+		"the one config dir":   {"machine_unix.go", `package x; import "os"; func Open() { _ = os.UserConfigDir }`},
+		"a local named os":     {"a.go", `package x; func f() { os := map[string]string{}; _ = os["Getenv"]; type T struct{ Getenv int }; var o struct{ Getenv int }; _ = o.Getenv }`},
+		"harmless calls":       {"a.go", `package x; import "os"; func f() { _, _ = os.Open("/etc/passwd") }`},
 	}
 	for name, c := range good {
 		if got := scanSource(t, c[0], c[1]); len(got) != 0 {
@@ -111,21 +128,28 @@ var guarded = map[string]map[string]bool{
 		"UserHomeDir": true, "UserCacheDir": true, "UserConfigDir": true,
 		"StartProcess": true,
 	},
-	"syscall": {"Getenv": true, "Environ": true, "StartProcess": true, "Exec": true, "ForkExec": true},
-	"os/exec": {"LookPath": true, "Command": true, "CommandContext": true},
+	"syscall": {
+		"Getenv": true, "Environ": true, "StartProcess": true, "Exec": true, "ForkExec": true,
+		"Syscall": true, "Syscall6": true, "RawSyscall": true, "RawSyscall6": true,
+	},
+	// Any use of the type Cmd is guarded, not only a literal.
+	"os/exec": {"LookPath": true, "Command": true, "CommandContext": true, "Cmd": true},
 }
 
 // allowed are the only places that may use a guarded name. Key: the file name,
-// a colon, the function name.
+// a colon, the name of a top-level function that has no receiver. A method, a
+// closure outside such a function and a package variable never match.
 //
-//   - run.go:run starts the credential tool. Its path is checked by checkTool
+//   - run.go:execTool starts the credential tool. Its path is checked by checkTool
 //     in the same function, and it is the only place that starts a program.
 //   - machine_unix.go:Open calls os.UserConfigDir. That reads the environment
 //     (XDG_CONFIG_HOME on Linux, HOME on both). Record 0003 allows this one
 //     read, to find the config directory. It is the single exception.
 var allowed = map[string]map[string]bool{
-	"run.go:run":           {"os/exec.CommandContext": true},
-	"machine_unix.go:Open": {"os.UserConfigDir": true},
+	"run.go:execTool":       {"os/exec.CommandContext": true},
+	"exec_unix.go:prepare":  {"os/exec.Cmd": true}, // sets process attributes only
+	"exec_other.go:prepare": {"os/exec.Cmd": true},
+	"machine_unix.go:Open":  {"os.UserConfigDir": true},
 }
 
 func scanSource(t *testing.T, name, src string) []string {
@@ -162,15 +186,6 @@ func scanSource(t *testing.T, name, src string) []string {
 	}
 	check := func(fn string, root ast.Node) {
 		ast.Inspect(root, func(n ast.Node) bool {
-			if lit, ok := n.(*ast.CompositeLit); ok {
-				// A literal exec.Cmd would start a program without exec.Command.
-				if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "Cmd" {
-					if id, ok := sel.X.(*ast.Ident); ok && id.Obj == nil && local[id.Name] == "os/exec" {
-						out = append(out, fset.Position(lit.Pos()).String()+": a literal os/exec.Cmd")
-					}
-				}
-				return true
-			}
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
 				return true
@@ -193,7 +208,11 @@ func scanSource(t *testing.T, name, src string) []string {
 	}
 	for _, d := range f.Decls {
 		if fd, ok := d.(*ast.FuncDecl); ok {
-			check(fd.Name.Name, fd)
+			if fd.Recv != nil {
+				check("(method) "+fd.Name.Name, fd)
+			} else {
+				check(fd.Name.Name, fd)
+			}
 		} else {
 			check("", d)
 		}

@@ -338,7 +338,7 @@ func TestSlowReaderOverTCPIsDropped(t *testing.T) {
 	waitFor(t, func() bool { return e.s.Hub().Streams() == 1 })
 	big := []byte(`{"pad":"` + strings.Repeat("x", 8000) + `"}`)
 	start := time.Now()
-	for i := uint64(1); i <= 10000; i++ {
+	for i := uint64(1); i <= 2000; i++ { // 16 MB, far more than the socket buffers hold
 		e.s.Hub().Publish(Event{Kind: KindJournal, ID: i, Data: big})
 	}
 	if d := time.Since(start); d > 3*time.Second {

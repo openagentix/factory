@@ -59,6 +59,10 @@ type Server struct {
 	origins map[string]bool
 	limiter *limiter
 	hub     *Hub
+	// Timers for the event stream. Real ones by default. Tests replace them
+	// with channels they control. Each returns a channel and a stop function.
+	newTicker func(time.Duration) (<-chan time.Time, func())
+	newTimer  func(time.Duration) (<-chan time.Time, func())
 
 	mu     sync.RWMutex
 	routes []*route
@@ -105,7 +109,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, key: key, log: cfg.Logger, hub: cfg.Hub, hosts: map[string]bool{}, origins: map[string]bool{}}
+	s := &Server{cfg: cfg, key: key, log: cfg.Logger, hub: cfg.Hub, newTicker: realTicker, newTimer: realTimer, hosts: map[string]bool{}, origins: map[string]bool{}}
 	for _, h := range []string{"127.0.0.1", "localhost", "[::1]"} {
 		s.hosts[fmt.Sprintf("%s:%d", h, cfg.Port)] = true
 		s.origins[fmt.Sprintf("http://%s:%d", h, cfg.Port)] = true
@@ -214,4 +218,14 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request, _ any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(b)
+}
+
+func realTicker(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(d)
+	return t.C, t.Stop
+}
+
+func realTimer(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTimer(d)
+	return t.C, func() { t.Stop() }
 }

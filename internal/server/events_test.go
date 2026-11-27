@@ -61,18 +61,19 @@ func (st *stream) next(t *testing.T) string {
 	select {
 	case f := <-st.rw.ch:
 		return f
-	case <-time.After(3 * time.Second):
-		t.Fatal("no frame in time")
+	case <-time.After(failBound):
+		t.Fatal("no frame")
 		return ""
 	}
 }
 
-func (st *stream) none(t *testing.T, d time.Duration) {
+// nextIs reads the next frame and checks its start. Tests use it with a
+// marker event published last, to show that nothing came in between. This
+// replaces waiting for a quiet period.
+func (st *stream) nextIs(t *testing.T, prefix string) {
 	t.Helper()
-	select {
-	case f := <-st.rw.ch:
-		t.Fatalf("unexpected frame %q", f)
-	case <-time.After(d):
+	if f := st.next(t); !strings.HasPrefix(f, prefix) {
+		t.Fatalf("next frame %q, want it to start with %q", f, prefix)
 	}
 }
 
@@ -80,7 +81,7 @@ func (st *stream) ended(t *testing.T) {
 	t.Helper()
 	select {
 	case <-st.done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(failBound):
 		t.Fatal("stream did not end")
 	}
 }
@@ -138,10 +139,11 @@ func TestPublishCannotForgeEvents(t *testing.T) {
 	e.s.Hub().Publish(Event{Kind: EventKind("evil\nevent: reset"), ID: 3, Data: []byte(`{}`)})
 	e.s.Hub().Publish(Event{Kind: KindHello, ID: 4, Data: []byte(`{}`)})
 	f := st.next(t)
+	e.s.Hub().Publish(journal(9)) // marker: nothing forged may sit between
+	st.nextIs(t, "id: 9\n")
 	if strings.Count(f, "\n\n") != 1 || !strings.HasSuffix(f, "\n\n") || strings.Contains(f, "\r") || strings.Contains(f, "event: reset") {
 		t.Errorf("frame %q", f)
 	}
-	st.none(t, 100*time.Millisecond)
 }
 
 func TestResume(t *testing.T) {
@@ -158,11 +160,13 @@ func TestResume(t *testing.T) {
 			t.Fatalf("want entry %d, got %q", id, f)
 		}
 	}
-	st.none(t, 50*time.Millisecond)
+	e.s.Hub().Publish(journal(6))
+	st.nextIs(t, "id: 6\n") // nothing between 5 and 6
 	// the latest id: nothing to replay
-	st2 := e.openStream(t, map[string]string{"Last-Event-ID": "5"})
+	st2 := e.openStream(t, map[string]string{"Last-Event-ID": "6"})
 	st2.next(t)
-	st2.none(t, 50*time.Millisecond)
+	e.s.Hub().Publish(journal(7))
+	st2.nextIs(t, "id: 7\n") // nothing was replayed
 }
 
 func TestResumeResetCases(t *testing.T) {
@@ -179,7 +183,10 @@ func TestResumeResetCases(t *testing.T) {
 		if f := st.next(t); f != "event: reset\ndata: {}\n\n" {
 			t.Errorf("Last-Event-ID %q: got %q, want reset", id, f)
 		}
+		// Wait until the handler has really left: it holds one of the 8
+		// stream slots until then. (This was the cause of a flaky failure.)
 		st.cancel()
+		st.ended(t)
 	}
 	st := e.openStream(t, map[string]string{"Last-Event-ID": "200"})
 	st.next(t)
@@ -217,8 +224,10 @@ func TestOnlyEightStreamsAndTheCountRecovers(t *testing.T) {
 	assertErr(t, rec, 503, CodeUnavailable, "ninth stream")
 	assertSecure(t, rec, true, "ninth stream")
 	open[0].cancel()
-	open[0].ended(t)
-	waitFor(t, func() bool { return e.s.Hub().Streams() == 7 })
+	open[0].ended(t) // the handler has returned, so its slot is free
+	if n := e.s.Hub().Streams(); n != 7 {
+		t.Fatalf("streams %d, want 7", n)
+	}
 	st := e.openStream(t, nil)
 	if f := st.next(t); !strings.HasPrefix(f, "event: hello") {
 		t.Fatalf("after recovery: %q", f)
@@ -227,7 +236,7 @@ func TestOnlyEightStreamsAndTheCountRecovers(t *testing.T) {
 
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(failBound)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -238,15 +247,24 @@ func waitFor(t *testing.T, cond func() bool) {
 }
 
 func TestPingAndMaxAge(t *testing.T) {
-	e := newEnv(t, func(c *Config) { c.PingInterval = 20 * time.Millisecond; c.StreamMaxAge = 150 * time.Millisecond })
+	e := newEnv(t)
+	ping, life := make(chan time.Time), make(chan time.Time)
+	var gotPing, gotLife time.Duration
+	e.s.newTicker = func(d time.Duration) (<-chan time.Time, func()) { gotPing = d; return ping, func() {} }
+	e.s.newTimer = func(d time.Duration) (<-chan time.Time, func()) { gotLife = d; return life, func() {} }
 	st := e.openStream(t, nil)
-	st.next(t)
+	st.next(t) // hello
+	ping <- time.Time{}
 	if f := st.next(t); f != ": ping\n\n" {
 		t.Fatalf("ping %q", f)
 	}
-	st.ended(t) // closed after the maximum age
+	life <- time.Time{} // the stream is too old
+	st.ended(t)
 	if e.s.Hub().Streams() != 0 {
 		t.Errorf("streams left: %d", e.s.Hub().Streams())
+	}
+	if gotPing != 15*time.Second || gotLife != 30*time.Minute {
+		t.Errorf("stream used %v and %v", gotPing, gotLife)
 	}
 }
 
@@ -268,7 +286,7 @@ func TestPublishNeverBlocksOnAStuckReader(t *testing.T) {
 	for i := uint64(1); i <= 10000; i++ {
 		h.Publish(journal(i))
 	}
-	if d := time.Since(start); d > 2*time.Second {
+	if d := time.Since(start); d > hangBound {
 		t.Fatalf("10,000 publishes took %v", d)
 	}
 	select {
@@ -316,7 +334,7 @@ func freePort(t *testing.T) int {
 // stays fast. Uses a real loopback connection.
 func TestSlowReaderOverTCPIsDropped(t *testing.T) {
 	port := freePort(t)
-	e := newEnv(t, func(c *Config) { c.Port = port; c.WriteDeadline = 300 * time.Millisecond })
+	e := newEnv(t, func(c *Config) { c.Port = port })
 	ctx, cancel := context.WithCancel(context.Background())
 	ln, err := e.s.Listen()
 	if err != nil {
@@ -335,16 +353,42 @@ func TestSlowReaderOverTCPIsDropped(t *testing.T) {
 		_ = tc.SetReadBuffer(1024)
 	}
 	fmt.Fprintf(conn, "GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAuthorization: Bearer %s\r\n\r\n", port, e.key())
-	waitFor(t, func() bool { return e.s.Hub().Streams() == 1 })
+	readUntil(t, conn, "event: hello") // the stream is registered; now never read again
+	if n := e.s.Hub().Streams(); n != 1 {
+		t.Fatalf("streams %d, want 1", n)
+	}
 	big := []byte(`{"pad":"` + strings.Repeat("x", 8000) + `"}`)
 	start := time.Now()
-	for i := uint64(1); i <= 2000; i++ { // 16 MB, far more than the socket buffers hold
-		e.s.Hub().Publish(Event{Kind: KindJournal, ID: i, Data: big})
+	// Publish until the hub drops the stream. How many events fill the
+	// socket buffers depends on the machine, so there is no fixed count.
+	var seq uint64
+	for e.s.Hub().Streams() != 0 && seq < 20000 {
+		seq++
+		e.s.Hub().Publish(Event{Kind: KindJournal, ID: seq, Data: big})
 	}
-	if d := time.Since(start); d > 3*time.Second {
+	if e.s.Hub().Streams() != 0 {
+		t.Fatalf("a reader that never reads was not dropped after %d events", seq)
+	}
+	if d := time.Since(start); d > hangBound {
 		t.Fatalf("publishing took %v with a stuck reader", d)
 	}
-	waitFor(t, func() bool { return e.s.Hub().Streams() == 0 })
+}
+
+// readUntil reads from conn until the text appears. A bound only makes a
+// hung test fail; it is not an expected time.
+func readUntil(t *testing.T, conn net.Conn, want string) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(failBound))
+	var got []byte
+	buf := make([]byte, 512)
+	for !strings.Contains(string(got), want) {
+		n, err := conn.Read(buf)
+		got = append(got, buf[:n]...)
+		if err != nil {
+			t.Fatalf("waiting for %q: %v", want, err)
+		}
+	}
+	_ = conn.SetReadDeadline(time.Time{})
 }
 
 func TestServerContextEndStopsStreamsAndLeavesNoGoroutine(t *testing.T) {
@@ -361,14 +405,14 @@ func TestServerContextEndStopsStreamsAndLeavesNoGoroutine(t *testing.T) {
 		return err == nil
 	})
 	fmt.Fprintf(conn, "GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAuthorization: Bearer %s\r\n\r\n", port, e.key())
-	waitFor(t, func() bool { return e.s.Hub().Streams() == 1 })
+	readUntil(t, conn, "event: hello")
 	cancel()
 	select {
 	case err := <-served:
 		if err != nil {
 			t.Fatalf("ListenAndServe: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(failBound):
 		t.Fatal("server did not stop")
 	}
 	conn.Close()

@@ -44,15 +44,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, _ any) {
 			return
 		}
 	}
-	ping := time.NewTicker(s.cfg.PingInterval)
-	defer ping.Stop()
-	life := time.NewTimer(s.cfg.StreamMaxAge)
-	defer life.Stop()
+	ping, stopPing := s.newTicker(s.cfg.PingInterval)
+	defer stopPing()
+	life, stopLife := s.newTimer(s.cfg.StreamMaxAge)
+	defer stopLife()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-life.C:
+		case <-life:
 			return
 		case <-sub.Dropped():
 			s.log.Info("server: slow stream dropped")
@@ -61,7 +61,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, _ any) {
 			if !write(f) {
 				return
 			}
-		case <-ping.C:
+		case <-ping:
 			if !write([]byte(": ping\n\n")) {
 				return
 			}

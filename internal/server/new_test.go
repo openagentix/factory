@@ -94,7 +94,7 @@ func TestListenBindsOnlyLoopbackAndABusyPortIsAnError(t *testing.T) {
 	}
 	// the other ports near it stay free: nothing else was tried
 	for _, p := range []int{port - 1, port + 1} {
-		if c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", p), 50*time.Millisecond); err == nil {
+		if c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", p), 5*time.Second); err == nil {
 			c.Close()
 			t.Errorf("something listens on %d", p)
 		}

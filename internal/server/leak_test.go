@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The key must appear in no response body or header, no log line and no
@@ -56,8 +55,8 @@ func TestKeyNeverLeaves(t *testing.T) {
 		}
 	}
 	// the event stream: hello, a journal entry and a floor hint
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the stream writes its start and returns
 	hr := httptest.NewRequest("GET", "/api/v1/events", nil).WithContext(ctx)
 	hr.Host, hr.RemoteAddr = "127.0.0.1:18765", "127.0.0.1:1"
 	hr.Header.Set("Authorization", "Bearer "+k)

@@ -16,6 +16,14 @@ import (
 
 const testPort = 18765
 
+// failBound only makes a hung test fail. It is not an expected duration.
+// hangBound is for "does not block" checks: orders of magnitude above the
+// real time, so only a real block can reach it.
+const (
+	failBound = 10 * time.Second
+	hangBound = 30 * time.Second
+)
+
 type stubSource struct {
 	body []byte
 	err  error
@@ -102,9 +110,10 @@ func (e *testEnv) do(r req) *httptest.ResponseRecorder {
 		hr.Header.Set(k, v)
 	}
 	if r.path == "/api/v1/events" {
-		// a stream that is let in never ends by itself: stop it soon
-		ctx, cancel := context.WithTimeout(hr.Context(), 30*time.Millisecond)
-		defer cancel()
+		// A stream that is let in never ends by itself. Give it a context
+		// that is already ended: it writes its start and returns.
+		ctx, cancel := context.WithCancel(hr.Context())
+		cancel()
 		hr = hr.WithContext(ctx)
 	}
 	rec := httptest.NewRecorder()

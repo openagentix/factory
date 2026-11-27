@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"unicode"
 )
 
 // LinkFileName is the name of the link file inside the data directory.
@@ -18,7 +20,8 @@ const LinkFileName = "web-link.txt"
 // dataDir, which must have mode 0700 exactly. The file is made with exclusive
 // create and mode 0600, after any older file or symbolic link at that name is
 // removed. A symbolic link is never written through. Only the file's path is
-// printed, and shown is that path.
+// printed, quoted, and shown is that path. A data directory name with a
+// control character is refused.
 //
 // No error text from this function holds the link.
 func DeliverLink(w io.Writer, isTerminal bool, dataDir, link string) (shown string, err error) {
@@ -33,6 +36,13 @@ func DeliverLink(w io.Writer, isTerminal bool, dataDir, link string) (shown stri
 	}
 	if dataDir == "" {
 		return "", errors.New("server: no data directory for the link file")
+	}
+	// A control or direction character in the name could forge a line where
+	// the path is printed. Refuse it, and do not repeat the name.
+	for _, r := range dataDir {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return "", errors.New("server: data directory name has a control character")
+		}
 	}
 	fi, err := os.Stat(dataDir)
 	if err != nil || !fi.IsDir() {
@@ -65,7 +75,7 @@ func DeliverLink(w io.Writer, isTerminal bool, dataDir, link string) (shown stri
 		_ = os.Remove(path)
 		return "", fmt.Errorf("server: cannot write the link file %q", path)
 	}
-	if _, err := fmt.Fprintf(w, "The link to the web app is in %s\n", path); err != nil {
+	if _, err := fmt.Fprintf(w, "The link to the web app is in %s\n", strconv.Quote(path)); err != nil {
 		return "", errors.New("server: cannot print the path of the link file")
 	}
 	return path, nil

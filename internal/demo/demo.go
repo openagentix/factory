@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -126,6 +127,9 @@ type Demo struct {
 	// addHook may fail the step that adds an answered change to the holding
 	// area. Tests only.
 	addHook func() error
+	// taskHook is called when a follow-up task starts. Tests only.
+	taskHook func()
+	failed   atomic.Bool
 }
 
 type beat struct {

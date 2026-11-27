@@ -68,6 +68,10 @@ func (d *Demo) dequeue() (followup, bool) {
 	return f, true
 }
 
+// Failed says whether a task that follows an action failed for a real reason.
+// A stop the person asked for is not a failure.
+func (d *Demo) Failed() bool { return d.failed.Load() }
+
 func (d *Demo) report(format string, a ...any) {
 	if d.cfg.Report != nil {
 		d.cfg.Report("DEMO " + fmt.Sprintf(format, a...))
@@ -103,7 +107,11 @@ func (d *Demo) Drain(ctx context.Context) error {
 			return errors.Join(errs...)
 		}
 		if err := d.runFollowup(ctx, f); err != nil {
-			d.report("a step after an action did not finish")
+			// A stop the person asked for ends the task, and is not a failure.
+			if ctx.Err() == nil {
+				d.failed.Store(true)
+				d.report("a step after an action did not finish")
+			}
 			errs = append(errs, err)
 		}
 	}
@@ -112,6 +120,9 @@ func (d *Demo) Drain(ctx context.Context) error {
 func (d *Demo) runFollowup(ctx context.Context, f followup) error {
 	d.stepMu.Lock()
 	defer d.stepMu.Unlock()
+	if d.taskHook != nil {
+		d.taskHook()
+	}
 	switch f.kind {
 	case fuResume:
 		res, err := d.runJob(ctx, f.j, f.runID, f.attempt)

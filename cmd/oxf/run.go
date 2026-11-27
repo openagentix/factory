@@ -402,7 +402,9 @@ func runDemo(parent context.Context, o demoOptions) (code int) {
 	<-served
 	play.Wait()
 	d.Close()
-	if storyFailed.Load() {
+	// A step after an action that failed for a real reason is a story that did
+	// not go as written. A stop the person asked for is not.
+	if storyFailed.Load() || d.Failed() {
 		return 1
 	}
 	return 0

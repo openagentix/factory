@@ -1006,3 +1006,56 @@ func TestApproveResumesAfterTheLabelIsOn(t *testing.T) {
 		t.Fatalf("done twice: %v", err)
 	}
 }
+
+// F6: a stop the person asked for is not a failure; a real failure is.
+func TestAStopDuringAFollowUpIsNotAFailure(t *testing.T) {
+	var lines []string
+	var mu sync.Mutex
+	cfg := testConfig(t)
+	cfg.Report = func(l string) { mu.Lock(); lines = append(lines, l); mu.Unlock() }
+	d, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Close)
+	stepsTo(t, d, "question")
+	c := mustCall(t, d, "q-5-")
+	if _, err := d.Answer(context.Background(), answerReq(c, "go")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	// The stop arrives as the task starts: the real runner is cut by the context.
+	d.taskHook = cancel
+	err = d.Drain(ctx)
+	if err == nil {
+		t.Fatal("the stopped task should end with an error")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) != 0 || d.Failed() {
+		t.Fatalf("a stop was reported as a failure: lines=%q failed=%v", lines, d.Failed())
+	}
+}
+
+func TestARealFollowUpFailureIsReportedAndRemembered(t *testing.T) {
+	var lines []string
+	cfg := testConfig(t)
+	cfg.Report = func(l string) { lines = append(lines, l) }
+	d, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Close)
+	stepsTo(t, d, "risk")
+	d.addHook = func() error { return staging.ErrMirrorBehind }
+	c := mustCall(t, d, "c-6-")
+	if _, err := d.Consequence(context.Background(), consReq(c, true)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Drain(context.Background()); err == nil {
+		t.Fatal("expected the failure")
+	}
+	if len(lines) != 1 || !d.Failed() {
+		t.Fatalf("lines=%q failed=%v", lines, d.Failed())
+	}
+}

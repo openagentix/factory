@@ -71,9 +71,18 @@ type Store interface {
 	// SetException records that a pull request was merged at a state nobody
 	// accepted, with a fixed text. GetException returns it. ClearException is
 	// the explicit step of a person.
+	// Recording an accept (MarkAccepted, ClearPending with OutcomeAccepted)
+	// or an exception (SetException, ClearPending with OutcomeException)
+	// also forgets the staging pull request number, in the same step, so a
+	// failure leaves the merge to be noticed again.
 	SetException(ctx context.Context, detail string) error
 	GetException(ctx context.Context) (string, bool, error)
-	ClearException(ctx context.Context) error
+	// ClearException ends the exception and records the default commit it was
+	// cleared on. BaseMark returns the commit that every state built on is
+	// stale for: the default commit of the last accepted state, or the one an
+	// exception was cleared on. "" means none.
+	ClearException(ctx context.Context, defaultCommit string) error
+	BaseMark(ctx context.Context) (string, error)
 }
 
 // MemStore is a Store in memory. It is safe for use from many goroutines.
@@ -88,6 +97,7 @@ type MemStore struct {
 	pending      *Pending
 	lastAccepted int // index into states plus one, 0 for none
 	stagingPR    int
+	baseMark     string
 	exception    string
 }
 
@@ -274,10 +284,15 @@ func (m *MemStore) ClearPending(ctx context.Context, outcome PendingOutcome) err
 	if m.pending == nil {
 		return errors.New("staging: no accept is pending")
 	}
-	if outcome == OutcomeAccepted {
+	switch outcome {
+	case OutcomeAccepted:
 		if err := m.acceptLocked(m.pending.StateSeq); err != nil {
 			return err
 		}
+		m.stagingPR = 0
+	case OutcomeException:
+		m.exception = "the staging pull request was merged at a state nobody accepted"
+		m.stagingPR = 0
 	}
 	m.pending = nil
 	return nil
@@ -296,6 +311,7 @@ func (m *MemStore) acceptLocked(seq int64) error {
 	if int(seq) > m.lastAccepted {
 		m.lastAccepted = int(seq)
 	}
+	m.baseMark = m.states[seq-1].Default
 	return nil
 }
 
@@ -308,7 +324,11 @@ func (m *MemStore) MarkAccepted(ctx context.Context, seq int64) error {
 	if !m.states[max(seq, 1)-1].Published {
 		return fmt.Errorf("staging: state %d is not published", seq)
 	}
-	return m.acceptLocked(seq)
+	if err := m.acceptLocked(seq); err != nil {
+		return err
+	}
+	m.stagingPR = 0
+	return nil
 }
 
 func (m *MemStore) SetStagingPR(ctx context.Context, n int) error {
@@ -351,6 +371,7 @@ func (m *MemStore) SetException(ctx context.Context, detail string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.exception = detail
+	m.stagingPR = 0
 	return nil
 }
 
@@ -363,14 +384,24 @@ func (m *MemStore) GetException(ctx context.Context) (string, bool, error) {
 	return m.exception, m.exception != "", nil
 }
 
-func (m *MemStore) ClearException(ctx context.Context) error {
+func (m *MemStore) ClearException(ctx context.Context, defaultCommit string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.exception = ""
+	m.baseMark = defaultCommit
 	return nil
+}
+
+func (m *MemStore) BaseMark(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.baseMark, nil
 }
 
 func (m *MemStore) LastAccepted(ctx context.Context) (State, bool, error) {

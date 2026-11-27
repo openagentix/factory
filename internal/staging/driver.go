@@ -53,7 +53,7 @@ const maxTitleRunes = 200
 func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.checkException(ctx); err != nil {
+	if err := s.gate(ctx, ""); err != nil {
 		return State{}, err
 	}
 	e.Title = repo.Visible(strings.TrimSpace(e.Title), maxTitleRunes)
@@ -105,7 +105,7 @@ func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, e
 func (s *Staging) Rebuild(ctx context.Context) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.checkException(ctx); err != nil {
+	if err := s.gate(ctx, ""); err != nil {
 		return State{}, err
 	}
 	if frozen, err := s.frozen(ctx); err != nil {
@@ -124,7 +124,7 @@ func (s *Staging) Rebuild(ctx context.Context) (State, error) {
 func (s *Staging) Undo(ctx context.Context, id string) (State, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.checkException(ctx); err != nil {
+	if err := s.gate(ctx, ""); err != nil {
 		return State{}, nil, err
 	}
 	if frozen, err := s.frozen(ctx); err != nil {
@@ -181,7 +181,7 @@ func (s *Staging) Undo(ctx context.Context, id string) (State, []string, error) 
 func (s *Staging) Accept(ctx context.Context, seq int64, commit string) (AcceptResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.checkException(ctx); err != nil {
+	if err := s.gate(ctx, ""); err != nil {
 		return AcceptResult{}, err
 	}
 	if seq < 1 || !commitRE.MatchString(commit) {
@@ -212,6 +212,9 @@ func (s *Staging) Accept(ctx context.Context, seq int64, commit string) (AcceptR
 	}
 	if !latest.Published {
 		return AcceptResult{}, ErrNotPublished
+	}
+	if err := s.gate(ctx, latest.Default); err != nil {
+		return AcceptResult{}, err
 	}
 	if latest.DefaultRed || len(latest.Applied) == 0 {
 		return AcceptResult{}, ErrNothingToAccept
@@ -317,17 +320,11 @@ func (s *Staging) reconcilePending(ctx context.Context, p Pending) (PendingOutco
 	}
 	switch got.State {
 	case githost.PRMerged:
-		if err := s.cfg.Store.SetStagingPR(ctx, 0); err != nil {
-			return "", err
-		}
 		if s.isStagingMerge(got) && got.HeadSHA == p.Commit {
 			if err := s.cfg.Store.ClearPending(ctx, OutcomeAccepted); err != nil {
 				return "", err
 			}
 			return OutcomeAccepted, nil
-		}
-		if err := s.cfg.Store.SetException(ctx, "the staging pull request was merged at a state nobody accepted"); err != nil {
-			return "", err
 		}
 		if err := s.cfg.Store.ClearPending(ctx, OutcomeException); err != nil {
 			return "", err
@@ -416,9 +413,6 @@ func (s *Staging) reconcileUnstarted(ctx context.Context) (PendingOutcome, error
 	if got.State != githost.PRMerged {
 		return "", nil
 	}
-	if err := s.cfg.Store.SetStagingPR(ctx, 0); err != nil {
-		return "", err
-	}
 	if s.isStagingMerge(got) && commitRE.MatchString(got.HeadSHA) {
 		st, ok, err := s.cfg.Store.StateByCommit(ctx, got.HeadSHA)
 		if err != nil {
@@ -437,8 +431,13 @@ func (s *Staging) reconcileUnstarted(ctx context.Context) (PendingOutcome, error
 	return OutcomeException, ErrMergedUnseen
 }
 
-// checkException returns ErrMergedUnseen while an exception is recorded.
-func (s *Staging) checkException(ctx context.Context) error {
+// gate is the one rule that every method that changes staging goes through.
+// While an exception is recorded it returns ErrMergedUnseen. After any
+// recorded accept, or a cleared exception, every state built on the default
+// commit that was current then is stale: while the mirror still names that
+// commit it returns ErrMirrorBehind, and a state built on it (stateDefault)
+// is ErrStale until a rebuild has run on another default commit.
+func (s *Staging) gate(ctx context.Context, stateDefault string) error {
 	_, bad, err := s.cfg.Store.GetException(ctx)
 	if err != nil {
 		return err
@@ -446,18 +445,38 @@ func (s *Staging) checkException(ctx context.Context) error {
 	if bad {
 		return ErrMergedUnseen
 	}
+	mark, err := s.cfg.Store.BaseMark(ctx)
+	if err != nil || mark == "" {
+		return err
+	}
+	def, err := s.readDefault(ctx)
+	if err != nil {
+		return err
+	}
+	if def == mark {
+		return ErrMirrorBehind
+	}
+	if stateDefault == mark {
+		return fmt.Errorf("%w: the state was built before the last accept, rebuild", ErrStale)
+	}
 	return nil
 }
 
 // ClearException is the explicit step of a person after a pull request was
 // merged at a state nobody accepted. Until it is called, Add, Rebuild, Undo
-// and Accept return ErrMergedUnseen. Clearing does not undo the merge. The
-// caller must fetch the default branch into the mirror before the next
-// rebuild.
+// and Accept return ErrMergedUnseen. By clearing it, the person confirms that
+// they have looked at what was merged into the default branch and accept it
+// as the new base. Clearing does not undo the merge. It records the default
+// commit it was cleared on, and nothing proceeds until the mirror names a
+// different default commit and a rebuild has run on it.
 func (s *Staging) ClearException(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cfg.Store.ClearException(ctx)
+	def, err := s.readDefault(ctx)
+	if err != nil {
+		return err
+	}
+	return s.cfg.Store.ClearException(ctx, def)
 }
 
 func (s *Staging) prTitle(st State) string {

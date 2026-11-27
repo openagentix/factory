@@ -66,11 +66,6 @@ func (s *Staging) rebuildOnce(ctx context.Context, pre []Removal) (State, bool, 
 	if err != nil {
 		return State{}, false, err
 	}
-	if last, ok, err := s.cfg.Store.LastAccepted(ctx); err != nil {
-		return State{}, false, err
-	} else if ok && last.Default == def {
-		return State{}, false, ErrMirrorBehind
-	}
 	oldRef, err := s.readStagingRef(ctx)
 	if err != nil {
 		return State{}, false, err
@@ -296,6 +291,14 @@ func commitMessage(e Entry) string {
 // (and no commit) when the change is to be taken out, the new commit when it
 // stays, and an error when the rebuild itself cannot go on.
 func (s *Staging) step(ctx context.Context, rs *runState, e Entry, prev string) (*Removal, string, error) {
+	rm, c, err := s.stepInner(ctx, rs, e, prev)
+	if err != nil && !strings.Contains(err.Error(), "staging: change "+e.ID) {
+		err = fmt.Errorf("staging: change %s (ticket %d) stopped the rebuild: %w", e.ID, e.Ticket, err)
+	}
+	return rm, c, err
+}
+
+func (s *Staging) stepInner(ctx context.Context, rs *runState, e Entry, prev string) (*Removal, string, error) {
 	r := s.cfg.Repo
 
 	// Only a definite answer from the repository takes a change out as bad.

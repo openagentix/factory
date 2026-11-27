@@ -112,6 +112,50 @@ func (h *flakyHost) pushCount() int {
 type flakyStore struct {
 	*MemStore
 	failMark int
+	// fail maps a method name to "before" (the call fails and does nothing)
+	// or "after" (the call is made, then fails). It fires once.
+	fail map[string]string
+}
+
+// inject runs call under the failure set for name.
+func (s *flakyStore) inject(name string, call func() error) error {
+	mode := s.fail[name]
+	if mode == "" {
+		return call()
+	}
+	delete(s.fail, name)
+	if mode == "before" {
+		return errors.New("store: " + name + " failed before")
+	}
+	if err := call(); err != nil {
+		return err
+	}
+	return errors.New("store: " + name + " failed after")
+}
+
+func (s *flakyStore) MarkAccepted(ctx context.Context, seq int64) error {
+	return s.inject("MarkAccepted", func() error { return s.MemStore.MarkAccepted(ctx, seq) })
+}
+
+func (s *flakyStore) SetException(ctx context.Context, d string) error {
+	return s.inject("SetException", func() error { return s.MemStore.SetException(ctx, d) })
+}
+
+func (s *flakyStore) ClearPending(ctx context.Context, o PendingOutcome) error {
+	return s.inject("ClearPending", func() error { return s.MemStore.ClearPending(ctx, o) })
+}
+
+func (s *flakyStore) StateByCommit(ctx context.Context, c string) (State, bool, error) {
+	var st State
+	var ok bool
+	err := s.inject("StateByCommit", func() (err error) { st, ok, err = s.MemStore.StateByCommit(ctx, c); return })
+	return st, ok, err
+}
+
+func (s *flakyStore) StagingPR(ctx context.Context) (int, error) {
+	var n int
+	err := s.inject("StagingPR", func() (err error) { n, err = s.MemStore.StagingPR(ctx); return })
+	return n, err
 }
 
 func (s *flakyStore) MarkPublished(ctx context.Context, seq int64) error {

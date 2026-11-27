@@ -145,3 +145,15 @@ func (l *memLedger) with(fn func(*collect.LedgerFacts)) {
 	defer l.mu.Unlock()
 	fn(&l.f)
 }
+
+// gateOf returns the gate fact of a ticket, if there is one.
+func (l *memLedger) gateOf(ticket int) (floor.GateIn, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, g := range l.f.Gate {
+		if g.Ticket == ticket {
+			return g, true
+		}
+	}
+	return floor.GateIn{}, false
+}

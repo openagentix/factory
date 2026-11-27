@@ -60,6 +60,9 @@ type Config struct {
 	// wrapHost lets a test in this package put a wrapper around the host that
 	// staging sees. Unexported, nil in the product.
 	wrapHost func(githost.Proposer) githost.Proposer
+	// Report takes the lines the demo says about work that went wrong after an
+	// action was accepted. Each starts with "DEMO ". Nil means none.
+	Report func(line string)
 	// OnBeat is called after each beat of the story is done. It must return
 	// quickly. Nil means none.
 	OnBeat func(name string)
@@ -104,6 +107,19 @@ type Demo struct {
 	pendingSource map[int]string
 	// jobHook may change a job before it runs. Tests only.
 	jobHook func(*job)
+
+	// What the actions need. All are read and written under mu, except the
+	// queue, which has its own lock.
+	sealed  map[int]sealedChange // the gate's sealed decision of a change held for a yes or no
+	jobs    map[string]job       // run id to the job it runs
+	latest  map[int]string       // ticket to the id of its latest run
+	goalsTk map[int]bool         // goals whose tickets were made on the host
+	fuMu    sync.Mutex
+	fu      []followup
+	wake    chan struct{}
+	// addHook may fail the step that adds an answered change to the holding
+	// area. Tests only.
+	addHook func() error
 }
 
 type beat struct {
@@ -127,7 +143,8 @@ func New(ctx context.Context, cfg Config) (*Demo, error) {
 	if fi, err := os.Stat(cfg.DataDir); err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
 		return nil, errors.New("demo: the data directory must exist with mode 0700")
 	}
-	d := &Demo{cfg: cfg, led: newLedger(), factory: factoryFile(), attempt: map[int]int{}, tk: map[string]int{}, reported: map[int]bool{}}
+	d := &Demo{cfg: cfg, led: newLedger(), factory: factoryFile(), attempt: map[int]int{}, tk: map[string]int{}, reported: map[int]bool{},
+		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, goalsTk: map[int]bool{goalMove: true}, wake: make(chan struct{}, 1)}
 	d.env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C"}
 	if err := d.setup(ctx); err != nil {
 		d.Close()

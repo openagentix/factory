@@ -193,6 +193,41 @@ func (l *lazySource) Floor(ctx context.Context) ([]byte, error) {
 	return s.Floor(ctx)
 }
 
+// lazyActions answers "not ready" until the demo is ready. The server takes its
+// routes before it serves, and the demo is built after it.
+type lazyActions struct {
+	mu sync.RWMutex
+	a  server.Actions
+}
+
+func (l *lazyActions) set(a server.Actions) { l.mu.Lock(); l.a = a; l.mu.Unlock() }
+func (l *lazyActions) get() server.Actions {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.a
+}
+
+func (l *lazyActions) Answer(ctx context.Context, r server.AnswerRequest) (server.ActionResult, error) {
+	if a := l.get(); a != nil {
+		return a.Answer(ctx, r)
+	}
+	return server.ActionResult{}, server.ErrUnavailable
+}
+
+func (l *lazyActions) Consequence(ctx context.Context, r server.ConsequenceRequest) (server.ActionResult, error) {
+	if a := l.get(); a != nil {
+		return a.Consequence(ctx, r)
+	}
+	return server.ActionResult{}, server.ErrUnavailable
+}
+
+func (l *lazyActions) Approve(ctx context.Context, r server.ApproveRequest) (server.ActionResult, error) {
+	if a := l.get(); a != nil {
+		return a.Approve(ctx, r)
+	}
+	return server.ActionResult{}, server.ErrUnavailable
+}
+
 // removeAll removes a directory tree, also when a run left read-only folders.
 func removeAll(dir string) {
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -290,7 +325,8 @@ func runDemo(parent context.Context, o demoOptions) (code int) {
 
 	hub := server.NewHub("demo")
 	lazy := &lazySource{}
-	srv, err := server.New(server.Config{Port: o.Port, Mode: "demo", Source: lazy, Static: web.FS, Hub: hub})
+	acts := &lazyActions{}
+	srv, err := server.New(server.Config{Port: o.Port, Mode: "demo", Source: lazy, Actions: acts, Static: web.FS, Hub: hub})
 	if err != nil {
 		say("Cannot start the web server: %v", err)
 		return 1
@@ -321,6 +357,7 @@ func runDemo(parent context.Context, o demoOptions) (code int) {
 	go func() { served <- srv.Serve(ctx, ln) }()
 
 	d, err := demo.New(ctx, demo.Config{DataDir: dir, Program: o.Program, Dwell: o.Dwell, BeatDelay: o.BeatDelay, Hub: hub,
+		Report: func(line string) { say("%s", strings.TrimPrefix(line, "DEMO ")) },
 		OnBeat: func(name string) { o.progress("beat:" + name) }})
 	var play sync.WaitGroup
 	if err != nil {
@@ -335,6 +372,14 @@ func runDemo(parent context.Context, o demoOptions) (code int) {
 		return 1
 	}
 	lazy.set(d)
+	acts.set(d)
+	// The work that follows an action (a try, the checks, the holding area)
+	// is done here, one task at a time, beside the story.
+	play.Add(1)
+	go func() {
+		defer play.Done()
+		_ = d.Work(ctx)
+	}()
 	say("The demo line is ready. Open the link. The story runs for about a minute, then waits for you.")
 	o.progress("ready")
 	var storyFailed atomic.Bool

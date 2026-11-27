@@ -89,9 +89,12 @@ type Demo struct {
 	def     string
 	env     []string
 
-	mu       sync.RWMutex // write: a change of facts. read: a snapshot.
+	mu sync.RWMutex // write: a change of facts. read: a snapshot.
+	// cache is the last whole snapshot. It is made at the end of every change
+	// of facts, under the write lock, and by every reader that gets the read
+	// lock, so it is never older than the last action that answered "done".
 	cacheMu  sync.Mutex
-	cache    []byte
+	cache    *snapshot
 	pubMu    sync.Mutex
 	lastPub  int64
 	stepMu   sync.Mutex // one step at a time
@@ -297,36 +300,67 @@ func (d *Demo) project(ctx context.Context) floor.Floor {
 	return floor.Project(collect.Collect(ctx, d.sources()))
 }
 
-// Floor is the snapshot the server serves. It implements server.Source. While
-// the driver is changing facts it gives the last whole snapshot, so a reader
-// never sees a beat half done.
-func (d *Demo) Floor(ctx context.Context) ([]byte, error) {
+// snapshot is one whole picture of the line: what was read, what it projects to
+// and its JSON.
+type snapshot struct {
+	in floor.Inputs
+	f  floor.Floor
+	b  []byte
+}
+
+// takeSnapshot reads the line once. The caller holds mu, for reading or writing.
+func (d *Demo) takeSnapshot(ctx context.Context) (*snapshot, error) {
+	in := collect.Collect(ctx, d.sources())
+	f := floor.Project(in)
+	b, err := json.Marshal(f)
+	if err != nil {
+		return nil, err
+	}
+	s := &snapshot{in: in, f: f, b: b}
+	d.cacheMu.Lock()
+	d.cache = s
+	d.cacheMu.Unlock()
+	return s, nil
+}
+
+func (d *Demo) cached() *snapshot {
+	d.cacheMu.Lock()
+	defer d.cacheMu.Unlock()
+	return d.cache
+}
+
+// view gives the newest whole snapshot there is. While the driver is changing
+// facts it gives the last one made, so a reader never sees a beat half done,
+// and never a state older than the last change that was finished.
+func (d *Demo) view(ctx context.Context) (*snapshot, error) {
 	if d.mu.TryRLock() {
 		defer d.mu.RUnlock()
-		b, err := json.Marshal(d.project(ctx))
-		if err != nil {
-			return nil, err
-		}
-		d.cacheMu.Lock()
-		d.cache = b
-		d.cacheMu.Unlock()
-		return b, nil
+		return d.takeSnapshot(ctx)
 	}
-	d.cacheMu.Lock()
-	c := d.cache
-	d.cacheMu.Unlock()
-	if c != nil {
+	if c := d.cached(); c != nil {
 		return c, nil
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return json.Marshal(d.project(ctx))
+	return d.takeSnapshot(ctx)
 }
 
-// mutate changes facts under the write lock, then tells the hub.
+// Floor is the snapshot the server serves. It implements server.Source.
+func (d *Demo) Floor(ctx context.Context) ([]byte, error) {
+	s, err := d.view(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.b, nil
+}
+
+// mutate changes facts under the write lock, makes the snapshot of the new
+// state before the lock is handed on, then tells the hub. A long task that
+// takes the lock next cannot make a reader see an older picture.
 func (d *Demo) mutate(ctx context.Context, fn func() error) error {
 	d.mu.Lock()
 	err := fn()
+	_, _ = d.takeSnapshot(context.WithoutCancel(ctx))
 	d.mu.Unlock()
 	d.publish(ctx)
 	return err
@@ -337,9 +371,17 @@ func (d *Demo) publish(ctx context.Context) {
 	if d.cfg.Hub == nil {
 		return
 	}
-	d.mu.RLock()
-	f := d.project(context.WithoutCancel(ctx))
-	d.mu.RUnlock()
+	s := d.cached()
+	if s == nil {
+		var err error
+		d.mu.RLock()
+		s, err = d.takeSnapshot(context.WithoutCancel(ctx))
+		d.mu.RUnlock()
+		if err != nil {
+			return
+		}
+	}
+	f := s.f
 	d.pubMu.Lock()
 	defer d.pubMu.Unlock()
 	for i := len(f.Log) - 1; i >= 0; i-- { // the log is newest first

@@ -3,6 +3,7 @@ package repo
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,6 +47,7 @@ func gitEnv() []string {
 	}
 	return append(env,
 		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_ATTR_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
@@ -142,6 +144,31 @@ func runGitIn(ctx context.Context, dir string, stdin io.Reader, extraEnv []strin
 		return nil, gitError(args, err, stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+// runGitCode runs git and returns its standard output and its exit code. An
+// exit code is not an error here: the caller decides what each code means, and
+// must treat a code it does not know as a failure. An error is returned only
+// when git could not run to an exit (it did not start, it was killed by a
+// signal or the context ended).
+func runGitCode(ctx context.Context, dir string, stdin io.Reader, extraEnv []string, args ...string) ([]byte, int, error) {
+	cmd, cleanup, err := buildGit(ctx, dir, extraEnv, args)
+	if err != nil {
+		return nil, -1, err
+	}
+	defer cleanup()
+	cmd.Stdin = stdin
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	if err == nil {
+		return stdout.Bytes(), 0, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() > 0 && ctx.Err() == nil {
+		return stdout.Bytes(), ee.ExitCode(), nil
+	}
+	return nil, -1, gitError(args, err, stderr.String())
 }
 
 func gitError(args []string, err error, stderr string) error {

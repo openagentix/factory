@@ -34,3 +34,10 @@ export function actMessage(a: Act | undefined): string {
 }
 
 export const busy = (a: Act | undefined) => a !== undefined && (a.phase === 'sending' || a.phase === 'sent');
+
+const SHOWS_SOMETHING = /[^\p{Cc}\p{Cf}\p{White_Space}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u2800]/u;
+
+/** True when a person could see something in the text. Fillers, joiners, variation selectors and blank patterns show nothing. */
+export function hasVisibleText(text: string): boolean {
+    return SHOWS_SOMETHING.test(text);
+}

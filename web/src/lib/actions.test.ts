@@ -158,6 +158,19 @@ describe('the buttons that are built', () => {
         expect(send().getAttribute('aria-disabled')).toBeNull();
     });
 
+    it('an answer with nothing to see keeps Send switched off', async () => {
+        const { container, fake } = await mountWrites(() => ok());
+        for (const ch of ['\u3164', '\u2800', '\u115F', '\uFFA0', '\u034F', '\uFE0F', '\u{E0100}', '\u200B', '\u00A0', ' \n\t']) {
+            await fireEvent.input(box(container), { target: { value: ch + ch } });
+            const send = btn(container, 'Send answer');
+            expect(send.getAttribute('aria-disabled'), JSON.stringify(ch)).toBe('true');
+            await userEvent.click(send);
+        }
+        expect(fake.writes).toHaveLength(0);
+        await fireEvent.input(box(container), { target: { value: 'a\u3164' } });
+        expect(btn(container, 'Send answer').getAttribute('aria-disabled')).toBeNull();
+    });
+
     it('focus stays on the pressed button while the press is sent', async () => {
         let release: (r: Response) => void = () => {};
         const { container } = await mountWrites(() => new Promise<Response>((res) => (release = res)));

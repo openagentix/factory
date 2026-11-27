@@ -2,14 +2,14 @@
     import type { Call } from './floor';
     import type { AppState } from './state.svelte';
     import ActionButton from './ActionButton.svelte';
-    import { MAX_ANSWER_BYTES, answerBytes, busy as isBusy } from './act';
+    import { MAX_ANSWER_BYTES, answerBytes, busy as isBusy, hasVisibleText } from './act';
 
     let { app, call }: { app: AppState; call: Call } = $props();
     let value = $state('');
     const act = $derived(app.acts[`${call.id}|${call.version}`]);
     const bytes = $derived(answerBytes(value));
     const over = $derived(bytes > MAX_ANSWER_BYTES);
-    const empty = $derived(value.trim() === '');
+    const empty = $derived(!hasVisibleText(value));
     const sendable = $derived((call.actions as string[]).includes('answer'));
 </script>
 

@@ -139,7 +139,11 @@ func checkText(text string) (string, int, Code) {
 	if t == "" || !utf8.ValidString(t) {
 		return "", http.StatusUnprocessableEntity, CodeUnprocessable
 	}
+	visible := false
 	for _, r := range t {
+		if !invisible(r) {
+			visible = true
+		}
 		switch {
 		case r == '\n' || r == '\t':
 		case r == utf8.RuneError, // a lone surrogate or a bad byte, replaced by the decoder
@@ -147,7 +151,19 @@ func checkText(text string) (string, int, Code) {
 			return "", http.StatusUnprocessableEntity, CodeUnprocessable
 		}
 	}
+	if !visible {
+		return "", http.StatusUnprocessableEntity, CodeUnprocessable // nothing a person can see
+	}
 	return t, 0, ""
+}
+
+// invisible says whether a code point shows nothing: a control or format
+// character, white space, a variation selector, a default-ignorable code point
+// (the Hangul fillers, the combining grapheme joiner and the like) or the
+// blank braille pattern.
+func invisible(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.IsSpace(r) || unicode.Is(unicode.Variation_Selector, r) ||
+		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || r == '\u2800'
 }
 
 func (s *Server) idemKey(r *http.Request) (string, bool) {

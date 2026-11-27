@@ -620,3 +620,23 @@ func TestAnswerTextIsTrimmed(t *testing.T) {
 		t.Fatalf("%+v", fa.answers)
 	}
 }
+
+// F5: an answer with nothing to see is empty.
+func TestAnswersThatLookBlankAreRefused(t *testing.T) {
+	e, fa := actEnv(t)
+	for name, r := range map[string]rune{"hangul filler": 0x3164, "braille blank": 0x2800, "choseong filler": 0x115F,
+		"halfwidth hangul filler": 0xFFA0, "combining grapheme joiner": 0x034F, "variation selector 16": 0xFE0F,
+		"variation selector 17": 0xE0100, "mongolian vowel separator": 0x180E, "hangul jungseong filler": 0x1160,
+		"nbsp": 0xA0, "ideographic space": 0x3000, "tag space": 0xE0020} {
+		for _, text := range []string{string(r), " " + string(r) + " ", string(r) + string(r) + "\n"} {
+			assertErr(t, post(e, "/api/v1/calls/q-5-9/answer", key1, answerBody(text)), 422, CodeUnprocessable, name)
+		}
+	}
+	if fa.calls() != 0 {
+		t.Fatalf("Actions called %d times", fa.calls())
+	}
+	// Visible text next to an invisible mark is still not refused for the mark alone.
+	if rec := post(e, "/api/v1/calls/q-5-9/answer", key2, answerBody("ok \u00e9")); rec.Code != 200 {
+		t.Fatalf("visible text: %d", rec.Code)
+	}
+}

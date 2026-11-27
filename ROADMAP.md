@@ -38,8 +38,8 @@ Designed, not built. No order or date is set.
 - Live activity of the agent on this machine, as a short plain status on the Live screen.
 - Preparing the workspace early for a ticket this machine could claim.
 - A second example project made mostly of documents. A check that finds no files to check is "could not confirm", never a pass.
-- A standing test that plants a known defect and confirms the factory's own checking catches it. A miss turns the signal red.
-- Tries and usage per accepted change, shown on the engineering screens, with a stop at a limit set per goal.
+- A standing test that plants a known defect and confirms the factory's own verify stage catches it. A miss turns the signal red.
+- Tries and usage per accepted change, on Record and Runs and changes, and tries on the Floor, with a stop at a limit set per goal.
 - A failed check is run once more. A check that changes its answer is marked unreliable and never counts as a pass.
 - A scan of each change for secrets and new dependencies. A secret fails the change. A new dependency is a question for a person.
 - A short guide for coding agents, written at onboarding, with its commands tested.

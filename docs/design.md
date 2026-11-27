@@ -353,7 +353,7 @@ One Go binary, `oxf`.
 | `api` | Shared types, strict parsing, validation. **Built.** |
 | `store` | SQLite: run records shaped like the planned OpenAgentix `AgentRun`, staging states, outcomes, dial settings and their log. Run records and dial settings are built |
 | `githost` | Interface, a GitHub implementation and a fake. Polls, reads, and performs the fixed publish actions with the propose or accept token |
-| `runner` | Interface. v0.1: a **local** runner (a process in a workspace directory) and a fake. Later: container, Kubernetes Job |
+| `runner` | Interface. v0.1: a **local** runner (a process in a workspace directory) and a fake. **Built.** Later: container, Kubernetes Job |
 | `harness` | Thin adapters that build the command line for `claude`, `codex` and the stub, and read their event streams |
 | `governance` | Interface. v0.1: local, with usage as reported and the three usage states |
 | `verify` | Diff, protected paths with real glob matching, checks, acceptance checks and criterion states, risk rules, the machine gate, evidence bundle |
@@ -366,7 +366,7 @@ One Go binary, `oxf`.
 | `server` | JSON API, server-sent events, the embedded web app |
 | `web/` | The Svelte app |
 
-Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance` and `gate`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
+Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate` and `runner`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
 
 Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 

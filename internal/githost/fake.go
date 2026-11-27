@@ -458,6 +458,9 @@ func (f *Fake) PushBranch(_ context.Context, _, commit, branch string) error {
 }
 
 func (f *Fake) PushStaging(_ context.Context, _, commit string) error {
+	if err := checkStagingPush(f.defaultBranch); err != nil {
+		return err
+	}
 	if err := checkCommit(commit); err != nil {
 		return err
 	}

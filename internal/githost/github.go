@@ -767,6 +767,13 @@ func (g *GitHub) PushBranch(ctx context.Context, dir, commit, branch string) err
 }
 
 func (g *GitHub) PushStaging(ctx context.Context, dir, commit string) error {
+	def, err := g.defaultBranch(ctx)
+	if err != nil {
+		return err
+	}
+	if err := checkStagingPush(def); err != nil {
+		return err
+	}
 	return g.push.push(ctx, dir, commit, StagingBranch, true)
 }
 

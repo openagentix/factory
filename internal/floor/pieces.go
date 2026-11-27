@@ -798,6 +798,9 @@ func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationN
 	if !r.HasChange.Val {
 		return c.reworkOrUsed(NoChange, r), 3, since, nil, &r
 	}
+	if _, ok := known(r.PhaseSince); !ok {
+		return InvalidFacts, 3, nil, nil, nil // a succeeded run with no time would wait for ever
+	}
 	if c.src[SourceGate] == SourceNotBuilt {
 		return NotBuilt, 5, since, nil, nil // not stuck: the step is simply not there yet
 	}
@@ -854,19 +857,23 @@ func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationN
 // a stuck code), and stuck with no_review when it has waited more than 24
 // hours since the build run's last phase change. (Fix round 2.)
 func (c *ctx) waitingReview(n int, r RunIn, since *string) (ReasonCode, StationNo, *string, *RunIn) {
-	var failed *RunIn
+	// The review run with the highest attempt for this build run decides.
+	// Two different runs with one attempt number contradict each other.
+	var failed, top *RunIn
 	for i := range c.reviewRuns[n] {
 		rv := &c.reviewRuns[n][i]
 		if rv.SubjectRun != r.ID || rv.SubjectAttempt != r.Attempt {
 			continue
 		}
-		if rv.Phase == api.PhaseSucceeded {
-			failed = nil
-			break
+		switch {
+		case top == nil || rv.Attempt > top.Attempt:
+			top = rv
+		case rv.Attempt == top.Attempt && fmtKey(*rv) != fmtKey(*top):
+			return InvalidFacts, 5, since, nil
 		}
-		if rv.Phase == api.PhaseFailed && (failed == nil || rv.Attempt > failed.Attempt) {
-			failed = rv
-		}
+	}
+	if top != nil && top.Phase == api.PhaseFailed {
+		failed = top
 	}
 	if failed != nil {
 		code := failed.EndReason

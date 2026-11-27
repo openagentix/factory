@@ -215,3 +215,55 @@ func TestDocSaysWhatTheCallerMustSupply(t *testing.T) {
 		}
 	}
 }
+
+// ---- last small fixes ----
+
+func TestY_ReviewDecidedByTheHighestAttempt(t *testing.T) {
+	b := run(1, 1, api.PhaseSucceeded)
+	b.ID = "r_b1"
+	mk := func(rs ...RunIn) Floor {
+		return Project(withRuns(withTickets(healthy(), ticket(1)), append([]RunIn{b}, rs...)...))
+	}
+	ok1 := reviewRun("r_rv1", 1, api.PhaseSucceeded, b)
+	bad2 := reviewRun("r_rv2", 2, api.PhaseFailed, b)
+	bad2.EndReason = ReviewDisagrees
+	expect(t, mk(ok1, bad2), "t1", 5, StateStuck, ReviewDisagrees)
+	expect(t, mk(bad2, ok1), "t1", 5, StateStuck, ReviewDisagrees)
+	// A failure first and a success after it: the success decides.
+	bad1 := reviewRun("r_rv1", 1, api.PhaseFailed, b)
+	bad1.EndReason = NoReview
+	ok2 := reviewRun("r_rv2", 2, api.PhaseSucceeded, b)
+	expect(t, mk(bad1, ok2), "t1", 5, StateWaitingMachine, WaitingReview)
+	// Two different review runs with one attempt number.
+	twin := reviewRun("r_twin", 2, api.PhaseSucceeded, b)
+	expect(t, mk(bad2, twin), "t1", 5, StateStuck, InvalidFacts)
+}
+
+func TestY_SucceededRunWithNoPhaseTimeIsInvalid(t *testing.T) {
+	r := run(1, 1, api.PhaseSucceeded)
+	r.PhaseSince = Opt[time.Time]{}
+	expect(t, Project(withRuns(withTickets(healthy(), ticket(1)), r)), "t1", 3, StateStuck, InvalidFacts)
+}
+
+// The drop of stale applied entries is proven here: with it disabled, ticket 7
+// would sit at 06 and be counted in the holding area.
+func TestY_StaleEntryThenNewAttempt(t *testing.T) {
+	old := run(7, 1, api.PhaseSucceeded)
+	old.CreatedAt, old.StartedAt, old.PhaseSince = Some(at(-5*time.Hour)), Some(at(-5*time.Hour)), Some(at(-4*time.Hour))
+	r2 := run(7, 2, api.PhaseSucceeded)
+	r2.CreatedAt, r2.StartedAt, r2.PhaseSince = Some(at(-130*time.Minute)), Some(at(-130*time.Minute)), Some(at(-125*time.Minute))
+	in := withRuns(withTickets(healthy(), ticket(7)), old, r2)
+	in.Accepted = Some([]AcceptedIn{{Ticket: 7, Goal: 40, At: Some(at(-3 * time.Hour))}})
+	g := gateOf(r2, GatePassed)
+	g.Since = Some(at(-110 * time.Minute))
+	in.Gate = Some([]GateIn{g})
+	in.Holding = Some(publishedHolding(EntryIn{Ticket: 7, Goal: 40, At: Some(at(-3*time.Hour - 20*time.Minute))}))
+	f := Project(in)
+	expect(t, f, "t7", 5, StateWaitingMachine, WaitingCombine)
+	if callOfKind(f, CallAccept) != nil {
+		t.Error("an accept call for a stale entry")
+	}
+	if n := *f.Signal.Inputs.InHoldingArea; n != 0 || *station(f, 6).Count != 0 {
+		t.Errorf("counted in the holding area: %d", n)
+	}
+}

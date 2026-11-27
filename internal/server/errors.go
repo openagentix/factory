@@ -20,6 +20,13 @@ const (
 	CodeUnavailable      Code = "unavailable"
 	CodeReadFailed       Code = "read_failed"
 	CodeInternal         Code = "internal"
+	// Codes of the write routes (record 0004, "Actions").
+	CodeStale               Code = "stale"
+	CodeInProgress          Code = "in_progress"
+	CodeBadIdempotencyKey   Code = "bad_idempotency_key"
+	CodeIdempotencyMismatch Code = "idempotency_mismatch"
+	CodeUnprocessable       Code = "unprocessable"
+	CodeHostFailed          Code = "host_failed"
 )
 
 var knownCodes = map[Code]bool{
@@ -27,7 +34,8 @@ var knownCodes = map[Code]bool{
 	CodeNotFound: true, CodeMethodNotAllowed: true, CodeMisdirected: true,
 	CodePayloadTooLarge: true, CodeUnsupportedMedia: true,
 	CodeTooManyRequests: true, CodeUnavailable: true, CodeReadFailed: true,
-	CodeInternal: true,
+	CodeInternal: true, CodeStale: true, CodeInProgress: true, CodeBadIdempotencyKey: true,
+	CodeIdempotencyMismatch: true, CodeUnprocessable: true, CodeHostFailed: true,
 }
 
 // WriteError writes the fixed error body {"error":"<code>"}. An unknown code

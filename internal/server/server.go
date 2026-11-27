@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,9 @@ type Config struct {
 	Mode string
 	// Source gives the Floor. With nil, the Floor route answers 503.
 	Source Source
+	// Actions carries out the three actions of the first release. With nil,
+	// every action route answers 503.
+	Actions Actions
 	// Static is the web app. Required.
 	Static fs.FS
 	// Logger takes the package's own log lines. Nil discards them.
@@ -70,6 +74,11 @@ type Server struct {
 	origins map[string]bool
 	limiter *limiter
 	hub     *Hub
+	idem    *idemKeeper
+	// actionWait is how long a write may take before the reply is 202. Tests
+	// shorten it; nothing outside the package can.
+	actionWait time.Duration
+	actWG      sync.WaitGroup
 	// Timers for the event stream. Real ones by default. Tests replace them
 	// with channels they control. Each returns a channel and a stop function.
 	newTicker func(time.Duration) (<-chan time.Time, func())
@@ -145,6 +154,9 @@ func New(cfg Config) (*Server, error) {
 		s.origins[fmt.Sprintf("http://%s:%d", h, cfg.Port)] = true
 	}
 	s.limiter = newLimiter(cfg.Now, 10, time.Minute, 1024)
+	s.idem = newIdemKeeper(maxIdemKeys)
+	s.actionWait = 8 * time.Second
+	s.registerActions()
 	s.mustHandle(Route{Method: http.MethodGet, Path: "/api/v1/floor", Handler: s.handleFloor})
 	s.mustHandle(Route{Method: http.MethodGet, Path: "/api/v1/events", Handler: s.handleEvents})
 	return s, nil
@@ -228,10 +240,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	if rt.write {
 		var status int
 		var code Code
-		if body, status, code = readBody(w, r, rt); code != "" {
+		var sum [sha256.Size]byte
+		if body, sum, status, code = readBody(w, r, rt); code != "" {
 			WriteError(w, status, code)
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), bodySumKey{}, sum))
 	}
 	rt.handler(w, r, body)
 }

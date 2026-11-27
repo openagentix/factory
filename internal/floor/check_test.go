@@ -56,13 +56,13 @@ func TestRefusalPhrases(t *testing.T) {
 	for k, want := range map[PhraseKey]string{
 		"refusal.stale":             "This changed. Look again.",
 		"refusal.in_progress":       "This is being done already. Look again in a moment.",
-		"refusal.host_failed":       "The git host did not answer. Part of it may be done. Look at the line, then press again if it still shows this.",
+		"refusal.host_failed":       "The git host did not answer. Part of it may be done. Look at the line, then press again if the call is still there.",
 		"refusal.unprocessable":     "The answer is empty or holds characters that cannot be sent.",
 		"refusal.payload_too_large": "This is too long.",
 		"refusal.unavailable":       "The factory is not ready. Try again in a moment.",
 		"refusal.internal":          "Something went wrong in the factory. Look at the line before you try again.",
 		"refusal.not_found":         "This is not there any more. Look again.",
-		"refusal.unauthorized":      "The key is not valid any more. Open the link again.",
+		"refusal.unauthorized":      "The key is not valid any more. Open the newest link the factory printed.",
 		"refusal.too_many_requests": "Too many tries. Wait a minute.",
 		"refusal.read_failed":       "The factory could not read this. Look again in a moment.",
 	} {

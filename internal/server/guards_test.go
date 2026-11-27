@@ -12,9 +12,18 @@ import (
 func guardTargets(e *testEnv) []string {
 	out := []string{"/", "/healthz"}
 	for _, r := range e.s.Routes() {
-		out = append(out, r.Path)
+		out = append(out, strings.ReplaceAll(r.Path, "{id}", "q-5-9"))
 	}
 	return out
+}
+
+// passStatus is the status a GET gets once it is past every guard: 200 for a
+// read route, 405 for a write route, which only answers POST.
+func passStatus(target string) int {
+	if strings.HasPrefix(target, "/api/v1/calls/") {
+		return 405
+	}
+	return 200
 }
 
 func TestHostAllowList(t *testing.T) {
@@ -50,7 +59,7 @@ func TestHostAllowList(t *testing.T) {
 		e.s.Handler().ServeHTTP(rec, hr)
 		assertErr(t, rec, 421, CodeMisdirected, target+" two Host headers")
 		for _, good := range []string{"127.0.0.1:" + p, "localhost:" + p, "[::1]:" + p} {
-			if rec := e.do(req{path: target, host: good, hdr: e.auth()}); rec.Code != 200 {
+			if rec := e.do(req{path: target, host: good, hdr: e.auth()}); rec.Code != passStatus(target) {
 				t.Errorf("%s Host %q: status %d", target, good, rec.Code)
 			}
 		}
@@ -85,7 +94,7 @@ func TestOriginMustBeAbsentOrThisHost(t *testing.T) {
 		e.s.Handler().ServeHTTP(rec, hr)
 		assertErr(t, rec, 403, CodeForbidden, target+" two Origin headers")
 		for _, good := range []string{"http://127.0.0.1:" + p, "http://localhost:" + p, "http://[::1]:" + p} {
-			if rec := e.do(req{path: target, hdr: merge(e.auth(), map[string]string{"Origin": good})}); rec.Code != 200 {
+			if rec := e.do(req{path: target, hdr: merge(e.auth(), map[string]string{"Origin": good})}); rec.Code != passStatus(target) {
 				t.Errorf("%s Origin %q: status %d", target, good, rec.Code)
 			}
 		}
@@ -107,7 +116,7 @@ func TestSecFetchSite(t *testing.T) {
 			assertErr(t, rec, 403, CodeForbidden, fmt.Sprintf("%s Sec-Fetch-Site %q", target, v))
 		}
 		for _, v := range []string{"same-origin", "none"} {
-			if rec := e.do(req{path: target, hdr: merge(e.auth(), map[string]string{"Sec-Fetch-Site": v})}); rec.Code != 200 {
+			if rec := e.do(req{path: target, hdr: merge(e.auth(), map[string]string{"Sec-Fetch-Site": v})}); rec.Code != passStatus(target) {
 				t.Errorf("%s Sec-Fetch-Site %q: status %d", target, v, rec.Code)
 			}
 		}

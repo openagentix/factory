@@ -4,7 +4,7 @@ Date: 2026-11-26. Revision 7: agrees with decision record 0001. Planning is inte
 
 Lines marked **(owner)** were decided by the owner. Lines marked **(call)** are the assistant's choices and can be changed.
 
-Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/0002-threat-model.md`.
+Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/0002-threat-model.md`, `docs/decisions/0003-run-and-team.md` (running on one machine and in a team).
 
 ## 1. Intent
 
@@ -126,7 +126,7 @@ Planning is with the person and has no limit. After the plan is approved, every 
 |---|---|
 | A permission prompt: "may I run this command?" | **Policy decides.** The run has an allowlist and a sandboxed workspace directory. Inside the policy it runs. Outside, it is denied and recorded. Nobody is asked |
 | A checkpoint while the work is built: "continue?", "is this approach fine?" | **The agent rules, the factory records.** If the choice can be undone and is inside the ticket, the agent decides and writes a ruling: what, why, and the cost if wrong. The machine gate is the real approval |
-| A real question that only the person can answer | **It goes to the inbox.** The run ends. Other work goes on. The person answers a batch in one sitting, and the answer starts the next run |
+| A real question that only the person can answer | **It goes to the inbox.** The run ends and that ticket stops. Other work goes on. A trusted person answers and removes the label `factory:needs-human`, and the next run starts |
 
 The rule: **people decide at gates, never at prompts.**
 
@@ -139,7 +139,7 @@ The rule: **people decide at gates, never at prompts.**
 | Level | Name | A person approves |
 |---|---|---|
 | 0 | Off | The task does not run |
-| 1 | Guided | Each change before it is combined. The engineering profile |
+| 1 | Guided | Each change before it is combined. The engineering profile. Until a guided output can be approved, it starts no work |
 | 2 | Autopilot | Nothing until Accept |
 | 3 | Automatic Accept | Nothing, for a class of change that has earned it. **Shown, not active, in v0.1** |
 
@@ -178,7 +178,7 @@ Changing how a method behaves in this way is accepted for unattended runs. **(ow
 
 **Take the wheel.** A person can plan a goal, or claim any ticket, in their own Claude Code or Codex session and hand the result back. `oxf` serves a Model Context Protocol endpoint for this: list goals and ready work, claim one (which makes a workspace directory and returns the brief), ask a question, submit a spec, a plan or a change. Verify, the machine gate, evidence and publish are the same. This is also the fallback if subscription terms do not allow unattended runs. **(call)**
 
-**Several machines.** State is in GitHub, so each teammate can run `oxf` on their own machine. A run claims its ticket with a label and a marker comment, reads back, and the earliest claim wins. A claim expires after a set time, so a crashed machine does not hold it for ever. One machine at a time holds the staging claim for a repository, by the same rule, and only it combines, rebuilds and accepts. No shared server is needed. **(call)**
+**Several machines.** State is in GitHub, so each teammate can run `oxf` on their own machine. A run claims its ticket with a marker comment and reads back. The live claim with the lowest comment id wins, and every run releases its claim when it ends. A claim expires after `claimExpiry`, default 2 hours, so a crashed machine does not hold it for ever. Detail in decision record 0003. One machine at a time holds the staging claim for a repository, by the same rule, and only it combines, rebuilds and accepts. No shared server is needed. **(call)**
 
 **Team work is part of the core, not a later extra.** **(owner)** Designed, not built, beyond the claims above:
 
@@ -226,7 +226,7 @@ Where things live:
 
 - A **goal** is a GitHub issue with the label `factory:goal`.
 - A **spec** is a markdown file in the repository, `docs/specs/<slug>.md`. The person approves it in the planning conversation, where they see it as the acceptance list. It reaches the default branch with the work, on Accept.
-- A **question** is a comment on the goal issue, shown in the inbox. An answer typed in the web app is posted as a comment.
+- A **question** is a comment on the ticket, shown in the inbox. Until the web app exists, a trusted person answers on the ticket and removes `factory:needs-human`. An answer typed in the web app is posted as a comment.
 - A **ticket** is a sub-issue of the goal with the label `factory:planned`. The factory promotes it to `factory:ready` when its goal's acceptance checks and its dependencies are in staging and the cap allows.
 - **Acceptance checks** live under `acceptance/<goal>/` with one manifest per goal: criterion id, the person's wording, the command. Only the `acceptance` task may write there.
 
@@ -272,8 +272,8 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 ## 9. Configuration
 
 - In the target repository under `.factory/`: `factory.yaml`, `tasks/*.yaml`, `prompts/*.md`. Read from the default branch only. A protected path for every task except `onboard`.
-- The binary carries default tasks and prompts.
-- Machine settings (which harnesses are installed, the listen address, thresholds) live in the user's home directory, never in the repository. The GitHub tokens and the login token are kept in the operating system's credential store.
+- The binary carries the prompts of the `builtin` method. Task files never come from the binary: a repository with no `.factory/` runs nothing. Until `onboard` is built, a person commits `.factory/` by hand; `oxf init` prints starter files for that.
+- Machine settings (which harnesses are installed, the listen address) live in the user's home directory, never in the repository. The GitHub tokens and the login token are kept in the operating system's credential store.
 - GitHub access in v0.1 is a fine-grained personal access token limited to the repository, as the propose token, and optionally a second one as the accept token. Branch protection must stop the propose token's user from updating the default branch. For `factory-staging`, restrict who may push; do not forbid force pushes, which every rebuild needs. A GitHub App comes later. **(call)**
 - On a dedicated machine `oxf` installs as a service and the web app can listen on the local network behind a login token. On a laptop it listens on localhost. The web app has no accounts, so Accept and Undo always need the login token, on localhost too. Runs are designed to be safe to repeat, so sleep or a restart loses only the run in flight. **(call)**
 
@@ -400,7 +400,7 @@ Release content and the build order live in one place: [ROADMAP.md](../ROADMAP.m
 - Unattended starts of Claude Code and Codex were tried by hand, four runs on tiny tasks. See `docs/trials/2026-11-26-unattended-runs.md`. That shows the mechanism works. It says nothing about how often a real job succeeds.
 - An agent can make a wrong ruling. Rulings are shown, and verify and review are outside the agent, but a bad choice that passes the gate reaches staging.
 - The whole weight is on the factory's own checking. "Working" is only as strong as the acceptance check behind it. Where the factory could not confirm something it says so and never ticks the line.
-- All thresholds (including the claim expiry), the trajectory rules, how well "exercised" can be computed, and staging rebuilds on a large repository are not settled. The first real runs decide them.
+- All thresholds (the claim expiry has a default of 2 hours, untested), the trajectory rules, how well "exercised" can be computed, and staging rebuilds on a large repository are not settled. The first real runs decide them.
 - Try it needs a start command from the project. Otherwise the person sees the acceptance list alone.
 - This is a large v0.1 for one maintainer. The build order protects against that.
 
@@ -412,7 +412,7 @@ A fresh reviewer read revision 1 as the person who must plan it. Its questions w
 |---|---|
 | Which compilers does a run have? | Local mode uses what is on the machine. Container mode names a base image in `factory.yaml`. `onboard` proposes the checks |
 | How do tasks without a code change write results? | The worker writes files (`questions` in `result.json`, `issues.json`, `review.json`). The publish step acts on them. The worker never calls GitHub |
-| Which events trigger runs, and how are loops avoided? | Labels, comments, merges and web app actions, only from users with write access or the factory itself. The factory's own comments carry a marker and never trigger |
+| Which events trigger runs, and how are loops avoided? | Labels, comments, merges and web app actions, only from trusted persons (on the list of trusted logins, with write access) or the factory itself. The factory's own comments carry a marker and never trigger |
 | How can `onboard` write `.factory/` if it is protected? | It is the one exception. Configuration is read from the default branch only, so it takes effect after Accept |
 | What do `fix-ci` and `review` work on? | `fix-ci`: open agent pull requests only, known by the `factory/` branch prefix and a label, never `factory-staging`. It shares the ticket's attempts with `implement`. `review`: specs, plans, acceptance checks and changes. No fork pull requests in v0.1 |
 | Does a limit stop a run? | The deadline always does. A cost limit applies to metered usage, by cancelling, best effort |

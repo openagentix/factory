@@ -111,7 +111,7 @@ func Phrases() map[PhraseKey]string {
 		"refusal.host_failed":            "The git host did not answer. Part of it may be done. Look at the line, then press again if the call is still there.",
 		"refusal.unprocessable":          "The answer is empty or holds characters that cannot be sent.",
 		"refusal.payload_too_large":      "This is too long.",
-		"refusal.unavailable":            "The factory is not ready. Try again in a moment.",
+		"refusal.unavailable":            "The factory is busy or not ready. Try again in a moment.",
 		"refusal.internal":               "Something went wrong in the factory. Look at the line before you try again.",
 		"refusal.not_found":              "This is not there any more. Look again.",
 		"refusal.unauthorized":           "The key is not valid any more. Open the newest link the factory printed.",

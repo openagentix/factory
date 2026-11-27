@@ -14,10 +14,11 @@ func apiTargets(e *testEnv) []RouteInfo { return e.s.Routes() }
 
 func TestAPIWithoutOrWithWrongKeyIs401(t *testing.T) {
 	e := newEnv(t)
-	for _, rt := range apiTargets(e) {
+	for i, rt := range apiTargets(e) {
 		what := rt.Method + " " + rt.Path
-		assertErr(t, e.do(req{method: rt.Method, path: rt.Path}), 401, CodeUnauthorized, what+" no key")
-		assertErr(t, e.do(req{method: rt.Method, path: rt.Path, hdr: map[string]string{"Authorization": "Bearer nope", "Content-Type": "application/json"}}), 401, CodeUnauthorized, what+" wrong key")
+		remote := fmt.Sprintf("10.3.0.%d:1", i+1) // each route from its own address: the limit is per address
+		assertErr(t, e.do(req{method: rt.Method, path: rt.Path, remote: remote}), 401, CodeUnauthorized, what+" no key")
+		assertErr(t, e.do(req{method: rt.Method, path: rt.Path, remote: remote, hdr: map[string]string{"Authorization": "Bearer nope", "Content-Type": "application/json"}}), 401, CodeUnauthorized, what+" wrong key")
 	}
 	// unknown API paths do not reveal that they are unknown
 	assertErr(t, e.do(req{path: "/api/v1/zzz"}), 401, CodeUnauthorized, "unknown path no key")
@@ -46,9 +47,10 @@ func TestBearerFormIsStrict(t *testing.T) {
 	k := e.key()
 	bad := []string{"bearer " + k, "BEARER " + k, "Bearer  " + k, " Bearer " + k, "Bearer " + k + " ", "Bearer\t" + k, "Basic " + k, "Bearer", "Bearer ", k, "Token " + k, "Bearer " + k + "x", "Bearer " + k[:len(k)-1]}
 	n := 0
-	for _, rt := range apiTargets(e) {
+	for i, rt := range apiTargets(e) {
 		for _, v := range bad {
 			n++
+			_ = i
 			hr := map[string]string{"Authorization": v, "Content-Type": "application/json"}
 			rec := e.do(req{method: rt.Method, path: rt.Path, hdr: hr, remote: fmt.Sprintf("10.1.0.%d:1", n)})
 			if rec.Code != 401 {
@@ -57,7 +59,7 @@ func TestBearerFormIsStrict(t *testing.T) {
 		}
 		// two Authorization headers: refused even when one is right
 		hr := httpReq(e, rt)
-		hr.RemoteAddr = "10.2.0.1:1"
+		hr.RemoteAddr = fmt.Sprintf("10.2.0.%d:1", i+1)
 		hr.Header["Authorization"] = []string{"Bearer " + k, "Bearer " + k}
 		if rec := serve(e, hr); rec.Code != 401 {
 			t.Errorf("%s: two Authorization headers got %d, want 401", rt.Path, rec.Code)

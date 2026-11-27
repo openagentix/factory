@@ -30,6 +30,13 @@ type fakeActions struct {
 	answers []AnswerRequest
 	conseq  []ConsequenceRequest
 	approve []ApproveRequest
+	accepts []HoldingRequest
+	cancels []HoldingRequest
+	undos   []UndoRequest
+	// previews holds the ids asked for. previewOut and previewErr answer.
+	previews   []string
+	previewOut UndoPreviewView
+	previewErr error
 	// hook runs inside every call. It may block, or fail.
 	hook    func(ctx context.Context, steps Steps) (ActionResult, error)
 	entered chan struct{}
@@ -62,10 +69,34 @@ func (f *fakeActions) Approve(ctx context.Context, r ApproveRequest) (ActionResu
 	f.mu.Unlock()
 	return f.run(ctx, r.Steps)
 }
+func (f *fakeActions) Accept(ctx context.Context, r HoldingRequest) (ActionResult, error) {
+	f.mu.Lock()
+	f.accepts = append(f.accepts, r)
+	f.mu.Unlock()
+	return f.run(ctx, r.Steps)
+}
+func (f *fakeActions) CancelAccept(ctx context.Context, r HoldingRequest) (ActionResult, error) {
+	f.mu.Lock()
+	f.cancels = append(f.cancels, r)
+	f.mu.Unlock()
+	return f.run(ctx, r.Steps)
+}
+func (f *fakeActions) Undo(ctx context.Context, r UndoRequest) (ActionResult, error) {
+	f.mu.Lock()
+	f.undos = append(f.undos, r)
+	f.mu.Unlock()
+	return f.run(ctx, r.Steps)
+}
+func (f *fakeActions) UndoPreview(_ context.Context, change string) (UndoPreviewView, error) {
+	f.mu.Lock()
+	f.previews = append(f.previews, change)
+	f.mu.Unlock()
+	return f.previewOut, f.previewErr
+}
 func (f *fakeActions) calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return len(f.answers) + len(f.conseq) + len(f.approve)
+	return len(f.answers) + len(f.conseq) + len(f.approve) + len(f.accepts) + len(f.cancels) + len(f.undos) + len(f.previews)
 }
 
 func actEnv(t *testing.T) (*testEnv, *fakeActions) {
@@ -105,6 +136,9 @@ func TestTheRegisteredRoutesAreExactlyTheExpectedList(t *testing.T) {
 		"GET /api/v1/events", "GET /api/v1/floor",
 		"POST /api/v1/calls/{id}/answer", "POST /api/v1/calls/{id}/approve",
 		"POST /api/v1/calls/{id}/no", "POST /api/v1/calls/{id}/yes",
+		"POST /api/v1/holding-area/accept", "POST /api/v1/holding-area/cancel",
+		"POST /api/v1/changes/{id}/undo", "GET /api/v1/changes/{id}/undo-preview",
+		"GET /api/v1/pieces/{id}",
 	}
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -120,6 +154,9 @@ func actRoutes() []actRoute {
 		{"yes", "/api/v1/calls/c-5-run-1/yes", verBody},
 		{"no", "/api/v1/calls/c-5-run-1/no", verBody},
 		{"approve", "/api/v1/calls/p-3/approve", verBody},
+		{"accept", "/api/v1/holding-area/accept", holdBody()},
+		{"cancel", "/api/v1/holding-area/cancel", holdBody()},
+		{"undo", "/api/v1/changes/run-1/undo", undoBody("run-1", "run-2")},
 	}
 }
 

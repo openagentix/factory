@@ -55,7 +55,7 @@ func TestEveryRouteHasEveryGuard(t *testing.T) {
 	if len(routes) < 3 {
 		t.Fatalf("expected the built-in routes and the test routes, got %v", routes)
 	}
-	for _, rt := range routes {
+	for i, rt := range routes {
 		path := strings.ReplaceAll(rt.Path, "{id}", "t57")
 		what := rt.Method + " " + rt.Path
 		j := map[string]string{"Content-Type": "application/json"}
@@ -63,7 +63,7 @@ func TestEveryRouteHasEveryGuard(t *testing.T) {
 		assertErr(t, e.do(req{method: rt.Method, path: path, hdr: merge(e.auth(), j, map[string]string{"Origin": "https://evil.test"})}), 403, CodeForbidden, what+" origin")
 		assertErr(t, e.do(req{method: rt.Method, path: path, hdr: merge(e.auth(), j, map[string]string{"Sec-Fetch-Site": "cross-site"})}), 403, CodeForbidden, what+" fetch site")
 		assertErr(t, e.do(req{method: rt.Method, path: path, hdr: j}), 401, CodeUnauthorized, what+" no key")
-		assertErr(t, e.do(req{method: rt.Method, path: path, remote: "10.9.9.9:1", hdr: merge(j, map[string]string{"Authorization": "Bearer x"})}), 401, CodeUnauthorized, what+" wrong key")
+		assertErr(t, e.do(req{method: rt.Method, path: path, remote: fmt.Sprintf("10.9.9.%d:1", i+1), hdr: merge(j, map[string]string{"Authorization": "Bearer x"})}), 401, CodeUnauthorized, what+" wrong key")
 		if rt.Method != "GET" {
 			assertErr(t, e.do(req{method: rt.Method, path: path, hdr: merge(e.auth(), map[string]string{"Content-Type": "text/plain"})}), 415, CodeUnsupportedMedia, what+" text/plain")
 		}
@@ -247,18 +247,18 @@ func TestMethodAllowListAndOptions(t *testing.T) {
 func TestPathValuesAreStrictIDs(t *testing.T) {
 	e := newEnv(t)
 	var got atomic.Value
-	e.s.mustHandle(Route{Method: "GET", Path: "/api/v1/pieces/{id}", Handler: func(w http.ResponseWriter, r *http.Request, _ any) {
+	e.s.mustHandle(Route{Method: "GET", Path: "/api/v1/stuff/{id}", Handler: func(w http.ResponseWriter, r *http.Request, _ any) {
 		got.Store(r.PathValue("id"))
 		_, _ = w.Write([]byte(`{}`))
 	}})
-	if rec := e.do(req{path: "/api/v1/pieces/t57", hdr: e.auth()}); rec.Code != 200 || got.Load() != "t57" {
+	if rec := e.do(req{path: "/api/v1/stuff/t57", hdr: e.auth()}); rec.Code != 200 || got.Load() != "t57" {
 		t.Fatalf("good id: %d %v", rec.Code, got.Load())
 	}
 	for _, id := range []string{"..", ".", "%2e%2e", "a%2fb", "a.b", strings.Repeat("a", 65), "%C3%A9", "-x", "a%00", "a%20b", "a;b"} {
-		assertErr(t, e.do(req{path: "/api/v1/pieces/" + id, hdr: e.auth()}), 404, CodeNotFound, "id "+id)
+		assertErr(t, e.do(req{path: "/api/v1/stuff/" + id, hdr: e.auth()}), 404, CodeNotFound, "id "+id)
 	}
-	assertErr(t, e.do(req{path: "/api/v1/pieces//t57", hdr: e.auth()}), 404, CodeNotFound, "double slash")
-	assertErr(t, e.do(req{path: "/api/v1/pieces/t57/", hdr: e.auth()}), 404, CodeNotFound, "trailing slash")
+	assertErr(t, e.do(req{path: "/api/v1/stuff//t57", hdr: e.auth()}), 404, CodeNotFound, "double slash")
+	assertErr(t, e.do(req{path: "/api/v1/stuff/t57/", hdr: e.auth()}), 404, CodeNotFound, "trailing slash")
 }
 
 func TestHandleRefusesBadRoutes(t *testing.T) {

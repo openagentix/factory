@@ -35,6 +35,8 @@ type Config struct {
 	// Actions carries out the three actions of the first release. With nil,
 	// every action route answers 503.
 	Actions Actions
+	// Detail gives the piece detail. With nil, the piece route answers 503.
+	Detail Detailer
 	// Static is the web app. Required.
 	Static fs.FS
 	// Logger takes the package's own log lines. Nil discards them.

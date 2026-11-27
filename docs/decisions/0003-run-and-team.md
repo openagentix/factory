@@ -1,6 +1,6 @@
 # 0003. Running on one machine and in a team
 
-- Status: proposed, 2026-11-27. Designed, not built. Nothing here has been run.
+- Status: proposed, 2026-11-27. Designed. Built and tested, and not used by anything yet: the machine settings file, the token source and the redaction filter. Nothing here has been run.
 - Scope: `oxf init` and `oxf run` on one machine, and teammates' machines sharing one GitHub repository, in the first release. Record 0001 is the authority. Where this record changes it, "Changes to record 0001" says so, and 0001 was edited to agree.
 - **(call)** marks a call by the assistant, open to change. **(owner)** marks the owner's call.
 
@@ -56,6 +56,13 @@ From the operating system's own credential tool, behind one interface, with no n
 - The propose token is required. The accept token is optional, and its absence is never an error. A missing or failing tool, or a missing propose token, stops the start.
 - The token is read from the tool's output. It never appears in an argument list, a log, an event, the database or an error.
 - Never from an environment variable, never from a file. No fallback.
+- The accept token is refused when it equals the propose token, or when the propose token cannot be read at that moment. One token stored twice would give a worker a credential that can merge.
+- The tool gets a fixed, small environment. On Linux it gets no `HOME`.
+- On macOS only exit status 44 with no output means "not stored". On Linux exit status 1 with no output and no error text means "not stored". Anything else is a failure.
+
+**Directories.** Every directory above the config directory and the data directory is checked. It must belong to the user or to root. One that others can write to is refused unless it has the sticky bit. One that its group can write to is also refused, with two exceptions: it has the sticky bit, or it belongs to the user and its group is the user's primary group and has the same name as the user. Only the name is checked, not who is in the group. A symbolic link is refused unless root owns it. The config directory and the data directory are never links. `webPort` is written as a plain decimal number with no leading zero.
+
+**Redaction.** The filter is given the token values. It replaces them in text and in streams, also when a value is split across writes. It does not know encoded forms of a token, such as base64. A filter cannot learn a new value after it is made. So this is a rule for the code that will use it, not built yet: a stream is opened only after every token it could carry was read, and when the accept token is read later (record 0002), the filter and its streams are made again.
 
 On macOS the first read after login can show a dialog, which stalls an unattended start. On Linux the tool needs a desktop secret service, which a headless server usually lacks. Headless Linux and other systems are not supported yet.
 
@@ -277,7 +284,10 @@ A commit a teammate's machine makes is signed off in that teammate's own name, f
 
 ## Limits
 
-- Designed, not built. No rule here is tested by a run.
+- Designed. Built and tested so far: the machine settings file with its locks, the token source and the redaction filter. Nothing uses them yet, and no rule here is tested by a run on a real repository. The token source has been tested with a fake tool only, never with the real credential tool.
+- On Linux, "not stored" is told from a failure only by exit status 1 with no output. Whether a dismissed unlock prompt looks the same is not checked. If it does, it reads as "no accept token", which gives less power.
+- A directory above the settings or the data that a shared group can write to is refused. The message names the directory. A user known only through a network directory service, in a build without cgo, is treated the same way, because the group's name cannot be looked up.
+- The guard test that keeps these packages from reading the environment or starting other programs is a source scan. It does not catch everything.
 - One `oxf` per user and one run at a time: work is serial, one repository per machine.
 - **A hostile agent running as the same user can read the propose token through the credential tool.** With it, it can do anything the token's trusted login can do on the host: approve, answer, claim, release, add or remove a label. It could also run `oxf init` itself. Running `oxf` under its own operating system user, or on a dedicated machine, narrows this. Neither is built. Later **(call)**: a dedicated factory account for the token, which is not itself trusted for approvals and answers.
 - The cut-off limit holds against an agent that stops the factory. It does not hold against one that also takes the token, because it can remove the label as the token's user. Deleting the store also loses the count.

@@ -360,11 +360,11 @@ One Go binary, `oxf`.
 | `policy` | The permission policy for a run: what is allowed, what is denied and recorded |
 | `wheel` | The Model Context Protocol endpoint for planning or taking the wheel in a person's own session: list, claim, ask, submit |
 | `floor` | **Built.** The read model: its types, one pure function from records to a snapshot, reason codes, gauge rules, the journal |
-| `server` | JSON API with the key on every data route, request checks, live events, the actions, the embedded web app or a placeholder page. **Built**, without the actions, serving the placeholder page |
+| `server` | JSON API with the key on every data route, request checks, live events, the actions, the embedded web app or a placeholder page. **Built**, with three actions (answer, yes or no, approve) |
 | `demo` | The made-up project and story for `--demo`, with a driver that stands in for the orchestrator until it exists. **Built.** Each step of the story names the result it expects from the real code, and the story stops when the real result differs |
 | `web/` | The web app source. Its built files are embedded and not committed |
 
-Built and tested: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner`, `staging`, `floor`, `floor/collect`, `server` and `demo`. They are wired together only in the demo, `oxf run --demo`. The collector, `floor/collect`, reads the store, the git host and the holding area and fills the read model's input; facts that no package stores yet come from a small ledger in memory. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
+Built and tested: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner`, `staging`, `floor`, `floor/collect`, `server`, `demo`, `settings`, `tokens` and `redact`. They are wired together only in the demo, `oxf run --demo`; `settings`, `tokens` and `redact` are not used by anything yet. The collector, `floor/collect`, reads the store, the git host and the holding area and fills the read model's input; facts that no package stores yet come from a small ledger in memory. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
 
 Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 

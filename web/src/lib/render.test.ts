@@ -172,7 +172,7 @@ describe('screens', () => {
         for (const b of buttons) {
             if (live.includes(text(b))) {
                 expect(b.disabled, text(b)).toBe(false);
-                expect(text(b.parentElement!)).not.toContain('Not built yet');
+                expect(b.nextElementSibling?.classList.contains('nb') ?? false, text(b)).toBe(false);
             } else {
                 expect(b.disabled, text(b)).toBe(true);
                 expect(text(b.parentElement!)).toContain('Not built yet');

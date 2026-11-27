@@ -97,7 +97,7 @@
                 <Pending label="Undo a change" />
             {/if}
         </div>
-        <p class="small act-msg" role="status" aria-live="polite">{actMessage(actOf(c))}</p>
+        <p class="small act-msg" aria-live="polite">{actMessage(actOf(c))}</p>
         {#if c.kind === 'accept'}
             <p class="caution"><Icon name="stuck" />Try it runs code the factory wrote. No person has read it.</p>
         {/if}

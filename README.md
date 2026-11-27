@@ -10,7 +10,7 @@ Small engineering teams first, roughly two to twenty engineers on a shared codeb
 
 > **Status: early. Not usable yet.**
 >
-> - The design is written. Ten Go packages are built and tested: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner` and `staging`, all under `internal/`. They are parts that are not wired together.
+> - The design is written. Eleven Go packages are built and tested: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner`, `staging` and `floor` (the read model of the Floor screen), all under `internal/`. They are parts that are not wired together.
 > - Four trial runs by hand show that an installed agent can be started unattended. See [the trial record](docs/trials/2026-11-26-unattended-runs.md).
 > - There is no release and no usable command beyond `oxf version`. Every feature below is a plan.
 

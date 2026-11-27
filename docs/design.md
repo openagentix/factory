@@ -337,12 +337,12 @@ One Go binary, `oxf`.
 | `orchestrator` | Polls, matches triggers to tasks, applies the dial, throttles, the cap and claims, drives the three stages |
 | `policy` | The permission policy for a run: what is allowed, what is denied and recorded |
 | `wheel` | The Model Context Protocol endpoint for planning or taking the wheel in a person's own session: list, claim, ask, submit |
-| `floor` | The read model: its types, one pure function from records to a snapshot, reason codes, gauge rules, the journal |
+| `floor` | **Built.** The read model: its types, one pure function from records to a snapshot, reason codes, gauge rules, the journal |
 | `server` | JSON API with the key on every data route, request checks, live events, the actions, the embedded web app or a placeholder page |
 | `demo` | The made-up project and story for `--demo`, with a driver that stands in for the orchestrator until it exists |
 | `web/` | The web app source. Its built files are embedded and not committed |
 
-Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner` and `staging`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
+Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner`, `staging` and `floor`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
 
 Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 

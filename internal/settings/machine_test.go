@@ -474,3 +474,172 @@ func TestDataDirRules(t *testing.T) {
 		}
 	})
 }
+
+// A link anywhere above the data directory is refused, also when the link
+// points to a directory that looks fine. The link is the user's own, so the
+// user (or anything running as the user) could repoint it.
+func TestDataDirBelowALinkIsRefused(t *testing.T) {
+	f := newFixture(t)
+	root := filepath.Dir(f.cfg)
+	open := filepath.Join(root, "open")
+	if err := os.Mkdir(open, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(open, link); err != nil {
+		t.Fatal(err)
+	}
+	f.data = filepath.Join(link, "oxf")
+	f.write(settingsFor(f.data), 0o600)
+	if m, err := f.open(); err == nil {
+		m.Close()
+		t.Fatal("started with a data dir below a link to a world writable directory")
+	}
+	if _, err := os.Lstat(filepath.Join(open, "oxf")); err == nil {
+		t.Fatal("a data directory was made through the link")
+	}
+	// A link to a private directory is refused too.
+	private := filepath.Join(root, "private")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link2 := filepath.Join(root, "link2")
+	if err := os.Symlink(private, link2); err != nil {
+		t.Fatal(err)
+	}
+	f.data = filepath.Join(link2, "deeper", "oxf")
+	f.write(settingsFor(f.data), 0o600)
+	if m, err := f.open(); err == nil {
+		m.Close()
+		t.Fatal("started with a data dir below a link to a private directory")
+	}
+	if _, err := os.Lstat(filepath.Join(private, "deeper")); err == nil {
+		t.Fatal("a directory was made through the link")
+	}
+}
+
+func TestConfigDirThatIsALinkIsRefused(t *testing.T) {
+	f := newFixture(t)
+	root := filepath.Dir(f.cfg)
+	real := filepath.Join(root, "realcfg")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(f.oxf, filepath.Join(real, "oxf")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(real, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "cfglink")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	f.env.configDir = func() (string, error) { return link, nil }
+	if m, err := f.open(); err == nil {
+		m.Close()
+		t.Fatal("started with a config dir that is a link to a world writable directory")
+	}
+}
+
+func TestParentsMustNotBeWritableByOthers(t *testing.T) {
+	for name, mode := range map[string]os.FileMode{"0777": 0o777, "0770": 0o770, "0707": 0o707, "0772": 0o772} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			shared := filepath.Join(filepath.Dir(f.cfg), "shared")
+			if err := os.Mkdir(shared, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(shared, mode); err != nil {
+				t.Fatal(err)
+			}
+			f.data = filepath.Join(shared, "oxf")
+			f.write(settingsFor(f.data), 0o600)
+			if m, err := f.open(); err == nil {
+				m.Close()
+				t.Fatal("started")
+			}
+			if _, err := os.Lstat(f.data); err == nil {
+				t.Fatal("the data directory was made")
+			}
+		})
+	}
+	t.Run("sticky and owned by the user is fine", func(t *testing.T) {
+		f := newFixture(t)
+		shared := filepath.Join(filepath.Dir(f.cfg), "shared")
+		if err := os.Mkdir(shared, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(shared, os.ModeSticky|0o777); err != nil {
+			t.Fatal(err)
+		}
+		f.data = filepath.Join(shared, "oxf")
+		f.write(settingsFor(f.data), 0o600)
+		mustOpen(t, f)
+	})
+	t.Run("the config directory is walked too", func(t *testing.T) {
+		f := newFixture(t)
+		if err := os.Chmod(f.cfg, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if m, err := f.open(); err == nil {
+			m.Close()
+			t.Fatal("started below a world writable config directory")
+		}
+	})
+}
+
+// The temporary directories of this system are on the way and must pass: on
+// macOS /var is a link owned by root, on Linux /tmp is sticky and owned by root.
+func TestSystemTemporaryPathsPass(t *testing.T) {
+	for _, base := range []string{t.TempDir(), os.TempDir(), "/tmp"} {
+		if err := checkAncestors(filepath.Join(base, "not", "yet", "there"), os.Getuid()); err != nil {
+			t.Errorf("%s refused: %v", base, err)
+		}
+	}
+}
+
+// With a umask that removes the owner's write bit, the start fails and leaves
+// no data directory behind. This test changes the umask of the process, so it
+// must not run in parallel with others.
+func TestOddUmaskFailsCleanlyAndLeavesNothing(t *testing.T) {
+	f := newFixture(t)
+	mustOpen(t, f).Close() // makes the config lock file, which stays by design
+	if err := os.RemoveAll(filepath.Dir(f.data)); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshot(t, f)
+	old := syscall.Umask(0o277)
+	t.Cleanup(func() { syscall.Umask(old) })
+	m, err := f.open()
+	syscall.Umask(old)
+	if err == nil {
+		m.Close()
+		t.Fatal("started under umask 0277")
+	}
+	if after := snapshot(t, f); after != before {
+		t.Fatalf("files were left behind:\nbefore %s\nafter  %s", before, after)
+	}
+	// The locks were given back.
+	m, err = f.open()
+	if err != nil {
+		t.Fatalf("a failed start kept a lock: %v", err)
+	}
+	m.Close()
+}
+
+// An os.Root follows a link that stays inside it. The lock file must still be
+// refused when it is such a link.
+func TestLockFileThatIsALinkInsideTheDirectoryIsRefused(t *testing.T) {
+	f := newFixture(t)
+	if err := os.Symlink("settings.yaml", filepath.Join(f.oxf, "oxf.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := f.open(); err == nil {
+		m.Close()
+		t.Fatal("started over a lock file that is a link inside the directory")
+	}
+}

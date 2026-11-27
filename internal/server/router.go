@@ -141,8 +141,3 @@ func (e *route) matchSegs(parts []string) (map[string]string, bool) {
 	}
 	return vals, true
 }
-
-// readBody is replaced by the strict version in the next commit.
-func readBody(w http.ResponseWriter, r *http.Request, rt *route) (any, int, Code) {
-	return nil, 0, ""
-}

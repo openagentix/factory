@@ -2,7 +2,7 @@
 
 **Spend your time deciding what to build. None watching it get built.**
 
-An open-source software factory. Your team plans a goal in conversation. The factory then builds it with nobody watching, checks the result itself, and shows what works. It uses the Claude Code and Codex CLI that are already installed on each teammate's machine.
+An open-source software factory. Your team plans a goal in conversation. The factory then builds it with nobody watching, checks the result itself, and shows what works. It starts the Claude Code and Codex CLI that each teammate has installed and signed in to on their own machine, and never reads or shares a login. Whether a plan's terms allow unattended use is for each team to check.
 
 ## Who it is for
 

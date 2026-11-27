@@ -304,6 +304,8 @@ One level per unattended task sets where the factory stops for a person after th
 
 ## Trust and the attention record
 
+**Observe before enforce** (designed, not built). Any rule that can stop or pass a change, such as a dial level, a risk rule or a class switch for automatic Accept, can run first in an `observe` mode. The factory records what it would have decided and changes nothing. A team reads that record before it turns the rule on.
+
 Trust comes from outcomes after Accept, never from the act of accepting, and never from opening a card. An outcome is recorded per change, by its commit, inside a window:
 
 - **Bad**: the change is reverted, a later fix names it, or the default branch turns red on the Accept merge commit and stays red when run again. A red build counts against every change in that Accept.
@@ -315,6 +317,8 @@ A documents-only change has nothing to exercise. For that kind alone, good means
 A **class of change** is the task, the risk level, and the most serious kind of path touched, in this order: security, contract, dependencies, code, tests, documents. The orchestrator assigns it from the change. A class is **eligible** for automatic Accept when it is low risk and, inside the window, has at least a set number of good outcomes, no bad outcome, and every review from a different harness than the builder. The count and the window are settings with no default. The factory proposes an eligible class and a person switches it on. Every switch is logged. A bad outcome switches the class off, and it needs a fresh full count. In the first release eligibility is computed and shown only.
 
 The **attention record**, per task: touches per accepted goal, questions asked, rulings made, rulings overturned. A ruling is overturned when a person marks it so in the engineering view. Many overturned rulings say turn the dial down. Planning time is not counted against the factory.
+
+**Who still has to act.** Every exception, and every change waiting at a gate, states in plain words in the outcome view who must act and what is needed. Designed, not built.
 
 ## Trajectory
 
@@ -368,6 +372,8 @@ The **evidence bundle** is built by the orchestrator in the verify stage. The re
 
 ## Interfaces that vary by where it runs
 
+**How to undo, and spending limits** (designed, not built). Every action the publish step takes is recorded with how to take it back, and Undo in the outcome view uses that record. For metered use there is also a spending limit per task kind, beside the per-run limit: reported on a laptop, enforced on OpenAgentix.
+
 ```go
 type Runner interface { Start(ctx context.Context, spec WorkSpec) (Handle, error) } // the work stage
 type Handle interface { Logs(ctx context.Context) (io.ReadCloser, error); Wait(ctx context.Context) (int, error); Cancel(ctx context.Context) error }
@@ -390,7 +396,7 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 
 **Local runner rules**, and others that vary by place:
 
-- It starts the official `claude` or `codex` program in place. It never reads, copies or forwards a login token. It is designed to need no API key; whether subscription terms allow this is not checked (see Not settled).
+- It starts the official `claude` or `codex` program in place. It never reads, copies or forwards a login token. Login and billing position: see Not settled.
 - It removes git host credentials from the process environment: no token variables, no credential helper, no agent socket. This does not stop the agent reading the home directory (see Credentials, local mode limit).
 - It uses the strictest sandbox setting of the harness that still lets the task run. A deadline always applies, and the process group is killed at it. Runs are designed to be safe to repeat. No trial has cut a run off part way to show it.
 - A cost limit applies only to metered usage. The orchestrator reads usage from the event stream and cancels the run past the limit. This lags, so the web app says "best effort".
@@ -468,7 +474,7 @@ Left to the first real runs, and not designed further here:
 - Whether to shut a person's global agent instructions and tools out of a run. A trial showed they leak in, cost tokens and change behaviour.
 - How well "exercised" can be computed.
 - How staging rebuilds behave on a large repository, in time and in checks run, and how the staging claim passes between machines.
-- Whether subscription terms allow unattended runs started by another program. If they do not, unattended runs need an API key, and take the wheel remains for subscription users.
+- **Logins and plan terms.** The factory starts the unmodified, official agent program that a person is signed in to on their own machine. It never reads, copies, shares or pools a login. Each teammate uses their own. Whether a plan's terms allow the amount and kind of unattended use a team intends is for that team to check, and plan limits assume ordinary individual use. For one of the two supported agent programs, the vendor's guidance is to use an API key for automation, and not to use a personal login for public or open-source repositories. So the setup screen must say which billing each agent will use, and recommend a key there. The vendors' terms and guidance were read on 2026-11-27. This is not legal advice. Any hosted or shared service must use API keys or each person's own sign-in. If a team's plan does not fit, unattended runs need an API key, and take the wheel remains.
 - A workflow plugin was loaded for one run by path and its skill was called by name, in one trial with Claude Code. Driving a whole planning or build method this way, and doing it with Codex or with Open GSD, is not tried.
 - How the factory should choose a lane.
 

@@ -10,7 +10,7 @@ Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/00
 
 A small engineering team states a business goal. The factory turns it into a spec, the spec into tickets, the tickets into verified changes, and later into deployed, observed software whose problems come back as tickets. A person steps in only where needed, and less over time as the factory earns trust. **(owner)**
 
-**The factory does not own the agents. It owns the work.** People keep the Claude Code and Codex they already have, with the logins they already pay for, on their own machine. The factory orchestrates: it holds the pipeline, hands out work, checks results, records evidence and shows it all. **(owner)**
+**The factory does not own the agents. It owns the work.** People keep the Claude Code and Codex they already have, signed in on their own machine. The factory orchestrates: it holds the pipeline, hands out work, checks results, records evidence and shows it all. **(owner)**
 
 **The product line: "Spend your time deciding what to build. None watching it get built."** **(owner)** Planning is a live conversation with no limit on rounds or questions, in the person's own Claude Code or Codex session or in the web app. Once the plan is approved, the factory works alone with a reliable way to judge the result. People who use coding agents today spend the day answering "yes" to prompts while the work is built. That is the problem this product removes.
 
@@ -22,13 +22,15 @@ Why now: tools that turn one ticket into one pull request are free. Practitioner
 
 What makes this product different:
 
-1. **Your agents, your logins, your repository, your machines.** Open source, Apache-2.0. Designed to need no API key, if subscription terms allow unattended runs started by another program, which is not checked (section 4).
+1. **Your agents, your logins, your repository, your machines.** Open source, Apache-2.0. Each teammate uses their own sign-in, and the factory never pools logins. See section 4 for the position on plan terms and API keys.
 2. **Gates, not prompts, after planning.** No run after the plan stops to ask for a yes. The machine gate judges each change. A person is interrupted only by an exception.
 3. **An autonomy dial per task.** It sets where the factory stops for a person. Visible, and moved by a person.
 4. **Evidence for every change.** The factory, not the agent, records what changed, what was checked and what it used.
 5. **A trust ledger** that shows whether a higher dial setting has been earned by outcomes after Accept, and how much of a person's attention the factory used.
 6. **Verification from the spec.** Acceptance checks are written from the person's own words before the code, and the builder cannot edit them.
 7. **One engine from laptop to cluster.** A laptop, a dedicated machine, Kubernetes, and OpenAgentix where limits are enforced. **(owner)**
+
+**Review services on an open pull request.** Hosted services now exist that review a pull request with several agents, fix failing checks on it, and apply approval rules from a policy file. They start when a change already exists. This project starts at the goal and gets a team to a change worth reviewing, with acceptance checks the builder cannot change, a staging branch, a trust record from outcomes, any builder, the team's own machines, and open source. The two fit together: the factory opens pull requests, and a team that uses such a service gets its review as one more opinion. The factory does not depend on one, and a review by the same vendor as the builder is not counted as an independent opinion.
 
 Positioning line: **the software factory that earns its autonomy.** Tagline: "Runs on your laptop. Governed on OpenAgentix." **(owner approved the positioning; tagline is a call)**
 
@@ -79,6 +81,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 - A worker can change the checks that judge it.
 - Trying it needs an API key, a cluster, a database server or a public endpoint.
 - It copies or moves a person's login tokens anywhere.
+- A change can reach the default branch with no person and no outcome record behind the rule that allowed it.
 - The web app is a wall of charts instead of a place to act.
 - A person has to sit and approve steps for the work to move after the plan is approved.
 
@@ -95,7 +98,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 - Docs in plain English. Public claims only for what a run has proven.
 - Name: OpenAgentix Software Factory. Site and API group: `factory.openagentix.org`. Language: Go. **(owner)** Command: `oxf` **(call)**.
 
-**To check before any public claim:** whether the terms of Claude and Codex subscriptions allow unattended runs started by another program. Not checked. If they do not, unattended runs on a subscription are dropped, taking the wheel remains for subscription users, and unattended runs need an API key.
+**Logins and plan terms.** The position is stated once, in decision record 0001, "Not settled". In short: the factory starts the unmodified, official agent program that a person is signed in to, never reads, copies, shares or pools a login, and whether a plan's terms fit a team's use is for that team to check. The setup screen says which billing each agent will use and recommends an API key. This is not legal advice.
 
 ## 5. Approaches
 
@@ -385,11 +388,11 @@ Release content and the build order live in one place: [ROADMAP.md](../ROADMAP.m
 
 ## 13. Limits and risks, stated plainly
 
-- Whether subscription terms allow unattended runs is not checked. See section 4.
+- Whether a plan's terms allow the unattended use a team intends is for that team to check. See section 4.
 - Local mode has no container. The agent runs as the same user as `oxf` and can read that user's files. See section 8.
 - Try it runs code no person has read on the person's machine, in the checks' sandbox.
 - Loading an installed plugin for one run and calling its skill by name worked once in a trial. Driving a whole method that way is not tried.
-- Subscription rate limits cap how much the factory can do. For a small team that also acts as a brake.
+- Plan limits assume ordinary individual use, and cap how much the factory can do. For a small team that also acts as a brake.
 - Building features with agents is the least proven use in the research. Maintenance work is where factories succeed today. Expect rework. The trust ledger exists to show it.
 - No research in hand covers teams of two to twenty. That audience is a bet.
 - Unattended starts of Claude Code and Codex were tried by hand, four runs on tiny tasks. See `docs/trials/2026-11-26-unattended-runs.md`. That shows the mechanism works. It says nothing about how often a real job succeeds.

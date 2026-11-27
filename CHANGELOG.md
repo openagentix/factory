@@ -9,6 +9,7 @@ There is no release yet. While the version is 0.x, minor releases can change int
 ### Changed
 
 - The audience is now small engineering teams first, then larger organisations. Team work is part of the core design, and the v0.1 build order has a team basics step. Solo founders who are not engineers are not the audience.
+- The outcome view opens first for everyone. The wording on subscription logins is now one position, in record 0001. Designed, not built: observe mode for rules, who-must-act notes, recorded undo for publish actions, a spending limit per task kind, and an OpenAgentix-native mapping.
 
 ### Added
 

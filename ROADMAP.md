@@ -44,4 +44,4 @@ Container and Kubernetes runners, deploying, the deep lane, automatic Accept, gi
 
 ## Open question before any public claim
 
-Whether the terms of Claude and Codex subscriptions allow unattended runs started by another program is not checked. A trial showed that it works. If the terms do not allow it, unattended runs need an API key, and take the wheel remains for subscription users.
+Whether a plan's terms allow the unattended use a team intends is for that team to check. The position is in decision record 0001, "Not settled". A trial showed that the mechanism works. Where a plan does not fit, unattended runs need an API key, and take the wheel remains.

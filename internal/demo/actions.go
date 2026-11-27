@@ -188,13 +188,20 @@ func (d *Demo) resume(ctx context.Context, ticket int, journal func(floor.Journa
 		}
 	}
 	if answer == nil {
-		// The label went and no answer stands: it goes back, with a fixed line.
+		// The label went and no answer stands: one fixed line, then the label
+		// goes back. The line has the slot form of the run marker, so it is
+		// never the question. A failure between the two steps does not post
+		// the line again.
+		if !d.noAnswer[runID] {
+			if err := d.host.PostComment(ctx, ticket, runID+".no_answer", "No answer was found."); err != nil {
+				return server.ErrHostFailed
+			}
+			d.noAnswer[runID] = true
+		}
 		if err := d.host.AddLabel(ctx, ticket, githost.LabelNeedsHuman); err != nil {
 			return server.ErrHostFailed
 		}
-		if err := d.host.PostComment(ctx, ticket, runID, "No answer was found."); err != nil {
-			return server.ErrHostFailed
-		}
+		delete(d.noAnswer, runID)
 		return server.ErrStale
 	}
 	prev := d.jobs[runID]

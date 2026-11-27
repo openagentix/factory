@@ -89,7 +89,9 @@ func TestQuestionsOfStripsTheMarkerAndKeepsOnlyQuestions(t *testing.T) {
 }
 
 // A question comment counts for run R when its final marker is R or R.slot.
-func TestQuestionsOfTakesTheSlotFormOfTheRunMarker(t *testing.T) {
+// A needs-human run has exactly one question: the lowest comment id of those.
+// A later comment with the run's marker, plain or slot form, is never one.
+func TestQuestionsOfTakesTheSlotFormOfTheRunMarkerAndOnlyTheFirst(t *testing.T) {
 	ctx := context.Background()
 	h, tk := hostWithTicket(t)
 	for _, id := range []string{"run1", "run1.1", "run1.a_b", "run10", "run1x", "run1..", "run1.", "run1.1.2", "run2", "run1.other"} {
@@ -102,17 +104,18 @@ func TestQuestionsOfTakesTheSlotFormOfTheRunMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, q := range qs {
-		got = append(got, q.Text)
+	if len(qs) != 1 || qs[0].Text != "Question of run1" {
+		t.Fatalf("questions %+v, want only the first", qs)
 	}
-	want := []string{"Question of run1", "Question of run1.1", "Question of run1.a_b"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("questions %q, want %q", got, want)
-	}
-	for i := 1; i < len(qs); i++ {
-		if qs[i].CommentID <= qs[i-1].CommentID {
-			t.Errorf("comment ids are not in order: %v", qs)
+	// When the first comment of the run is in slot form, that one is the question.
+	h2, tk2 := hostWithTicket(t)
+	for _, id := range []string{"run1.1", "run1", "run1.no_answer"} {
+		if err := h2.PostComment(ctx, tk2, id, "Text of "+id); err != nil {
+			t.Fatal(err)
 		}
+	}
+	qs, err = questionsOf(ctx, h2, tk2, 1, "run1", nil)
+	if err != nil || len(qs) != 1 || qs[0].Text != "Text of run1.1" {
+		t.Fatalf("questions %+v, %v", qs, err)
 	}
 }

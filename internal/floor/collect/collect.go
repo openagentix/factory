@@ -232,21 +232,30 @@ func questionsOf(ctx context.Context, h githost.Proposer, ticket, goal int, runI
 	if err != nil {
 		return nil, err
 	}
-	var out []floor.QuestionIn
-	for _, c := range cs {
+	// A needs-human run has exactly one question: its first comment with the
+	// run's marker, plain or slot form. A later comment with the same marker
+	// (the factory's own fixed lines, for one) is never a question.
+	var first *githost.Comment
+	var firstText string
+	for i := range cs {
+		c := &cs[i]
 		if c.Kind != githost.KindFactory || c.Claim != nil {
 			continue
 		}
-		// Only a comment whose final marker is this run's run marker is a
-		// question. The marker line is not part of the text. A comment that is
-		// only a marker has no question in it.
+		// Only a comment whose final marker is this run's run marker counts. The
+		// marker line is not part of the text. An id that is exactly another
+		// run's id belongs to that run.
 		text, id, ok := githost.RunMarkerText(c.Body)
-		// The marker names the run, or the run and a publish slot. An id that
-		// is exactly another run's id belongs to that run.
-		if !ok || !githost.MarkerIDBelongsToRun(id, runID) || (id != runID && otherRuns[id]) || strings.TrimSpace(text) == "" {
+		if !ok || !githost.MarkerIDBelongsToRun(id, runID) || (id != runID && otherRuns[id]) {
 			continue
 		}
-		out = append(out, floor.QuestionIn{Ticket: ticket, Goal: goal, CommentID: c.ID, Since: opt(c.Created), Text: text})
+		if first == nil || c.ID < first.ID {
+			first, firstText = c, text
+		}
+	}
+	var out []floor.QuestionIn
+	if first != nil && strings.TrimSpace(firstText) != "" {
+		out = append(out, floor.QuestionIn{Ticket: ticket, Goal: goal, CommentID: first.ID, Since: opt(first.Created), Text: firstText})
 	}
 	return out, nil
 }

@@ -690,3 +690,72 @@ func TestActionsAndTheStoryTogether(t *testing.T) {
 		t.Fatal("expected one answer comment")
 	}
 }
+
+// F3: when the label goes and no answer stands, the label comes back with one
+// fixed line. That line is never a question.
+func TestNoAnswerFoundIsOneFixedLineAndNeverAQuestion(t *testing.T) {
+	d := stepTo(t, "unconfirmed")
+	ctx := context.Background()
+	q := mustCall(t, d, "q-5-")
+	noop := func(floor.JournalKind, int, int) int64 { return 0 }
+	cycle := func() error {
+		return d.mutate(ctx, func() error { return d.resume(ctx, 5, noop) })
+	}
+	fixed := func() []githost.Comment {
+		var out []githost.Comment
+		for _, c := range comments(t, d, 5) {
+			if c.Kind == githost.KindFactory && strings.HasSuffix(c.Body, ".no_answer -->") {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	for round := 1; round <= 2; round++ {
+		if err := d.host.RemoveLabel(ctx, 5, githost.LabelNeedsHuman); err != nil {
+			t.Fatal(err)
+		}
+		if err := cycle(); !errors.Is(err, server.ErrStale) {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if !hasLabel(t, d, 5, githost.LabelNeedsHuman) {
+			t.Fatal("the label did not come back")
+		}
+		if n := len(fixed()); n != round {
+			t.Fatalf("round %d: %d fixed comments", round, n)
+		}
+		// A cycle with the label on does nothing more.
+		if err := cycle(); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(fixed()); n != round {
+			t.Fatalf("round %d: the line was posted again: %d", round, n)
+		}
+		again := mustCall(t, d, "q-5-")
+		if again.ID != q.ID {
+			t.Fatalf("a new call appeared: %s", again.ID)
+		}
+		for _, c := range snap(t, d).Calls {
+			if strings.HasPrefix(c.ID, "q-5-") && c.ID != q.ID {
+				t.Fatalf("a second question: %s", c.ID)
+			}
+		}
+	}
+	runID := d.latest[5]
+	if c := fixed()[0]; c.RunID != runID+".no_answer" {
+		t.Fatalf("marker id = %q", c.RunID)
+	}
+	// A failure between the comment and the label does not post the line twice.
+	if err := d.host.RemoveLabel(ctx, 5, githost.LabelNeedsHuman); err != nil {
+		t.Fatal(err)
+	}
+	d.host.FailNext("AddLabel", false)
+	if err := cycle(); !errors.Is(err, server.ErrHostFailed) {
+		t.Fatalf("label failure: %v", err)
+	}
+	if err := cycle(); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("retry: %v", err)
+	}
+	if n := len(fixed()); n != 3 {
+		t.Fatalf("fixed comments = %d, want 3", n)
+	}
+}

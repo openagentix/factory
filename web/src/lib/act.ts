@@ -39,9 +39,28 @@ export function actMessage(a: Act | undefined): string {
 
 export const busy = (a: Act | undefined) => a !== undefined && (a.phase === 'sending' || a.phase === 'sent' || a.phase === 'running');
 
-const SHOWS_SOMETHING = /[^\p{Cc}\p{Cf}\p{White_Space}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u2800]/u;
+const SEEN = /^[\p{L}\p{N}\p{P}\p{S}]$/u;
+const NOT_SEEN = /^[\p{Cc}\p{Cf}\p{White_Space}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}]$/u;
+const NEVER_SEEN = new Set([0xfffc, 0xfffd, 0x2800, 0x1d159]);
+// What the server refuses wherever it stands: controls other than a line feed and a tab, format characters, line and
+// paragraph separators, the Mongolian vowel separator and the replacement character.
+const REFUSED = /[\p{Cc}\p{Cf}\u2028\u2029\u180E\uFFFD]/u;
 
-/** True when a person could see something in the text. Fillers, joiners, variation selectors and blank patterns show nothing. */
+/** True when a person could see a mark of its own in the text: a letter, number, punctuation or symbol. Marks, fillers, joiners and blanks do not count. */
 export function hasVisibleText(text: string): boolean {
-    return SHOWS_SOMETHING.test(text);
+    for (const ch of text) {
+        const cp = ch.codePointAt(0)!;
+        if (!NEVER_SEEN.has(cp) && SEEN.test(ch) && !NOT_SEEN.test(ch)) return true;
+    }
+    return false;
+}
+
+/** True when the text holds a character that cannot be sent, whatever stands beside it. Line ends are read as line feeds. */
+export function hasRefusedChar(text: string): boolean {
+    return REFUSED.test(text.replace(/\r\n?/g, '\n').replace(/[\n\t]/g, ''));
+}
+
+/** True when the server would take the text. The same rule as the server's, so the person learns before pressing. */
+export function sendable(text: string): boolean {
+    return hasVisibleText(text) && !hasRefusedChar(text);
 }

@@ -141,7 +141,7 @@ func checkText(text string) (string, int, Code) {
 	}
 	visible := false
 	for _, r := range t {
-		if !invisible(r) {
+		if shows(r) {
 			visible = true
 		}
 		switch {
@@ -157,13 +157,22 @@ func checkText(text string) (string, int, Code) {
 	return t, 0, ""
 }
 
-// invisible says whether a code point shows nothing: a control or format
-// character, white space, a variation selector, a default-ignorable code point
-// (the Hangul fillers, the combining grapheme joiner and the like) or the
-// blank braille pattern.
-func invisible(r rune) bool {
-	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.IsSpace(r) || unicode.Is(unicode.Variation_Selector, r) ||
-		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || r == '\u2800'
+// shows says whether a code point is something a person can see as a mark of
+// its own: a letter, number, punctuation or symbol that is not a filler, a
+// joiner, a variation selector, a default-ignorable code point, the object
+// replacement or replacement character, the blank braille pattern or the
+// musical null notehead. Marks, private use, unassigned code points and
+// surrogates never count.
+func shows(r rune) bool {
+	switch r {
+	case '\uFFFC', '\uFFFD', '\u2800', 0x1D159:
+		return false
+	}
+	if unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Variation_Selector, r) ||
+		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) {
+		return false
+	}
+	return unicode.In(r, unicode.L, unicode.N, unicode.P, unicode.S)
 }
 
 func (s *Server) idemKey(r *http.Request) (string, bool) {

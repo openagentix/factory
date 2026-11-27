@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -638,5 +639,34 @@ func TestAnswersThatLookBlankAreRefused(t *testing.T) {
 	// Visible text next to an invisible mark is still not refused for the mark alone.
 	if rec := post(e, "/api/v1/calls/q-5-9/answer", key2, answerBody("ok \u00e9")); rec.Code != 200 {
 		t.Fatalf("visible text: %d", rec.Code)
+	}
+}
+
+// N5: one table of samples, shared with the page (web/src/lib/answer-samples.json).
+func TestSharedAnswerSamples(t *testing.T) {
+	raw, err := os.ReadFile("../../web/src/lib/answer-samples.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var samples []struct {
+		Name string `json:"name"`
+		Text string `json:"text"`
+		OK   bool   `json:"ok"`
+	}
+	if err := json.Unmarshal(raw, &samples); err != nil || len(samples) < 20 {
+		t.Fatalf("samples: %v (%d)", err, len(samples))
+	}
+	for i, smp := range samples {
+		e, fa := actEnv(t)
+		rec := post(e, "/api/v1/calls/q-5-9/answer", fmt.Sprintf("key-%016d", i), answerBody(smp.Text))
+		if smp.OK && (rec.Code != 200 || fa.calls() != 1) {
+			t.Errorf("%s: %d %s", smp.Name, rec.Code, rec.Body)
+		}
+		if !smp.OK {
+			assertErr(t, rec, 422, CodeUnprocessable, smp.Name)
+			if fa.calls() != 0 {
+				t.Errorf("%s: Actions was called", smp.Name)
+			}
+		}
 	}
 }

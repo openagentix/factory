@@ -4,6 +4,7 @@ import { fireEvent } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import phrases from './phrases.json';
+import samples from './answer-samples.json';
 import { startClient } from './client';
 import { FIXTURES, KEY, clone, fakeEnv, mount } from './testkit';
 
@@ -172,6 +173,18 @@ describe('the buttons that are built', () => {
         expect(fake.writes).toHaveLength(0);
         await fireEvent.input(box(container), { target: { value: 'a\u3164' } });
         expect(btn(container, 'Send answer').getAttribute('aria-disabled')).toBeNull();
+    });
+
+    it('the shared samples: what the server refuses keeps Send off, and a refused character beside text says why', async () => {
+        const { container } = await mountWrites(() => ok());
+        for (const smp of samples) {
+            await fireEvent.input(box(container), { target: { value: smp.text } });
+            const send = btn(container, 'Send answer');
+            expect(send.getAttribute('aria-disabled') === 'true', smp.name).toBe(!smp.ok);
+            const why = txt(container.querySelector('.why-no'));
+            if (!smp.ok && smp.text.trim() !== '') expect(why, smp.name).toBe(table['refusal.unprocessable']);
+            else expect(why, smp.name).toBe('');
+        }
     });
 
     it('focus stays on the pressed button while the press is sent', async () => {

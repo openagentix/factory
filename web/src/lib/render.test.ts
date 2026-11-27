@@ -163,16 +163,25 @@ describe('demo marking', () => {
 });
 
 describe('screens', () => {
-    it('Needs you lists every call with its actions disabled and Not built yet in view', async () => {
+    it('Needs you lists every call. The three built actions are live when the call lists them, the rest say Not built yet', async () => {
         const { container } = await mount(FIXTURES.demo, 'needs-you');
         expect(container.querySelectorAll('.call')).toHaveLength(4);
         const buttons = [...container.querySelectorAll<HTMLButtonElement>('.call button')];
         expect(buttons.map(text)).toEqual(expect.arrayContaining(['Approve the plan', 'Keep planning', 'Send answer', 'Accept', 'Try it', 'Undo a change', 'Yes, that is what I want', 'No, send it back']));
+        const live = ['Approve the plan', 'Send answer', 'Yes, that is what I want', 'No, send it back'];
         for (const b of buttons) {
-            expect(b.disabled).toBe(true);
-            expect(text(b.parentElement!)).toContain('Not built yet');
+            if (live.includes(text(b))) {
+                expect(b.disabled, text(b)).toBe(false);
+                expect(text(b.parentElement!)).not.toContain('Not built yet');
+            } else {
+                expect(b.disabled, text(b)).toBe(true);
+                expect(text(b.parentElement!)).toContain('Not built yet');
+            }
         }
-        expect(container.querySelector<HTMLTextAreaElement>('textarea')!.disabled).toBe(true);
+        // The answer box is live, and the Send button waits for words.
+        const box = container.querySelector<HTMLTextAreaElement>('textarea')!;
+        expect(box.disabled).toBe(false);
+        expect(container.querySelector('.call button[aria-disabled="true"]')).not.toBeNull();
     });
 
     it('offers Accept once, for the whole holding area, listing each goal', async () => {

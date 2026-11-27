@@ -719,7 +719,13 @@ func TestActionsAndTheStoryTogether(t *testing.T) {
 	d.taskErr = func(err error) { t.Errorf("a follow-up task failed: %v", err) }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stepsTo(t, d, "question")
+	// The story from the question on: only the beats before it that the later ones need.
+	playBeats(t, d, "write_checks", "build_move", "question")
+	for k, bt := range d.beats {
+		if bt.name == "unconfirmed" {
+			d.next = k
+		}
+	}
 	q := mustCall(t, d, "q-5-")
 	p := mustCall(t, d, "p-2")
 

@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { fireEvent } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -275,7 +276,7 @@ describe('untrusted text', () => {
         const f = clone(FIXTURES.demo) as unknown as { pieces: { id: string; reason: { code: string; attempt: number | string } | null }[]; log: { goal?: unknown; kind: string }[] };
         const p = f.pieces.find((x) => x.id === 't57')!;
         p.reason!.attempt = '<img src=x>';
-        f.log[0] = { journalSeq: 99, time: null, kind: 'accepted', goal: '<script>' };
+        f.log[0] = { journalSeq: 99, time: null, kind: 'accepted', goal: '<script>' } as unknown as (typeof f.log)[number];
         const m = await mount(f);
         expect(m.container.querySelector('main img')).toBeNull();
         expect(text(m.container)).not.toContain('<img src=x>');
@@ -427,13 +428,10 @@ describe('the key and the data', () => {
 });
 
 describe('source files', () => {
-    it('never use {@html', async () => {
-        const { readdirSync, readFileSync, statSync } = await import('node:fs');
-        const { join } = await import('node:path');
-        const walk = (d: string): string[] => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
-        const root = join(process.cwd(), 'src');
-        const files = walk(root).filter((f) => /\.(svelte|ts|js|html)$/.test(f) && !f.endsWith('render.test.ts'));
-        expect(files.length).toBeGreaterThan(20);
-        for (const f of files) expect(readFileSync(f, 'utf8'), f).not.toContain('{@html');
+    it('never use {@html', () => {
+        const files = import.meta.glob('/src/**/*.{svelte,ts,js,html}', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+        const names = Object.keys(files).filter((n) => !n.endsWith('render.test.ts'));
+        expect(names.length).toBeGreaterThan(20);
+        for (const n of names) expect(files[n], n).not.toContain('{@html');
     });
 });

@@ -254,3 +254,5 @@ td.num{font-family:var(--f-data);text-align:right} th.num{text-align:right}
 .bstat .cnt,.bstat .top .muted{white-space:nowrap}
 .tag .id span:last-child{white-space:nowrap}
 .small .ttl,.acc-goals .ttl{display:inline}
+.tag .id{flex-wrap:wrap}
+.tag .id span:first-child{white-space:nowrap}

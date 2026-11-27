@@ -365,10 +365,20 @@ func (d *Demo) Floor(ctx context.Context) ([]byte, error) {
 	return s.b, nil
 }
 
-// mutate changes facts under the write lock, makes the snapshot of the new
-// state before the lock is handed on, then tells the hub. A long task that
-// takes the lock next cannot make a reader see an older picture.
+// mutate changes facts under the write lock, then tells the hub.
 func (d *Demo) mutate(ctx context.Context, fn func() error) error {
+	d.mu.Lock()
+	err := fn()
+	d.mu.Unlock()
+	d.publish(ctx)
+	return err
+}
+
+// mutateFresh is mutate for an action. Before the write lock is handed on, it
+// makes the snapshot of the new state. A long task that takes the lock next
+// cannot then make a reader see a picture older than the action that was
+// answered "done".
+func (d *Demo) mutateFresh(ctx context.Context, fn func() error) error {
 	d.mu.Lock()
 	err := fn()
 	_, _ = d.takeSnapshot(context.WithoutCancel(ctx))
@@ -377,20 +387,17 @@ func (d *Demo) mutate(ctx context.Context, fn func() error) error {
 	return err
 }
 
-// publish sends the new journal entries and a floor hint to the hub.
+// publish sends the new journal entries and a floor hint to the hub. The
+// snapshot it makes is also the newest whole one for readers.
 func (d *Demo) publish(ctx context.Context) {
 	if d.cfg.Hub == nil {
 		return
 	}
-	s := d.cached()
-	if s == nil {
-		var err error
-		d.mu.RLock()
-		s, err = d.takeSnapshot(context.WithoutCancel(ctx))
-		d.mu.RUnlock()
-		if err != nil {
-			return
-		}
+	d.mu.RLock()
+	s, err := d.takeSnapshot(context.WithoutCancel(ctx))
+	d.mu.RUnlock()
+	if err != nil {
+		return
 	}
 	f := s.f
 	d.pubMu.Lock()

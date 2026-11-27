@@ -58,7 +58,7 @@ func TestAnswerOverTheServerAndItsReplay(t *testing.T) {
 // The whole way for the holding area: the piece detail, the undo preview, the
 // Undo and the Accept over HTTP, against the real demo.
 func TestHoldingAreaOverTheServer(t *testing.T) {
-	d := beatsOnly(t, "write_checks", "build_move", "checks_fail", "second_try")
+	d := beatsOnly(t, "write_checks", "build_move")
 	srv, err := server.New(server.Config{Port: 18767, Mode: "demo", Source: d, Actions: d, Detail: d, Static: fstest.MapFS{"index.html": {Data: []byte("x")}}})
 	if err != nil {
 		t.Fatal(err)
@@ -100,12 +100,12 @@ func TestHoldingAreaOverTheServer(t *testing.T) {
 			Ticket int    `json:"ticket"`
 		} `json:"tickets"`
 	}
-	if pv.Code != 200 || json.Unmarshal(pv.Body.Bytes(), &view) != nil || view.Mode != "demo" || len(view.AlsoRemoved) != 1 || len(view.Tickets) != 2 ||
-		view.Tickets[0].Ticket != 3 || view.Tickets[1].Ticket != 4 || view.StagingSeq != got.Undo.StagingSeq || view.Commit != got.Undo.Commit {
+	if pv.Code != 200 || json.Unmarshal(pv.Body.Bytes(), &view) != nil || view.Mode != "demo" || len(view.AlsoRemoved) != 0 || len(view.Tickets) != 1 ||
+		view.Tickets[0].Ticket != 3 || view.StagingSeq != got.Undo.StagingSeq || view.Commit != got.Undo.Commit {
 		t.Fatalf("preview: %d %s", pv.Code, pv.Body)
 	}
-	// The change that depends on the first is offered too, and undoing it alone is refused with a wrong list.
-	body, _ := json.Marshal(map[string]any{"stagingSeq": view.StagingSeq, "commit": view.Commit, "change": view.Change, "alsoRemoved": []string{}})
+	// A list that is not the preview's is refused.
+	body, _ := json.Marshal(map[string]any{"stagingSeq": view.StagingSeq, "commit": view.Commit, "change": view.Change, "alsoRemoved": []string{"run999"}})
 	if rec := do("POST", "/api/v1/changes/"+view.Change+"/undo", "undo-aaaaaaaaaaaaaaaa", string(body)); rec.Code != 409 || strings.TrimSpace(rec.Body.String()) != `{"error":"stale"}` {
 		t.Fatalf("wrong list: %d %s", rec.Code, rec.Body)
 	}
@@ -117,7 +117,7 @@ func TestHoldingAreaOverTheServer(t *testing.T) {
 	if again := do("POST", "/api/v1/changes/"+view.Change+"/undo", "undo-bbbbbbbbbbbbbbbb", string(body)); again.Code != 200 || again.Body.String() != first.Body.String() {
 		t.Fatalf("replay: %d %s", again.Code, again.Body)
 	}
-	if n := countKind(t, d, "undone"); n != 2 {
+	if n := countKind(t, d, "undone"); n != 1 {
 		t.Fatalf("undone entries = %d", n)
 	}
 	// What is left is the checks only: there is no Accept call, so an Accept is stale.

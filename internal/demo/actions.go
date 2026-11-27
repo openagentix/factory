@@ -89,7 +89,7 @@ func (d *Demo) act(ctx context.Context, fn func(journal func(floor.JournalKind, 
 	if d.closing.Load() { // a stop came while this press waited for the step
 		return server.ActionResult{}, server.ErrUnavailable
 	}
-	err := d.mutate(ctx, func() error {
+	err := d.mutateFresh(ctx, func() error {
 		return fn(func(k floor.JournalKind, goal, ticket int) int64 {
 			seq = d.led.journal(k, goal, ticket, d.now())
 			return seq

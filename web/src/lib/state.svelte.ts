@@ -71,6 +71,8 @@ export class AppState {
     acts = $state.raw<Readonly<Record<string, Act>>>({});
     /** The Idempotency-Key of a press, kept until the snapshot shows the result, so a repeat sends the same key. */
     private idem = new Map<string, { key: string; body: string }>();
+    /** Counts the reads of a piece, so a slow old reply never replaces a newer one. */
+    private detailN = 0;
 
     private tick = $state(0);
     private serverMs = 0;
@@ -182,8 +184,9 @@ export class AppState {
         if (this.client === null) return;
         const keep = this.detail !== null && this.detail.id === id ? this.detail.detail : null;
         this.detail = { id, phase: keep === null ? 'loading' : 'ready', detail: keep };
+        const n = ++this.detailN;
         const r = await this.client.read(`/api/v1/pieces/${encodeURIComponent(id)}`);
-        if (this.drawerId !== id) return; // the drawer was closed or moved on
+        if (this.drawerId !== id || n !== this.detailN) return; // the drawer was closed or moved on, or a newer read is under way
         const d = r.ok ? parseDetail(r.body) : null;
         this.detail = d !== null && d.piece.id === id ? { id, phase: 'ready', detail: d } : { id, phase: 'failed', detail: null };
     }

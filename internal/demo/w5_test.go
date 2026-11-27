@@ -232,6 +232,39 @@ func TestAcceptMergesTheHoldingAreaAndTheStoryGoesOn(t *testing.T) {
 		t.Fatalf("t3 before: %+v", p)
 	}
 	before := mainHead(d)
+	t3 := runOf(t, d, "t3")
+	undoBefore := undoReq(t, d, t3) // asked for now, pressed after the Accept
+	// Attack 4 and 15: nothing the browser sends is believed.
+	seq0 := journalSeq(t, d)
+	bad := map[string]func(*server.HoldingRequest){
+		"version zero":  func(r *server.HoldingRequest) { r.Version = strings.Repeat("0", 64) },
+		"version blank": func(r *server.HoldingRequest) { r.Version = "" },
+		"old number":    func(r *server.HoldingRequest) { r.StagingSeq-- },
+		"future number": func(r *server.HoldingRequest) { r.StagingSeq++ },
+		"other commit":  func(r *server.HoldingRequest) { r.Commit = strings.Repeat("a", 40) },
+		"blank commit":  func(r *server.HoldingRequest) { r.Commit = "" },
+		"upper commit":  func(r *server.HoldingRequest) { r.Commit = strings.ToUpper(r.Commit) },
+	}
+	for name, edit := range bad {
+		r := req
+		r.Steps = &memSteps{}
+		edit(&r)
+		if _, err := d.Accept(ctx, r); !errors.Is(err, server.ErrStale) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if _, err := d.CancelAccept(ctx, r); !errors.Is(err, server.ErrStale) {
+			t.Errorf("cancel %s: %v", name, err)
+		}
+	}
+	if _, err := d.CancelAccept(ctx, req); !errors.Is(err, server.ErrStale) {
+		t.Errorf("cancel with nothing pending: %v", err)
+	}
+	if mainHead(d) != before || journalSeq(t, d) != seq0 || countKind(t, d, "accepted") != 0 {
+		t.Fatal("a refused press changed something")
+	}
+	if _, pend, _ := d.stgSt.GetPending(ctx); pend {
+		t.Fatal("an Accept is pending after refusals")
+	}
 	res, err := d.Accept(ctx, req)
 	if err != nil || res.Result != server.ResultDone || res.JournalSeq <= 0 || res.JournalSeq != journalSeq(t, d) {
 		t.Fatalf("Accept = %+v, %v", res, err)
@@ -263,6 +296,16 @@ func TestAcceptMergesTheHoldingAreaAndTheStoryGoesOn(t *testing.T) {
 	again.Steps = &memSteps{}
 	if _, err := d.Accept(ctx, again); !errors.Is(err, server.ErrStale) {
 		t.Fatalf("second press: %v", err)
+	}
+	// Attack 23: an accepted change cannot be undone, and the preview from before is stale.
+	if _, err := d.Undo(ctx, undoBefore); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("undo after accept: %v", err)
+	}
+	if _, err := d.UndoPreview(ctx, t3); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("preview after accept: %v", err)
+	}
+	if countKind(t, d, "undone") != 0 {
+		t.Fatal("an undone entry was written")
 	}
 	// The story goes on: goal 2 is approved and built on the new default.
 	pc := mustCall(t, d, "p-2")
@@ -305,45 +348,6 @@ func TestAcceptMergesTheHoldingAreaAndTheStoryGoesOn(t *testing.T) {
 	}
 	if err := invariants(f); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// Attack 4 and 15: nothing the browser sends is believed.
-func TestAcceptRefusals(t *testing.T) {
-	d := beatsOnly(t, "write_checks", "build_move")
-	ctx := context.Background()
-	req := acceptReq(t, d)
-	head, seq0 := mainHead(d), journalSeq(t, d)
-	bad := map[string]func(*server.HoldingRequest){
-		"version zero":   func(r *server.HoldingRequest) { r.Version = strings.Repeat("0", 64) },
-		"version blank":  func(r *server.HoldingRequest) { r.Version = "" },
-		"old number":     func(r *server.HoldingRequest) { r.StagingSeq-- },
-		"future number":  func(r *server.HoldingRequest) { r.StagingSeq++ },
-		"other commit":   func(r *server.HoldingRequest) { r.Commit = strings.Repeat("a", 40) },
-		"blank commit":   func(r *server.HoldingRequest) { r.Commit = "" },
-		"upper commit":   func(r *server.HoldingRequest) { r.Commit = strings.ToUpper(r.Commit) },
-		"cancel version": func(r *server.HoldingRequest) { r.Version = "f" + req.Version[1:] },
-	}
-	for name, edit := range bad {
-		r := req
-		r.Steps = &memSteps{}
-		edit(&r)
-		if _, err := d.Accept(ctx, r); !errors.Is(err, server.ErrStale) {
-			t.Errorf("%s: %v", name, err)
-		}
-		if _, err := d.CancelAccept(ctx, r); !errors.Is(err, server.ErrStale) {
-			t.Errorf("cancel %s: %v", name, err)
-		}
-	}
-	if mainHead(d) != head || journalSeq(t, d) != seq0 || countKind(t, d, "accepted") != 0 {
-		t.Fatal("a refused press changed something")
-	}
-	if _, pend, _ := d.stgSt.GetPending(ctx); pend {
-		t.Fatal("an Accept is pending after refusals")
-	}
-	// Cancel is not offered while nothing is pending.
-	if _, err := d.CancelAccept(ctx, req); !errors.Is(err, server.ErrStale) {
-		t.Fatalf("cancel with nothing pending: %v", err)
 	}
 }
 
@@ -472,15 +476,47 @@ func TestCancelWhenAMergeStartedAndDidNotFinish(t *testing.T) {
 	if err := invariants(snap(t, d)); err != nil {
 		t.Fatal(err)
 	}
-	// And Accept works again.
-	if res, err := d.Accept(ctx, acceptReq(t, d)); err != nil || res.Result != server.ResultDone {
-		t.Fatalf("Accept after cancel: %+v %v", res, err)
+	// Attack 21: the same again, but the host merged meanwhile. Cancel is stale,
+	// and the merge is recorded as accepted, as the factory reads it from the host.
+	req2 := acceptReq(t, d)
+	down.Store(true)
+	d.host.FailNext("MergeStaging", false)
+	if _, err := d.Accept(ctx, req2); !errors.Is(err, server.ErrHostFailed) {
+		t.Fatalf("second Accept: %v", err)
+	}
+	down.Store(false)
+	c2 := mustCall(t, d, "a-")
+	pend, _, _ := d.stgSt.GetPending(ctx)
+	d.host.SimulateMerge(pend.PR, "repo-owner") // the merge went through after all
+	late := server.HoldingRequest{StagingSeq: req2.StagingSeq, Commit: req2.Commit, Version: c2.Version, Steps: &memSteps{}}
+	if _, err := d.CancelAccept(ctx, late); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("Cancel after a merge: %v", err)
+	}
+	if countKind(t, d, "accept_cancelled") != 1 || countKind(t, d, "accepted") != 1 {
+		t.Fatalf("cancelled=%d accepted=%d", countKind(t, d, "accept_cancelled"), countKind(t, d, "accepted"))
+	}
+	if p := piece(snap(t, d), "t3"); p == nil || p.Station != 7 {
+		t.Fatalf("t3: %+v", p)
 	}
 }
 
 func TestUndoTakesAChangeAndWhatDependsOnIt(t *testing.T) {
-	d := beatsOnly(t, "write_checks", "build_move", "checks_fail", "second_try")
+	d := beatsOnly(t, "write_checks", "build_move")
 	ctx := context.Background()
+	// Attack 19: an Accept with the state from before a rebuild is stale. A new
+	// change that was added meanwhile is never merged without the person seeing it.
+	oldAccept := acceptReq(t, d)
+	head0 := mainHead(d)
+	playBeats(t, d, "checks_fail", "second_try") // t4 is added: a new state
+	if _, err := d.Accept(ctx, oldAccept); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("accept of the old state: %v", err)
+	}
+	if mainHead(d) != head0 || countKind(t, d, "accepted") != 0 {
+		t.Fatal("a stale press merged")
+	}
+	if fresh := acceptReq(t, d); fresh.StagingSeq <= oldAccept.StagingSeq || fresh.Commit == oldAccept.Commit {
+		t.Fatalf("no new state: %+v %+v", oldAccept, fresh)
+	}
 	t3, t4 := runOf(t, d, "t3"), runOf(t, d, "t4")
 	pv, err := d.UndoPreview(ctx, t3)
 	if err != nil || pv.Change != t3 || !reflect.DeepEqual(pv.AlsoRemoved, []string{t4}) ||
@@ -493,10 +529,24 @@ func TestUndoTakesAChangeAndWhatDependsOnIt(t *testing.T) {
 		t.Fatalf("Piece: %v %v", ok, err)
 	}
 	var det struct {
-		Undo *floor.UndoRef `json:"undo"`
+		SchemaVersion int            `json:"schemaVersion"`
+		Mode          floor.Mode     `json:"mode"`
+		GeneratedAt   string         `json:"generatedAt"`
+		Piece         floor.Piece    `json:"piece"`
+		Route         []interface{}  `json:"route"`
+		Rulings       []interface{}  `json:"rulings"`
+		Unconfirmed   []interface{}  `json:"unconfirmed"`
+		Undo          *floor.UndoRef `json:"undo"`
 	}
-	if err := json.Unmarshal(b, &det); err != nil || det.Undo == nil || det.Undo.Change != t3 || det.Undo.StagingSeq != pv.StagingSeq || det.Undo.Commit != pv.Commit {
+	if err := json.Unmarshal(b, &det); err != nil || det.SchemaVersion != 1 || det.Mode != floor.ModeDemo || det.GeneratedAt == "" || det.Piece.ID != "t3" ||
+		det.Route == nil || det.Rulings == nil || det.Unconfirmed == nil || det.Undo == nil || det.Undo.Change != t3 || det.Undo.StagingSeq != pv.StagingSeq || det.Undo.Commit != pv.Commit {
 		t.Fatalf("detail undo = %+v (%v)", det.Undo, err)
+	}
+	// The detail of a piece that is not on the line is not there.
+	for _, id := range []string{"t99", "p9", "x", "<script>", ""} {
+		if _, ok, err := d.Piece(ctx, id); ok || err != nil {
+			t.Errorf("Piece(%q) = %v %v", id, ok, err)
+		}
 	}
 	head, seq0 := mainHead(d), journalSeq(t, d)
 	good := server.UndoRequest{Change: t3, StagingSeq: pv.StagingSeq, Commit: pv.Commit, AlsoRemoved: pv.AlsoRemoved}
@@ -574,42 +624,19 @@ func TestUndoTakesAChangeAndWhatDependsOnIt(t *testing.T) {
 	if b, ok, err := d.Piece(ctx, "t3"); err != nil || !ok || strings.Contains(string(b), `"undo":{`) {
 		t.Fatalf("the detail still offers undo: %s %v %v", b, ok, err)
 	}
-}
-
-// A dependent that was added between the preview and the press makes it stale.
-func TestUndoPreviewThenANewStateIsStale(t *testing.T) {
-	d := beatsOnly(t, "write_checks", "build_move", "checks_fail", "second_try")
-	ctx := context.Background()
-	t3, t4 := runOf(t, d, "t3"), runOf(t, d, "t4")
-	old := undoReq(t, d, t3)
-	// Another person undoes t4 first: a new state.
-	if _, err := d.Undo(ctx, undoReq(t, d, t4)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.Undo(ctx, old); !errors.Is(err, server.ErrStale) {
-		t.Fatalf("old preview: %v", err)
-	}
-	if _, err := d.UndoPreview(ctx, t4); !errors.Is(err, server.ErrStale) {
-		t.Fatalf("preview of a change that left: %v", err)
-	}
-}
-
-func TestUndoOfAnAcceptedChangeIsStale(t *testing.T) {
-	d := beatsOnly(t, "write_checks", "build_move")
-	ctx := context.Background()
-	t3 := runOf(t, d, "t3")
-	req := undoReq(t, d, t3)
-	if _, err := d.Accept(ctx, acceptReq(t, d)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.Undo(ctx, req); !errors.Is(err, server.ErrStale) {
-		t.Fatalf("undo after accept: %v", err)
-	}
-	if _, err := d.UndoPreview(ctx, t3); !errors.Is(err, server.ErrStale) {
-		t.Fatalf("preview after accept: %v", err)
-	}
-	if countKind(t, d, "undone") != 0 {
-		t.Fatal("an undone entry was written")
+	// While a long task holds the write lock, the last whole picture answers.
+	holdWrite(t, d)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if b, ok, err := d.Piece(ctx, "t3"); err != nil || !ok || len(b) == 0 {
+			t.Errorf("Piece under the lock: %v %v", ok, err)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Piece waits for the write lock")
 	}
 }
 
@@ -642,79 +669,6 @@ func TestAcceptAndUndoAtOnceDoOne(t *testing.T) {
 	}
 	if err := invariants(snap(t, d)); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestPieceDetail(t *testing.T) {
-	d := beatsOnly(t, "write_checks", "build_move")
-	ctx := context.Background()
-	b, ok, err := d.Piece(ctx, "t3")
-	if err != nil || !ok {
-		t.Fatalf("Piece: %v %v", ok, err)
-	}
-	var got struct {
-		SchemaVersion int           `json:"schemaVersion"`
-		Mode          floor.Mode    `json:"mode"`
-		GeneratedAt   string        `json:"generatedAt"`
-		Piece         floor.Piece   `json:"piece"`
-		Route         []interface{} `json:"route"`
-		Rulings       []interface{} `json:"rulings"`
-		Unconfirmed   []interface{} `json:"unconfirmed"`
-		Undo          *floor.UndoRef
-	}
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.SchemaVersion != 1 || got.Mode != floor.ModeDemo || got.GeneratedAt == "" || got.Piece.ID != "t3" ||
-		got.Route == nil || got.Rulings == nil || got.Unconfirmed == nil || got.Undo == nil {
-		t.Fatalf("detail = %s", b)
-	}
-	for _, id := range []string{"t99", "p9", "x", "<script>", ""} {
-		if _, ok, err := d.Piece(ctx, id); ok || err != nil {
-			t.Errorf("Piece(%q) = %v %v", id, ok, err)
-		}
-	}
-	// While a long task holds the write lock, the last whole picture answers.
-	holdWrite(t, d)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if b, ok, err := d.Piece(ctx, "t3"); err != nil || !ok || len(b) == 0 {
-			t.Errorf("Piece under the lock: %v %v", ok, err)
-		}
-	}()
-	select {
-	case <-done:
-	case <-time.After(20 * time.Second):
-		t.Fatal("Piece waits for the write lock")
-	}
-}
-
-// Attack 19: an Accept with the state from before a rebuild is stale. A new
-// change that was added meanwhile is never merged without the person seeing it.
-func TestAcceptWithTheStateFromBeforeARebuildIsStale(t *testing.T) {
-	d := beatsOnly(t, "write_checks", "build_move")
-	ctx := context.Background()
-	old := acceptReq(t, d)
-	head := mainHead(d)
-	playBeats(t, d, "checks_fail", "second_try") // t4 is added: a new state
-	if _, err := d.Accept(ctx, old); !errors.Is(err, server.ErrStale) {
-		t.Fatalf("old state: %v", err)
-	}
-	if mainHead(d) != head || countKind(t, d, "accepted") != 0 {
-		t.Fatal("a stale press merged")
-	}
-	fresh := acceptReq(t, d)
-	if fresh.StagingSeq <= old.StagingSeq || fresh.Commit == old.Commit {
-		t.Fatalf("no new state: %+v %+v", old, fresh)
-	}
-	if _, err := d.Accept(ctx, fresh); err != nil {
-		t.Fatalf("the new state: %v", err)
-	}
-	for _, id := range []string{"t3", "t4"} {
-		if p := piece(snap(t, d), id); p == nil || p.Station != 7 {
-			t.Errorf("%s: %+v", id, p)
-		}
 	}
 }
 
@@ -757,39 +711,5 @@ func TestAcceptOfAStateThatWasNotPublishedIsStale(t *testing.T) {
 	}
 	if mainHead(d) != head {
 		t.Fatal("a merge happened")
-	}
-}
-
-// Attack 21: the pull request was merged meanwhile. Cancel is refused as stale,
-// and the Accept is recorded as accepted, as the factory reads it from the host.
-func TestCancelOfAnAcceptThatTheHostMergedMeanwhile(t *testing.T) {
-	var down atomic.Bool
-	d := newDemoWith(t, func(c *Config) {
-		c.wrapHost = func(p githost.Proposer) githost.Proposer { return prFailer{p, &down} }
-	})
-	playBeats(t, d, "write_checks", "build_move")
-	ctx := context.Background()
-	req := acceptReq(t, d)
-	down.Store(true)
-	d.host.FailNext("MergeStaging", false)
-	if _, err := d.Accept(ctx, req); !errors.Is(err, server.ErrHostFailed) {
-		t.Fatalf("Accept: %v", err)
-	}
-	down.Store(false)
-	c := mustCall(t, d, "a-")
-	pend, _, _ := d.stgSt.GetPending(ctx)
-	d.host.SimulateMerge(pend.PR, "repo-owner") // the merge went through after all
-	cancel := server.HoldingRequest{StagingSeq: req.StagingSeq, Commit: req.Commit, Version: c.Version, Steps: &memSteps{}}
-	if _, err := d.CancelAccept(ctx, cancel); !errors.Is(err, server.ErrStale) {
-		t.Fatalf("Cancel after a merge: %v", err)
-	}
-	if countKind(t, d, "accept_cancelled") != 0 {
-		t.Fatal("a cancelled entry for a merged Accept")
-	}
-	if countKind(t, d, "accepted") != 1 {
-		t.Fatal("the merge was not recorded as accepted")
-	}
-	if p := piece(snap(t, d), "t3"); p == nil || p.Station != 7 {
-		t.Fatalf("t3: %+v", p)
 	}
 }

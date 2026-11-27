@@ -67,4 +67,14 @@
 //     until a person calls ClearException.
 //   - A process of the same user can still move the mirror ref to a descendant
 //     of the default commit during a rebuild, and the rebuild will follow it.
+//     A check that moves the mirror forward to a commit of its own is adopted.
+//   - Content of two changes that cannot be checked together stops every
+//     rebuild until one of them is undone. The error names the change that
+//     stopped the rebuild.
+//   - Undo of one change of a ticket takes every change of that ticket,
+//     earlier ones too, and everything that waits for the ticket.
+//   - After any accept, or a cleared exception, the states recorded before it
+//     are stale. Add, Undo, Rebuild and Accept refuse with ErrMirrorBehind
+//     until the mirror names another default commit, and Accept refuses a
+//     state built before that with ErrStale until a rebuild has run.
 package staging

@@ -133,6 +133,8 @@ type Demo struct {
 	// taskHook is called when a follow-up task starts. Tests only.
 	taskHook func()
 	failed   atomic.Bool
+	// closing is set when Close starts: no action, step or task starts after it.
+	closing atomic.Bool
 }
 
 type beat struct {
@@ -390,6 +392,9 @@ func (d *Demo) Step(ctx context.Context) (string, bool, error) {
 func (d *Demo) stepOnce(ctx context.Context) (string, bool, error) {
 	d.stepMu.Lock()
 	defer d.stepMu.Unlock()
+	if d.closing.Load() {
+		return "", false, errors.New("demo: closed")
+	}
 	if d.next >= len(d.beats) {
 		return "", true, nil
 	}
@@ -421,8 +426,13 @@ func (d *Demo) Play(ctx context.Context) error {
 	}
 }
 
-// Close releases the store. It is safe to call twice.
+// Close stops the demo. From now on no action, step or follow-up task starts.
+// It waits for the one in flight, then releases the store, so nothing ever meets
+// a closed store. It is safe to call twice.
 func (d *Demo) Close() {
+	d.closing.Store(true)
+	d.stepMu.Lock()
+	defer d.stepMu.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {

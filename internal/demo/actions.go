@@ -72,8 +72,14 @@ func (d *Demo) act(ctx context.Context, fn func(journal func(floor.JournalKind, 
 	// the follow-up loop, so what it checks cannot change under it, and what it
 	// writes cannot be read half done by a step. Then the write lock, so no
 	// snapshot sees half of it.
+	if d.closing.Load() {
+		return server.ActionResult{}, server.ErrUnavailable
+	}
 	d.stepMu.Lock()
 	defer d.stepMu.Unlock()
+	if d.closing.Load() { // a stop came while this press waited for the step
+		return server.ActionResult{}, server.ErrUnavailable
+	}
 	err := d.mutate(ctx, func() error {
 		return fn(func(k floor.JournalKind, goal, ticket int) int64 {
 			seq = d.led.journal(k, goal, ticket, d.now())

@@ -10,6 +10,7 @@ import (
 	"github.com/openagentix/factory/internal/floor"
 	"github.com/openagentix/factory/internal/floor/collect"
 	"github.com/openagentix/factory/internal/gate"
+	"github.com/openagentix/factory/internal/server"
 )
 
 // An action is decided and its host writes are made in one step under the
@@ -108,7 +109,7 @@ func (d *Demo) Drain(ctx context.Context) error {
 		}
 		if err := d.runFollowup(ctx, f); err != nil {
 			// A stop the person asked for ends the task, and is not a failure.
-			if ctx.Err() == nil {
+			if ctx.Err() == nil && !d.closing.Load() {
 				d.failed.Store(true)
 				d.report("a step after an action did not finish")
 			}
@@ -120,6 +121,9 @@ func (d *Demo) Drain(ctx context.Context) error {
 func (d *Demo) runFollowup(ctx context.Context, f followup) error {
 	d.stepMu.Lock()
 	defer d.stepMu.Unlock()
+	if d.closing.Load() {
+		return server.ErrUnavailable
+	}
 	if d.taskHook != nil {
 		d.taskHook()
 	}

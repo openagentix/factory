@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1244,4 +1245,62 @@ func TestApproveAlwaysChecksTheVersionFresh(t *testing.T) {
 			t.Fatal("the approval was not done once")
 		}
 	})
+}
+
+// N6: a press that meets a stop never meets a closed store.
+func TestNoActionStartsAfterClose(t *testing.T) {
+	d := stepTo(t, "unconfirmed")
+	c := mustCall(t, d, "q-5-")
+	base := len(comments(t, d, 5))
+	d.Close()
+	if _, err := d.Answer(context.Background(), answerReq(c, "late")); !errors.Is(err, server.ErrUnavailable) {
+		t.Fatalf("Answer after Close: %v", err)
+	}
+	if _, err := d.Approve(context.Background(), server.ApproveRequest{Call: "p-2", Version: strings.Repeat("a", 64), Steps: &memSteps{}}); !errors.Is(err, server.ErrUnavailable) {
+		t.Fatalf("Approve after Close: %v", err)
+	}
+	if _, err := d.Consequence(context.Background(), consReq(callView{ID: "c-6-run1", Version: strings.Repeat("a", 64)}, true)); !errors.Is(err, server.ErrUnavailable) {
+		t.Fatalf("Consequence after Close: %v", err)
+	}
+	if len(comments(t, d, 5)) != base {
+		t.Fatal("something was written after Close")
+	}
+	if _, _, err := d.Step(context.Background()); err == nil {
+		t.Fatal("a step started after Close")
+	}
+	if err := d.Drain(context.Background()); err != nil {
+		t.Fatalf("an empty queue after Close: %v", err)
+	}
+}
+
+// Close waits for the step, the action or the task in flight.
+func TestCloseWaitsForWhatIsInFlight(t *testing.T) {
+	d := stepTo(t, "unconfirmed")
+	c := mustCall(t, d, "q-5-")
+	if _, err := d.Answer(context.Background(), answerReq(c, "go")); err != nil {
+		t.Fatal(err)
+	}
+	inTask, release := make(chan struct{}), make(chan struct{})
+	d.taskHook = func() { close(inTask); <-release }
+	drained := make(chan error, 1)
+	go func() { drained <- d.Drain(context.Background()) }()
+	<-inTask // a task holds the step lock
+	closed := make(chan struct{})
+	go func() { d.Close(); close(closed) }()
+	for start := time.Now(); !d.closing.Load(); runtime.Gosched() { // Close has started
+		if time.Since(start) > 30*time.Second {
+			t.Fatal("Close never marked that it is closing")
+		}
+	}
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a task was in flight")
+	default:
+	}
+	close(release)
+	<-closed
+	// The task ran on an open store: no panic, and what it did is a result or an error, never half of both.
+	if err := <-drained; err != nil && !errors.Is(err, server.ErrUnavailable) {
+		t.Logf("the task ended with %v", err)
+	}
 }

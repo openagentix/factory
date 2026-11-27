@@ -1059,3 +1059,44 @@ func TestARealFollowUpFailureIsReportedAndRemembered(t *testing.T) {
 		t.Fatalf("lines=%q failed=%v", lines, d.Failed())
 	}
 }
+
+// N3: the line is posted once for each removal, also when the label was put
+// back by hand after a failed step.
+func TestNoAnswerLineIsPostedForASecondRemoval(t *testing.T) {
+	d := stepTo(t, "unconfirmed")
+	ctx := context.Background()
+	noop := func(floor.JournalKind, int, int) int64 { return 0 }
+	cycle := func() error { return d.mutate(ctx, func() error { return d.resume(ctx, 5, noop) }) }
+	lines := func() int {
+		n := 0
+		for _, c := range comments(t, d, 5) {
+			if c.Kind == githost.KindFactory && strings.HasSuffix(c.Body, ".no_answer -->") {
+				n++
+			}
+		}
+		return n
+	}
+	if err := d.host.RemoveLabel(ctx, 5, githost.LabelNeedsHuman); err != nil {
+		t.Fatal(err)
+	}
+	d.host.FailNext("AddLabel", false)
+	if err := cycle(); !errors.Is(err, server.ErrHostFailed) || lines() != 1 {
+		t.Fatalf("first removal: %v, lines %d", err, lines())
+	}
+	// A person puts the label back, then it goes again.
+	if err := d.host.AddLabel(ctx, 5, githost.LabelNeedsHuman); err != nil {
+		t.Fatal(err)
+	}
+	if err := cycle(); err != nil { // the label is seen again
+		t.Fatal(err)
+	}
+	if err := d.host.RemoveLabel(ctx, 5, githost.LabelNeedsHuman); err != nil {
+		t.Fatal(err)
+	}
+	if err := cycle(); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("second removal: %v", err)
+	}
+	if lines() != 2 {
+		t.Fatalf("lines = %d, want one for each removal", lines())
+	}
+}

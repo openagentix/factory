@@ -164,10 +164,12 @@ func (d *Demo) resume(ctx context.Context, ticket int, journal func(floor.Journa
 	if err != nil {
 		return server.ErrHostFailed
 	}
+	runID := d.latest[ticket]
 	if iss.HasLabel(githost.LabelNeedsHuman) {
+		// The label stands, whoever put it back: the next removal is a new one.
+		delete(d.noAnswer, runID)
 		return nil
 	}
-	runID := d.latest[ticket]
 	run, err := d.st.GetRun(ctx, runID)
 	if err != nil || run.Phase != api.PhaseNeedsHuman {
 		return server.ErrStale

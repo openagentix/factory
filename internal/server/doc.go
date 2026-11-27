@@ -17,8 +17,12 @@
 // denial of service this server cannot fully prevent. The person with the
 // key is still served in turn, because a connection beyond the cap is not
 // accepted until a slot frees, so it waits in the kernel queue in order
-// instead of being turned away. If that queue fills, the kernel refuses new
-// connections. This is a choice: accepting and closing at once would turn the
+// instead of being turned away. The wait is set by the attacker: it is about
+// the number of waiting connections divided by the cap, times the header
+// timeout. In a test with a cap of 8 and a one second header timeout, 40
+// reconnecting sockets made every real request wait 4 to 5 seconds. With the
+// default cap and timeout and several hundred sockets it can be tens of
+// seconds. If that queue fills, the kernel refuses new connections. This is a choice: accepting and closing at once would turn the
 // person away for as long as the attacker holds the slots.
 //
 // Go's own HTTP code answers some requests before any handler runs: a request

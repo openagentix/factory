@@ -4,7 +4,7 @@ These are plans, not promises. Dates are not set. Scope can change. A release is
 
 ## Built today
 
-- Parts, not wired together, each with tests, under `internal/`: `api` (shared types with strict parsing), `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner` (one work stage as a local process), `staging` (the holding area: rebuild, Accept, Undo, kept in memory for now) and `floor` (the read model of the Floor screen).
+- Parts, not wired together, each with tests, under `internal/`: `api` (shared types with strict parsing), `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner` (one work stage as a local process), `staging` (the holding area: rebuild, Accept, Undo, kept in memory for now) , `floor` (the read model of the Floor screen) and `server` (the local web server: the key, the request checks, live events; it serves a placeholder page for now).
 - `oxf version`.
 - Four trial runs by hand that show an installed agent can be started unattended. See [the trial record](docs/trials/2026-11-26-unattended-runs.md).
 

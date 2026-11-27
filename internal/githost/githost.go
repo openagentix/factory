@@ -151,6 +151,10 @@ type Issue struct {
 	// Association is the host's word for the author. It is information only.
 	// Trust never depends on it.
 	Association string
+	// BodyEditedAt is when the body last changed, as far as the host says. It
+	// is the zero time when the host does not say. Nothing may be assumed from
+	// a zero value.
+	BodyEditedAt time.Time
 	// Trusted is true when the author has write, maintain or admin permission
 	// on the repository, or is the factory itself.
 	Trusted bool

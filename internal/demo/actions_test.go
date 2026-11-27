@@ -1152,3 +1152,96 @@ func TestApproveAdoptsOnlyItsOwnTickets(t *testing.T) {
 		}
 	})
 }
+
+// N1: a press is never trusted from memory alone. Every press reads the goal
+// fresh and checks the version, resumed or not.
+func TestApproveAlwaysChecksTheVersionFresh(t *testing.T) {
+	ctx := context.Background()
+	failedFirst := func(t *testing.T) (*Demo, callView) {
+		t.Helper()
+		d := newDemo(t)
+		c := mustCall(t, d, "p-2")
+		d.host.FailAfter("AddLabel", 4, false) // the approval label itself fails
+		if _, err := d.Approve(ctx, server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}}); !errors.Is(err, server.ErrHostFailed) {
+			t.Fatalf("first press: %v", err)
+		}
+		return d, c
+	}
+	press := func(d *Demo, c callView) error {
+		_, err := d.Approve(ctx, server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}})
+		return err
+	}
+	notApproved := func(t *testing.T, d *Demo) {
+		t.Helper()
+		if hasLabel(t, d, 2, githost.LabelApproved) || countKind(t, d, "plan_approved") != 1 {
+			t.Fatal("the goal was approved")
+		}
+	}
+	t.Run("the lines changed after the failure", func(t *testing.T) {
+		d, c := failedFirst(t)
+		d.host.EditIssueBody(2, "Customers can cancel a booking.\n\n- A booking can be cancelled.\n- A cancelled booking is refunded and the day is freed.\n")
+		if err := press(d, c); !errors.Is(err, server.ErrStale) {
+			t.Fatalf("old version after an edit: %v", err)
+		}
+		notApproved(t, d)
+	})
+	t.Run("the goal was closed after the failure", func(t *testing.T) {
+		d, c := failedFirst(t)
+		d.host.CloseIssue(2)
+		if err := press(d, c); !errors.Is(err, server.ErrStale) {
+			t.Fatalf("closed goal: %v", err)
+		}
+		notApproved(t, d)
+	})
+	t.Run("the lines are the same but the body was edited again", func(t *testing.T) {
+		d, c := failedFirst(t)
+		if err := d.host.AddLabel(ctx, 2, githost.LabelApproved); err != nil { // as a press that failed after the label leaves it
+			t.Fatal(err)
+		}
+		d.host.EditIssueBody(2, goalCancelBody)
+		if err := press(d, c); !errors.Is(err, server.ErrStale) {
+			t.Fatalf("same lines, new edit time: %v", err)
+		}
+		if countKind(t, d, "plan_approved") != 1 {
+			t.Fatal("a refused press wrote an entry")
+		}
+	})
+	t.Run("a remembered press with the label on and nothing changed finishes", func(t *testing.T) {
+		d, c := failedFirst(t)
+		if err := d.host.AddLabel(ctx, 2, githost.LabelApproved); err != nil {
+			t.Fatal(err)
+		}
+		if err := press(d, c); err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		if countKind(t, d, "plan_approved") != 2 {
+			t.Fatal("no journal entry")
+		}
+	})
+	t.Run("the label was put on by someone else: not this press's to finish", func(t *testing.T) {
+		d := newDemo(t)
+		c := mustCall(t, d, "p-2")
+		if err := d.host.AddLabel(ctx, 2, githost.LabelApproved); err != nil {
+			t.Fatal(err)
+		}
+		if err := press(d, c); !errors.Is(err, server.ErrStale) {
+			t.Fatalf("no record of this press: %v", err)
+		}
+	})
+	t.Run("the label was taken off by hand after the failed press", func(t *testing.T) {
+		d, c := failedFirst(t)
+		if err := d.host.AddLabel(ctx, 2, githost.LabelApproved); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.host.RemoveLabel(ctx, 2, githost.LabelApproved); err != nil {
+			t.Fatal(err)
+		}
+		// The plan is offered again at the same version, so the press is a new press and is done once.
+		if err := press(d, c); err != nil {
+			t.Fatalf("press: %v", err)
+		}
+		if !hasLabel(t, d, 2, githost.LabelApproved) || countKind(t, d, "plan_approved") != 2 {
+			t.Fatal("the approval was not done once")
+		}
+	})
+}

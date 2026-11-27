@@ -378,15 +378,25 @@ func (d *Demo) Approve(ctx context.Context, r server.ApproveRequest) (server.Act
 		return server.ActionResult{}, server.ErrStale
 	}
 	return d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
-		// A press that put the label on and then failed has no plan call to
-		// check any more, because the goal is approved. Its own press, at the
-		// version the call had, finishes the rest.
-		resuming := d.approving[goal] != "" && d.approving[goal] == r.Version
-		if !resuming {
-			f := d.project(ctx)
-			if _, err := floor.CheckCall(f, r.Call, floor.ActionApprove, r.Version); err != nil {
+		// A press is never trusted from memory alone. The goal is read fresh and
+		// the plan's version is worked out from what is read, by the Floor's own
+		// function, whether the press is a new one or finishes an earlier one.
+		iss, err := d.host.GetIssue(ctx, goal)
+		if err != nil {
+			return server.ErrHostFailed
+		}
+		approved := iss.HasLabel(githost.LabelApproved)
+		if approved {
+			// The call is not offered once the goal is approved. Only the press that
+			// put the label on may carry on, and only when it remembers this goal
+			// at this version and the host says the body has an edit time, so the
+			// version below is a real comparison. Anything unknown is stale.
+			if d.approving[goal] == "" || d.approving[goal] != r.Version || iss.BodyEditedAt.IsZero() {
 				return server.ErrStale
 			}
+		}
+		if err := d.checkPlan(ctx, goal, r.Call, r.Version, approved); err != nil {
+			return err
 		}
 		specs := ticketsOf(goal)
 		if len(specs) == 0 {
@@ -429,8 +439,8 @@ func (d *Demo) Approve(ctx context.Context, r server.ApproveRequest) (server.Act
 			}
 		}
 		// Read all of it back. "Done" is answered only when the host shows it.
-		iss, err := d.host.GetIssue(ctx, goal)
-		if err != nil || !iss.HasLabel(githost.LabelApproved) {
+		back, err := d.host.GetIssue(ctx, goal)
+		if err != nil || !back.HasLabel(githost.LabelApproved) {
 			return server.ErrHostFailed
 		}
 		for _, s := range specs {
@@ -506,6 +516,28 @@ func (d *Demo) ticketStands(ctx context.Context, goal int, s ticketSpec, n int) 
 	if err != nil || !d.isOurs(iss, goal, s) ||
 		!iss.HasLabel(githost.LabelPlanned) || !iss.HasLabel(githost.LabelReady) {
 		return server.ErrHostFailed
+	}
+	return nil
+}
+
+// checkPlan decides again whether the plan call of a goal is offered, at this
+// version, on what the host and the stores say now. With maskApproved the
+// approval label is read as absent, so the call that this press saw can be
+// worked out again after the press put the label on. The version is computed
+// by the Floor, never here.
+func (d *Demo) checkPlan(ctx context.Context, goal int, call, version string, maskApproved bool) error {
+	in := collect.Collect(ctx, d.sources())
+	if maskApproved && in.Goals.Known {
+		gs := append([]floor.GoalIn(nil), in.Goals.Val...)
+		for i := range gs {
+			if gs[i].Number == goal {
+				gs[i].Approved = floor.Some(false)
+			}
+		}
+		in.Goals = floor.Some(gs)
+	}
+	if _, err := floor.CheckCall(floor.Project(in), call, floor.ActionApprove, version); err != nil {
+		return server.ErrStale
 	}
 	return nil
 }

@@ -136,7 +136,7 @@ func (s *fakeState) newItem(title, body, author, assoc string) *fakeItem {
 	s.next++
 	it := &fakeItem{Issue: Issue{
 		Number: s.next, ID: int64(1000 + s.next), Title: title, Body: body, State: "open",
-		Author: author, Association: assoc,
+		Author: author, Association: assoc, BodyEditedAt: s.clock(),
 	}}
 	s.items[s.next] = it
 	return it
@@ -349,6 +349,16 @@ func (f *Fake) EditIssueBody(number int, body string) {
 	defer f.mu.Unlock()
 	if it, err := f.get(number); err == nil {
 		it.Body = body
+		it.BodyEditedAt = f.clock()
+	}
+}
+
+// CloseIssue closes an issue, as a person would.
+func (f *Fake) CloseIssue(number int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil {
+		it.State = "closed"
 	}
 }
 

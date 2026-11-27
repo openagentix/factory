@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const canary = "CANARY-secret-7f3a9c"
@@ -315,5 +316,75 @@ func TestFormattingNeverShowsSecrets(t *testing.T) {
 		if strings.Contains(e.Error(), canary) {
 			t.Error("error chain shows the secret")
 		}
+	}
+}
+
+// A secret that overlaps itself joins into one long match. The writer must not
+// hold the whole stream for it.
+func TestWriterSelfOverlapStaysBounded(t *testing.T) {
+	f := mustNew(t, "abababab")
+	var out bytes.Buffer
+	w := f.NewWriter(&out)
+	start := time.Now()
+	for i := 0; i < 20000; i++ {
+		if _, err := w.Write([]byte("ab")); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(w.s.pending); n > 4*f.maxLen {
+			t.Fatalf("write %d: %d bytes held, limit %d", i, n, 4*f.maxLen)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %v", d)
+	}
+	if got := out.String(); got != Mark {
+		t.Fatalf("want one mark, got %d bytes", len(got))
+	}
+}
+
+// Small alphabets, secrets that overlap themselves or each other, secrets that
+// are prefixes of others, and random chunk sizes. The output must equal whole
+// text redaction, and must never show a secret.
+func TestWriterSmallAlphabetProperty(t *testing.T) {
+	secrets := []string{"abababab", "bababababa", "aaaaaaaa", "aaaaaaaaab", "abaabaab"}
+	f := mustNew(t, secrets...)
+	rng := rand.New(rand.NewSource(11))
+	for round := 0; round < 4000; round++ {
+		n := 1 + rng.Intn(120)
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = "ab"[rng.Intn(2)]
+		}
+		text := string(b) + "\n" // the newline ends any held prefix
+		maxChunk := 1 + rng.Intn(30)
+		var chunks []string
+		for rest := text; rest != ""; {
+			k := 1 + rng.Intn(maxChunk)
+			if k > len(rest) {
+				k = len(rest)
+			}
+			chunks = append(chunks, rest[:k])
+			rest = rest[k:]
+		}
+		got := writeAll(t, f, chunks...)
+		if want := f.Redact(text); got != want {
+			t.Fatalf("round %d\ninput %q\ngot   %q\nwant  %q", round, text, got, want)
+		}
+		for _, s := range secrets {
+			if strings.Contains(got, s) {
+				t.Fatalf("round %d leaked %q", round, s)
+			}
+		}
+	}
+}
+
+// A stream that ends inside a secret fails safe: the held start is marked.
+func TestWriterCloseMarksSecretPrefix(t *testing.T) {
+	f := mustNew(t, canary)
+	if got := writeAll(t, f, "x ", canary[:9]); got != "x "+Mark {
+		t.Fatalf("got %q", got)
 	}
 }

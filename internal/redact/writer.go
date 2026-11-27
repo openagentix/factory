@@ -8,8 +8,10 @@ import (
 )
 
 // Writer redacts a stream on its way to an underlying writer, also when a
-// secret arrives split over several Write calls. It holds back only the
-// trailing bytes that could still become a secret. Close releases them.
+// secret arrives split over several Write calls. It holds back the trailing
+// bytes that could still become a secret, and the start of a match that may
+// still grow. It never holds more than twice the longest secret: a long joined
+// match is marked once and only its last bytes are kept. Close releases them.
 // Writer is safe for concurrent use; each Write is redacted as one piece of
 // the stream, in the order the calls get the lock.
 type Writer struct{ s *wstate }
@@ -19,6 +21,7 @@ type wstate struct {
 	f       *Filter
 	out     io.Writer
 	pending string
+	masked  int // leading bytes of pending already covered by a mark passed on
 	closed  bool
 }
 
@@ -38,22 +41,43 @@ func (w Writer) Write(p []byte) (int, error) {
 		return 0, errors.New("redact: write after close")
 	}
 	buf := s.pending + string(p)
-	spans := s.f.matches(buf)
+	spans := s.f.matchesMasked(buf, s.masked)
 	hold := s.f.partialStart(buf)
 	// A match that reaches into the held tail may still grow, so it is held
 	// from its start.
+	var open span
 	for _, m := range spans {
 		if m.end > hold && m.start < hold {
 			hold = m.start
+			open = m
 		}
 	}
-	emit := render(buf[:hold], spansBefore(spans, hold))
+	skip := s.masked > 0 && len(spans) > 0 && spans[0].start == 0
+	if open.end > 0 && len(buf)-hold > 2*s.f.maxLen {
+		// A long joined match. Pass on its mark once, and keep only the last
+		// bytes, which a later match can still join.
+		emit := renderFrom(buf[:hold], spansBefore(spans, hold), skip)
+		if hold > 0 || !skip {
+			emit += Mark
+		}
+		if _, err := io.WriteString(s.out, emit); err != nil {
+			return 0, err
+		}
+		tail := len(buf) - (s.f.maxLen - 1)
+		s.pending = buf[tail:]
+		s.masked = max(0, open.end-tail)
+		return len(p), nil
+	}
+	emit := renderFrom(buf[:hold], spansBefore(spans, hold), skip)
 	if emit != "" {
 		if _, err := io.WriteString(s.out, emit); err != nil {
 			return 0, err
 		}
 	}
 	s.pending = buf[hold:]
+	if hold > 0 {
+		s.masked = 0
+	}
 	return len(p), nil
 }
 
@@ -83,7 +107,8 @@ func (w Writer) Close() error {
 	if rest == "" {
 		return nil
 	}
-	spans := s.f.matches(rest)
+	spans := s.f.matchesMasked(rest, s.masked)
+	skip := s.masked > 0
 	if hold := s.f.partialStart(rest); hold < len(rest) {
 		// Everything from the first held byte on is a secret in the making.
 		kept := spansBefore(spans, hold)
@@ -93,7 +118,7 @@ func (w Writer) Close() error {
 		}
 		spans = append(append([]span{}, spansBefore(spans, start)...), span{start, len(rest)})
 	}
-	_, err := io.WriteString(s.out, render(rest, spans))
+	_, err := io.WriteString(s.out, renderFrom(rest, spans, skip))
 	return err
 }
 

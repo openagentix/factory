@@ -3,8 +3,14 @@
 // A Filter holds the secrets. Redact replaces every occurrence with Mark.
 // Overlapping occurrences are joined and give one mark, so the tail of one
 // secret never survives next to the head of another. The Writer does the same
-// for a stream that arrives in pieces, holding back only the few trailing bytes
-// that could be the start of a secret.
+// for a stream that arrives in pieces. The Writer holds back the trailing bytes
+// that could be the start of a secret. It never holds more than twice the
+// length of the longest secret, also when a secret overlaps itself.
+//
+// Limits. A Filter is fixed after New. A Writer made before a secret is known
+// never redacts that secret, so build writers after every secret is loaded, or
+// build them again when a new secret appears. Encoded forms of a secret, such
+// as the base64 in an Authorization: Basic header, are not redacted.
 //
 // Neither type ever prints, logs or formats its secrets. Every format verb,
 // JSON and a panic show Mark.
@@ -87,20 +93,44 @@ func (f *Filter) matches(s string) []span {
 	return out
 }
 
+// matchesMasked is matches for text whose first masked bytes are already
+// covered by a mark that was passed on. They count as a match that starts at 0,
+// and any match that overlaps them joins it.
+func (f *Filter) matchesMasked(s string, masked int) []span {
+	spans := f.matches(s)
+	if masked == 0 {
+		return spans
+	}
+	if len(spans) > 0 && spans[0].start < masked {
+		spans[0].start = 0
+		if spans[0].end < masked {
+			spans[0].end = masked
+		}
+		return spans
+	}
+	return append([]span{{0, masked}}, spans...)
+}
+
 // Redact replaces every secret in s with Mark.
 func (f *Filter) Redact(s string) string {
 	return render(s, f.matches(s))
 }
 
-func render(s string, spans []span) string {
+func render(s string, spans []span) string { return renderFrom(s, spans, false) }
+
+// renderFrom is render. With skipFirst the first span is not marked, because
+// its mark was passed on earlier.
+func renderFrom(s string, spans []span, skipFirst bool) string {
 	if len(spans) == 0 {
 		return s
 	}
 	var b strings.Builder
 	last := 0
-	for _, m := range spans {
+	for i, m := range spans {
 		b.WriteString(s[last:m.start])
-		b.WriteString(Mark)
+		if i > 0 || !skipFirst {
+			b.WriteString(Mark)
+		}
 		last = m.end
 	}
 	b.WriteString(s[last:])

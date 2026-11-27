@@ -1343,3 +1343,24 @@ func TestCloseWaitsForWhatIsInFlight(t *testing.T) {
 		t.Logf("the task ended with %v", err)
 	}
 }
+
+// A stop while a change is being added is not a failure of the change: it is
+// not marked, and it is not shown as stuck.
+func TestAStopWhileAddingAnAnsweredChangeDoesNotMarkIt(t *testing.T) {
+	d := beatsOnly(t, "write_checks", "risk")
+	c := mustCall(t, d, "c-6-")
+	if _, err := d.Consequence(context.Background(), consReq(c, true)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	d.addHook = func() error { cancel(); return ctx.Err() } // the stop arrives as the add starts
+	if err := d.Drain(ctx); err == nil {
+		t.Fatal("expected the stop")
+	}
+	if g, ok := d.led.gateOf(6); !ok || g.Status != floor.GatePassed {
+		t.Fatalf("the change was marked: %+v", g)
+	}
+	if d.Failed() {
+		t.Fatal("a stop is not a failure")
+	}
+}

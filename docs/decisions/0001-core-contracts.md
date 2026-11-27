@@ -8,7 +8,7 @@
 
 Free tools already turn an issue into a pull request. Practitioners report where teams hurt now: review capacity is the limit, agents edit tests to pass them, pull request text often does not match the change, cost per outcome is not visible, and there is no basis for trusting an agent. These are other people's reports, not findings from our runs, so this record quotes no numbers.
 
-The product is for a person who states a business goal and will not read code. They plan with the factory for as long as they need. After the plan is approved, the factory builds and judges the work alone, shows outcomes in plain words, and says plainly what it could not confirm. The product line: **"Spend your time deciding what to build. None watching it get built."** Positioning: **the software factory that earns its autonomy.** Trust comes from what happened after a person accepted the work.
+The product is for small engineering teams first, roughly two to twenty engineers on a shared codebase, then for larger organisations. A solo engineer can use it, but it is not designed around one. It is not for people who want an application without an engineering team. Engineers do not have time to read every change an agent makes, so the factory judges the work. The team plans with the factory for as long as it needs, with no cap, and that is where its attention belongs. After the plan is approved, the factory builds and judges the work alone, shows outcomes in plain words, and says plainly what it could not confirm. The product line: **"Spend your time deciding what to build. None watching it get built."** Positioning: **the software factory that earns its autonomy.** Trust comes from what happened after a person accepted the work.
 
 ## Vocabulary
 
@@ -35,7 +35,7 @@ After the plan is approved, at the default dial level, nothing else reaches the 
 
 **Try it** starts the project's start command the same way the checks are run (see the verify stage). The person is told that it runs code the factory wrote and no person has read.
 
-**Outcome view**, the default: goals, the acceptance list with its three states, plain questions, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit. **Engineering view**, one action away: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. A developer can take the wheel on a ticket or set the dial to guided, while the factory builds the rest.
+**Outcome view**, what the whole team watches: goals, the acceptance list with its three states, plain questions waiting for a person, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. **Engineering view**: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. Which view opens first is a setting per person. An engineer can take the wheel on a ticket or set the dial to guided, while the factory builds the rest.
 
 ## Lanes and planning
 
@@ -105,6 +105,12 @@ The **unattended contract** is a fixed text placed before any method in every ru
 
 **Claims across machines.** A run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The earliest marker wins and the other run ends with no change. A claim expires after a set time, so a crashed machine does not hold a ticket for ever. The time is a setting with no default yet.
 
+**Team work** is part of the core. Designed, not built, beyond the claims above:
+
+- Each teammate runs `oxf` on their own machine, with their own agent login and their own git host account. Nobody shares a login. The git host is the one place work is coordinated.
+- A list of trusted logins in `factory.yaml` says whose machines act for the factory. A claim, an answer or an approval from any other login is ignored.
+- A `review` is preferred on a different teammate's machine and harness than the one that built the subject.
+
 **Triggers** act only on events from a user with write access, or from the factory itself. Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer or approval given in the web app is posted with an answer marker and counts as the person's. Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
 
 ## The factory's own repository
@@ -128,6 +134,12 @@ Every package of the first build passed its own tests. Most then failed a review
 - A fix is first a failing test that reproduces the finding.
 - When the same family of finding returns, the approach changes from refusing bad inputs to accepting only known-good ones.
 - Two rework rounds, then stop and decide. What remains is written on the change as a known limit and filed as a ticket.
+
+## Rules the first build established
+
+- **An empty, missing or unknown value always means failure, or "do not combine". It never means success.** A blank review value was read as a pass.
+- **A fix is new code. It is attacked like any other change before it is merged.** A cleanup added as a fix deleted another run's objects.
+- **Every change is tested on Linux as well as on a developer's machine before it is proposed.** Tests that passed on macOS failed in CI on Linux.
 
 ## Credentials
 
@@ -477,4 +489,4 @@ Left to the first real runs, and not designed further here:
 
 The sections on the factory's own repository and on how changes are reviewed were added on 2026-11-26 from what the first build showed.
 
-This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for a person who will not read a change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.
+This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for an engineer who should not have to read every change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.

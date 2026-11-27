@@ -4,7 +4,7 @@ These are plans, not promises. Dates are not set. Scope can change. A release is
 
 ## Built today
 
-- Shared types with strict parsing, in `internal/api`, with tests.
+- Parts, not wired together, each with tests, under `internal/`: `api` (shared types with strict parsing), `store`, `harness`, `githost`, `verify`, `repo`, `acceptance` and `gate`.
 - `oxf version`.
 - Four trial runs by hand that show an installed agent can be started unattended. See [the trial record](docs/trials/2026-11-26-unattended-runs.md).
 
@@ -12,18 +12,19 @@ Nothing else works yet. There is no release.
 
 ## v0.1
 
-A person plans a goal in conversation, then the factory builds it with nobody watching, on the person's own machine, with the Claude Code and Codex already installed there.
+A small engineering team plans a goal in conversation, then the factory builds it with nobody watching, on the teammates' own machines, with the Claude Code and Codex already installed there.
 
 Build order:
 
-1. **The quick lane, unattended.** One goal with a few acceptance lines. Acceptance checks, one build run under a permission policy, checks outside the builder, an independent review, the staging branch.
-2. **The web app.** The outcome view with the acceptance list, Accept and Undo. Then the engineering view.
-3. **The standard lane.** Interactive planning to a spec and tickets. Trajectory.
-4. **Take the wheel.** A person's own session claims a piece of work.
+1. **The quick lane, unattended, on one machine.** One goal with a few acceptance lines. Acceptance checks, one build run under a permission policy, checks outside the builder, an independent review, the staging branch.
+2. **Team basics.** The list of trusted logins, and claims that work across teammates' machines, so a second person's machine can take work.
+3. **The web app.** The outcome view with the acceptance list, Accept and Undo. Then the engineering view.
+4. **The standard lane.** Interactive planning to a spec and tickets. Trajectory.
+5. **Take the wheel.** A person's own session claims a piece of work.
 
 Also in v0.1: the dial, the trust and attention records, built-in prompts, use of an installed workflow plugin by name, a demo mode.
 
-There is a useful product after step 2 if later steps slip.
+There is a useful product after step 3 if later steps slip.
 
 ## v0.2
 

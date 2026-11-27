@@ -6,7 +6,7 @@ A guide for AI coding agents working in this repository. Humans can read it too.
 
 OpenAgentix Software Factory is an open-source software factory. It turns a business goal into a spec, tickets and verified pull requests, using the Claude Code and Codex CLI that a person already has installed. The command is `oxf`. The Go module is `github.com/openagentix/factory`. Licence: Apache-2.0. Go 1.25.
 
-Status: design drafted, one Go package (`internal/api`, shared types and strict parsing) built and tested. Nothing else works yet. There is no release. Nothing is proven by a run.
+Status: design drafted, eight Go packages under `internal/` built and tested (`api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`), not wired together. No usable command beyond `oxf version`. There is no release. Nothing is proven by a run.
 
 ## Where things are
 

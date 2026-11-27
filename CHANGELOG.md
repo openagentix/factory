@@ -6,7 +6,15 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ## [Unreleased]
 
+### Changed
+
+- The audience is now small engineering teams first, then larger organisations. Team work is part of the core design, and the v0.1 build order has a team basics step. Solo founders who are not engineers are not the audience.
+
 ### Added
+
+- `internal/repo`: the factory's own bare git repository, with export and import of files through a plain directory, and a guard that refuses a repository holding any unknown configuration or layout entry.
+- `internal/acceptance`: runs the acceptance checks of a goal and turns the results into three states: working, not working yet and could not confirm.
+- `internal/gate`: the machine gate as pure decisions over values, where a blank or unknown value always means no.
 
 - `internal/store`: run records and dial settings behind an interface, with a pure Go SQLite implementation. A finished run cannot be changed.
 - `internal/harness`: adapters that start Claude Code and Codex unattended under a permission policy and read their events, a prompt renderer with the unattended contract, and a stub agent for tests.

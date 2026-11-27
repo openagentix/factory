@@ -80,6 +80,41 @@ func mustCall(t testing.TB, d *Demo, prefix string) callView {
 	return c
 }
 
+// beatsOnly makes a demo and plays only the named beats of the story, in order,
+// with the real code and nothing else. The actions need a question or a
+// consequence and the checks of goal 1 on the holding area, not the whole story.
+// The whole story is played by the story tests.
+func beatsOnly(t *testing.T, names ...string) *Demo {
+	t.Helper()
+	d := newDemo(t)
+	playBeats(t, d, names...)
+	return d
+}
+
+// playBeats plays the named beats on a demo. It does not move the story on.
+func playBeats(t *testing.T, d *Demo, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		found := false
+		for _, b := range d.beats {
+			if b.name != name {
+				continue
+			}
+			found = true
+			d.stepMu.Lock()
+			err := b.fn(context.Background(), d)
+			d.stepMu.Unlock()
+			if err != nil {
+				t.Fatalf("beat %s: %v", name, err)
+			}
+			d.publish(context.Background())
+		}
+		if !found {
+			t.Fatalf("no beat %s", name)
+		}
+	}
+}
+
 func stepsTo(t *testing.T, d *Demo, last string) {
 	t.Helper()
 	for {
@@ -146,7 +181,7 @@ func answerReq(c callView, text string) server.AnswerRequest {
 // Answer: the question leaves "Needs a person", the ticket really starts
 // again through the real runner, and the shift log keeps its fixed lines.
 func TestAnswerStartsTheTicketAgainThroughTheRealRunner(t *testing.T) {
-	d := stepTo(t, "unconfirmed") // the question beat is done
+	d := beatsOnly(t, "write_checks", "question") // the question beat is done
 	ctx := context.Background()
 	c := mustCall(t, d, "q-5-")
 	if len(c.Actions) != 1 || c.Actions[0] != floor.ActionAnswer {
@@ -198,7 +233,7 @@ func TestAnswerStartsTheTicketAgainThroughTheRealRunner(t *testing.T) {
 
 // Answer, attacks: stale, a second answer, host failures, look-alike markers.
 func TestAnswerRefusalsAndHostFailures(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	ctx := context.Background()
 	c := mustCall(t, d, "q-5-")
 	base := len(comments(t, d, 5))
@@ -295,7 +330,7 @@ func TestAnswerRefusalsAndHostFailures(t *testing.T) {
 
 // Several answers at once, with different texts: one comment.
 func TestTwoAnswersAtOnceMakeOneComment(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	c := mustCall(t, d, "q-5-")
 	base := len(comments(t, d, 5))
 	var wg sync.WaitGroup
@@ -323,7 +358,7 @@ func TestTwoAnswersAtOnceMakeOneComment(t *testing.T) {
 
 // A real step that fails after the action was accepted shows as failure.
 func TestAnswerWithAScriptThatFailsIsStuckNeverPassed(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	ctx := context.Background()
 	c := mustCall(t, d, "q-5-")
 	if _, err := d.Answer(ctx, answerReq(c, "go")); err != nil {
@@ -354,7 +389,7 @@ func consReq(c callView, yes bool) server.ConsequenceRequest {
 // Yes: the real gate decision is applied and the change really enters the
 // holding area. One comment, one journal entry.
 func TestYesAppliesTheSealedDecisionAndTheChangeEntersTheHoldingArea(t *testing.T) {
-	d := stepTo(t, "taken_out") // the risk beat is done
+	d := beatsOnly(t, "write_checks", "risk") // the risk beat is done
 	ctx := context.Background()
 	c, tk := riskCall(t, d)
 	base := len(comments(t, d, tk))
@@ -393,7 +428,7 @@ func TestYesAppliesTheSealedDecisionAndTheChangeEntersTheHoldingArea(t *testing.
 
 // No: the ticket is really reworked. The second try is not risky and passes.
 func TestNoSendsTheTicketBackAndTheSecondTryPasses(t *testing.T) {
-	d := stepTo(t, "taken_out")
+	d := beatsOnly(t, "write_checks", "risk")
 	ctx := context.Background()
 	c, _ := riskCall(t, d)
 	if _, err := d.Consequence(ctx, consReq(c, false)); err != nil {
@@ -420,7 +455,7 @@ func TestNoSendsTheTicketBackAndTheSecondTryPasses(t *testing.T) {
 
 // A no after a yes, with a new key: refused, one comment, the first applies.
 func TestYesThenNoWithAnotherKeyIsRefused(t *testing.T) {
-	d := stepTo(t, "taken_out")
+	d := beatsOnly(t, "write_checks", "risk")
 	ctx := context.Background()
 	c, tk := riskCall(t, d)
 	base := len(comments(t, d, tk))
@@ -449,7 +484,7 @@ func TestYesThenNoWithAnotherKeyIsRefused(t *testing.T) {
 
 // Yes against no at the same time: one comment, one applied decision.
 func TestYesAndNoAtOnceApplyOneDecision(t *testing.T) {
-	d := stepTo(t, "taken_out")
+	d := beatsOnly(t, "write_checks", "risk")
 	c, tk := riskCall(t, d)
 	base := len(comments(t, d, tk))
 	var wg sync.WaitGroup
@@ -478,7 +513,7 @@ func TestYesAndNoAtOnceApplyOneDecision(t *testing.T) {
 // A consequence marker from anyone but the factory login does not count, and
 // neither does an edited one, nor one for another run, attempt or commit.
 func TestForgedConsequenceMarkersDoNotCount(t *testing.T) {
-	d := stepTo(t, "taken_out")
+	d := beatsOnly(t, "write_checks", "risk")
 	ctx := context.Background()
 	c, tk := riskCall(t, d)
 	s := d.sealed[tk]
@@ -505,7 +540,7 @@ func TestForgedConsequenceMarkersDoNotCount(t *testing.T) {
 
 // The gate refuses: a decision that was not sealed adds nothing and posts nothing.
 func TestAnUnsealedDecisionIsRefusedBeforeAnythingIsPosted(t *testing.T) {
-	d := stepTo(t, "taken_out")
+	d := beatsOnly(t, "write_checks", "risk")
 	ctx := context.Background()
 	c, tk := riskCall(t, d)
 	s := d.sealed[tk]
@@ -534,7 +569,7 @@ func TestAFailedAddAfterAYesIsShownAsStuckAndReported(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	stepsTo(t, d, "risk")
+	playBeats(t, d, "write_checks", "risk")
 	d.addHook = func() error { return staging.ErrMirrorBehind }
 	c, _ := riskCall(t, d)
 	if _, err := d.Consequence(context.Background(), consReq(c, true)); err != nil {
@@ -778,7 +813,7 @@ func TestActionsAndTheStoryTogether(t *testing.T) {
 // F3: when the label goes and no answer stands, the label comes back with one
 // fixed line. That line is never a question.
 func TestNoAnswerFoundIsOneFixedLineAndNeverAQuestion(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	ctx := context.Background()
 	q := mustCall(t, d, "q-5-")
 	noop := func(floor.JournalKind, int, int) int64 { return 0 }
@@ -953,8 +988,8 @@ func TestApproveFinishesExactlyWhatIsMissing(t *testing.T) {
 				if countKind(t, d, "plan_approved") != 2 {
 					t.Fatalf("plan_approved entries = %d", countKind(t, d, "plan_approved"))
 				}
-				if !(c.skip == 0 && sameKey) {
-					return // the building of goal 2 is slow: it is checked once per kind of failure
+				if !(c.skip == 0 && sameKey && !c.after) {
+					return // the building of goal 2 is slow: it is checked once for each step that can fail
 				}
 				if err := d.Drain(ctx); err != nil {
 					t.Fatal(err)
@@ -1019,7 +1054,7 @@ func TestAStopDuringAFollowUpIsNotAFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	stepsTo(t, d, "question")
+	playBeats(t, d, "write_checks", "question")
 	c := mustCall(t, d, "q-5-")
 	if _, err := d.Answer(context.Background(), answerReq(c, "go")); err != nil {
 		t.Fatal(err)
@@ -1047,7 +1082,7 @@ func TestARealFollowUpFailureIsReportedAndRemembered(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	stepsTo(t, d, "risk")
+	playBeats(t, d, "write_checks", "risk")
 	d.addHook = func() error { return staging.ErrMirrorBehind }
 	c := mustCall(t, d, "c-6-")
 	if _, err := d.Consequence(context.Background(), consReq(c, true)); err != nil {
@@ -1064,7 +1099,7 @@ func TestARealFollowUpFailureIsReportedAndRemembered(t *testing.T) {
 // N3: the line is posted once for each removal, also when the label was put
 // back by hand after a failed step.
 func TestNoAnswerLineIsPostedForASecondRemoval(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	ctx := context.Background()
 	noop := func(floor.JournalKind, int, int) int64 { return 0 }
 	cycle := func() error { return d.mutate(ctx, func() error { return d.resume(ctx, 5, noop) }) }
@@ -1249,7 +1284,7 @@ func TestApproveAlwaysChecksTheVersionFresh(t *testing.T) {
 
 // N6: a press that meets a stop never meets a closed store.
 func TestNoActionStartsAfterClose(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	c := mustCall(t, d, "q-5-")
 	base := len(comments(t, d, 5))
 	d.Close()
@@ -1275,7 +1310,7 @@ func TestNoActionStartsAfterClose(t *testing.T) {
 
 // Close waits for the step, the action or the task in flight.
 func TestCloseWaitsForWhatIsInFlight(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	c := mustCall(t, d, "q-5-")
 	if _, err := d.Answer(context.Background(), answerReq(c, "go")); err != nil {
 		t.Fatal(err)

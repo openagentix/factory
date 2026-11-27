@@ -13,7 +13,7 @@ import (
 // The whole way: a press over HTTP reaches the real demo, and a replay of the
 // press does nothing more.
 func TestAnswerOverTheServerAndItsReplay(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
+	d := beatsOnly(t, "write_checks", "question")
 	srv, err := server.New(server.Config{Port: 18766, Mode: "demo", Source: d, Actions: d, Static: fstest.MapFS{"index.html": {Data: []byte("x")}}})
 	if err != nil {
 		t.Fatal(err)

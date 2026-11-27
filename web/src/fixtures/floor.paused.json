@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "journalSeq": 0,
+  "generatedAt": "2026-11-27T12:00:00Z",
+  "hostTime": "2026-11-27T11:59:55Z",
+  "mode": "live",
+  "demo": null,
+  "repository": "acme/booking",
+  "machine": {
+    "id": "alice-laptop"
+  },
+  "sources": {
+    "acceptance": "ok",
+    "config": "ok",
+    "gate": "ok",
+    "host": "ok",
+    "staging": "ok",
+    "store": "ok",
+    "team": "ok",
+    "trajectory": "ok"
+  },
+  "signal": {
+    "lamp": "off",
+    "word": "paused",
+    "inputs": {
+      "moving": 0,
+      "movingElsewhere": 0,
+      "stuck": 0,
+      "waitingForPerson": 0,
+      "inHoldingArea": 0,
+      "oldestStuck": null,
+      "paused": true,
+      "projectChecksFailing": false,
+      "unknownSources": []
+    }
+  },
+  "holdingArea": null,
+  "gauges": [
+    {
+      "key": "in_work",
+      "state": "ok",
+      "value": 1,
+      "samples": null,
+      "window": "now",
+      "machines": 1
+    },
+    {
+      "key": "accepted_today",
+      "state": "ok",
+      "value": 0,
+      "samples": null,
+      "window": "today",
+      "series": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "key": "right_first_time",
+      "state": "not_enough_yet",
+      "value": null,
+      "samples": 0,
+      "window": "30d"
+    },
+    {
+      "key": "goal_to_holding",
+      "state": "not_enough_yet",
+      "value": null,
+      "samples": 0,
+      "window": "30d"
+    },
+    {
+      "key": "attention",
+      "state": "not_built",
+      "value": null,
+      "samples": null,
+      "window": "7d"
+    }
+  ],
+  "stations": [
+    {
+      "no": 1,
+      "key": "plan",
+      "who": "person",
+      "source": "real",
+      "state": "empty",
+      "count": 0,
+      "oldestStuck": null
+    },
+    {
+      "no": 2,
+      "key": "write_checks",
+      "who": "agent",
+      "source": "real",
+      "state": "empty",
+      "count": 0,
+      "oldestStuck": null
+    },
+    {
+      "no": 3,
+      "key": "build",
+      "who": "agent",
+      "source": "real",
+      "state": "waiting_person",
+      "count": 1,
+      "oldestStuck": null
+    },
+    {
+      "no": 4,
+      "key": "check",
+      "who": "factory",
+      "source": "real",
+      "state": "empty",
+      "count": 0,
+      "oldestStuck": null
+    },
+    {
+      "no": 5,
+      "key": "second_opinion",
+      "who": "agent",
+      "source": "real",
+      "state": "empty",
+      "count": 0,
+      "oldestStuck": null
+    },
+    {
+      "no": 6,
+      "key": "holding_area",
+      "who": "factory",
+      "source": "real",
+      "state": "empty",
+      "count": 0,
+      "oldestStuck": null
+    },
+    {
+      "no": 7,
+      "key": "accepted",
+      "who": "person",
+      "source": "real",
+      "state": "empty",
+      "count": 0,
+      "oldestStuck": null
+    }
+  ],
+  "pieces": [
+    {
+      "id": "t7",
+      "kind": "ticket",
+      "goal": 40,
+      "ticket": 7,
+      "title": {
+        "text": "Ticket title",
+        "truncated": false
+      },
+      "station": 3,
+      "state": "waiting_person",
+      "reason": {
+        "code": "paused"
+      },
+      "since": null,
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    }
+  ],
+  "goals": [
+    {
+      "goal": 40,
+      "title": {
+        "text": "Goal title",
+        "truncated": false
+      },
+      "lane": "quick",
+      "course": "on_course",
+      "lines": [
+        {
+          "id": 1,
+          "text": {
+            "text": "A customer can move a booking",
+            "truncated": false
+          },
+          "state": "working",
+          "note": null
+        }
+      ],
+      "linesAsOf": {
+        "stagingSeq": 3
+      }
+    }
+  ],
+  "calls": [],
+  "log": []
+}

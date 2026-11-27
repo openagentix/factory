@@ -1,0 +1,16 @@
+{
+    "extends": "$app/tsconfig",
+    "include": ["src", "*.ts"],
+    "compilerOptions": {
+        "strict": true,
+        "noImplicitAny": true,
+        "noUncheckedIndexedAccess": true,
+        "allowJs": false,
+        "checkJs": false,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "resolveJsonModule": true,
+        "moduleResolution": "bundler",
+        "types": ["$app/types"]
+    }
+}

@@ -22,16 +22,59 @@ The file `embed/sqlite3.wasm` in `go-sqlite3` is built from C code with `-nostdl
 | The module's own C glue and minimal libc (`sqlite3/*.c`, `sqlite3/libc/`) | as the module | MIT | Maths is done on the Go side |
 | Doug Lea's `malloc` (`sqlite3/libc/malloc.c`) | 2.8.6 | MIT-0 | The allocator. It is relicensed from CC0 by its author in 2023 |
 
-## Web app (planned, not built)
+## Web app
 
-Record 0004 plans these for the web app. Nothing is installed yet. Versions are to be confirmed at install time against the lockfile. Their licence notices will ship with the binary.
+The web app is in `web/`. It is installed with pnpm from the lockfile, with install scripts off, and built into plain files. Nothing the app needs at run time is fetched: the fonts are bundled. Versions are the exact ones in `web/package.json`. Licences were read from the installed packages with `pnpm licenses list --json`.
 
-| Part | Licence | Note |
-|---|---|---|
-| The web framework's runtime (`svelte`) | MIT | Shipped in the binary |
-| The router's runtime (`@sveltejs/kit`) | MIT | Shipped in the binary. These two are the only web code shipped; the build tools are not |
-| Barlow Condensed font files | SIL Open Font Licence 1.1 | Font data, the one exception to the licence rule |
-| IBM Plex Sans and IBM Plex Mono font files | SIL Open Font Licence 1.1, reserved name "Plex" | The publisher's own unmodified files |
+### Direct dependencies
+
+All are `devDependencies`. The built app contains the compiled output of `svelte` and `@sveltejs/kit` (their small runtimes) and the font files. No other package ships.
+
+| Package | Version | Licence | Use |
+|---|---|---|---|
+| `svelte` | 5.59.1 | MIT | Build time. Its runtime is compiled into the shipped JavaScript |
+| `@sveltejs/kit` | 3.4.0 | MIT | Build time. Its client runtime is compiled into the shipped JavaScript |
+| `@sveltejs/adapter-static` | 4.0.1 | MIT | Build time only |
+| `@sveltejs/vite-plugin-svelte` | 7.3.2 | MIT | Build time only |
+| `vite` | 8.3.8 | MIT | Build time only |
+| `typescript` | 6.0.3 | Apache-2.0 | Build time only |
+| `svelte-check` | 4.7.8 | MIT | Build time only |
+| `vitest` | 5.1.1 | MIT | Tests only |
+| `jsdom` | 31.0.1 | MIT | Tests only |
+| `@testing-library/svelte` | 5.4.2 | MIT | Tests only |
+| `@testing-library/user-event` | 14.6.13 | MIT | Tests only |
+| `prettier` | 3.10.1 | MIT | Formatting only |
+| `prettier-plugin-svelte` | 3.5.2 | MIT | Formatting only |
+| `@ibm/plex-sans` | 2.0.0 | OFL-1.1 | Build time. The build copies three font files and the licence text |
+| `@ibm/plex-mono` | 2.5.0 | OFL-1.1 | Build time. The build copies two font files and the licence text |
+| `@fontsource/barlow-condensed` | 5.3.0 | OFL-1.1 | Build time. The build copies three font files and the licence text |
+
+### Fonts that ship
+
+Font data is the one exception to the licence rule (record 0004). The licence texts ship in the built app under `fonts/`.
+
+| Font | Files | Licence | Note |
+|---|---|---|---|
+| Barlow Condensed | 500, 600, 700, Latin | SIL Open Font Licence 1.1 | No reserved name |
+| IBM Plex Sans | 400, 500, 600 | SIL Open Font Licence 1.1, reserved name "Plex" | The publisher's own unmodified files |
+| IBM Plex Mono | 400, 500 | SIL Open Font Licence 1.1, reserved name "Plex" | The publisher's own unmodified files |
+
+### All installed web packages, by licence
+
+118 packages in the lockfile, direct and indirect, counted once per package name.
+
+| Licence | Packages |
+|---|---|
+| MIT | 99 |
+| Apache-2.0 | 7 (`typescript`, `@ibm/telemetry-js`, `aria-query`, `axobject-query`, `detect-libc`, `expect-type`, `xml-name-validator`) |
+| OFL-1.1 | 3 (the three font packages above) |
+| BSD-2-Clause | 2 (`entities`, `webidl-conversions`) |
+| BSD-3-Clause | 2 (`source-map-js`, `tough-cookie`) |
+| ISC | 2 (`picocolors`, `saxes`) |
+| BlueOak-1.0.0 | 1 (`lru-cache`) |
+| MPL-2.0 | 2 (`lightningcss`, `lightningcss-darwin-arm64`). Build time only: the CSS minifier of the build tool. Its code is not in the built app. This needs a decision (record 0004, "Not settled") |
+
+`@ibm/telemetry-js` is a dependency of the two IBM font packages. It is installed but never run: install scripts are off, and nothing imports it.
 
 ## Programs that are started, not shipped
 

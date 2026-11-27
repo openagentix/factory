@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "journalSeq": 0,
+  "generatedAt": "",
+  "hostTime": null,
+  "mode": "unknown",
+  "demo": null,
+  "repository": "",
+  "machine": {
+    "id": ""
+  },
+  "sources": {
+    "acceptance": "read_failed",
+    "config": "read_failed",
+    "gate": "read_failed",
+    "host": "read_failed",
+    "staging": "read_failed",
+    "store": "read_failed",
+    "team": "read_failed",
+    "trajectory": "read_failed"
+  },
+  "signal": {
+    "lamp": "unknown",
+    "word": "could_not_read",
+    "inputs": {
+      "moving": 0,
+      "movingElsewhere": null,
+      "stuck": 0,
+      "waitingForPerson": 0,
+      "inHoldingArea": null,
+      "oldestStuck": null,
+      "paused": false,
+      "projectChecksFailing": false,
+      "unknownSources": [
+        "acceptance",
+        "config",
+        "gate",
+        "host",
+        "staging",
+        "store",
+        "team",
+        "trajectory"
+      ]
+    }
+  },
+  "holdingArea": null,
+  "gauges": [
+    {
+      "key": "in_work",
+      "state": "read_failed",
+      "value": null,
+      "samples": null,
+      "window": "now"
+    },
+    {
+      "key": "accepted_today",
+      "state": "read_failed",
+      "value": null,
+      "samples": null,
+      "window": "today"
+    },
+    {
+      "key": "right_first_time",
+      "state": "read_failed",
+      "value": null,
+      "samples": null,
+      "window": "30d"
+    },
+    {
+      "key": "goal_to_holding",
+      "state": "read_failed",
+      "value": null,
+      "samples": null,
+      "window": "30d"
+    },
+    {
+      "key": "attention",
+      "state": "read_failed",
+      "value": null,
+      "samples": null,
+      "window": "7d"
+    }
+  ],
+  "stations": [
+    {
+      "no": 1,
+      "key": "plan",
+      "who": "person",
+      "source": "real",
+      "state": "unknown",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 2,
+      "key": "write_checks",
+      "who": "agent",
+      "source": "real",
+      "state": "unknown",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 3,
+      "key": "build",
+      "who": "agent",
+      "source": "real",
+      "state": "unknown",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 4,
+      "key": "check",
+      "who": "factory",
+      "source": "real",
+      "state": "unknown",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 5,
+      "key": "second_opinion",
+      "who": "agent",
+      "source": "real",
+      "state": "unknown",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 6,
+      "key": "holding_area",
+      "who": "factory",
+      "source": "real",
+      "state": "unknown",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 7,
+      "key": "accepted",
+      "who": "person",
+      "source": "real",
+      "state": "unknown",
+      "count": null,
+      "oldestStuck": null
+    }
+  ],
+  "pieces": [],
+  "goals": [],
+  "calls": [],
+  "log": []
+}

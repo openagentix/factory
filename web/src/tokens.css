@@ -1,0 +1,21 @@
+/* Design tokens, light and dark, exactly as in the approved design. Colour is for state only. */
+:root{
+  --bg:#e6eaee; --panel:#f4f6f8; --raised:#ffffff; --sunk:#dce2e8;
+  --ink:#16202a; --ink2:#3d4b59; --muted:#5d6b79; --line:#c5ced7; --line2:#aeb9c4;
+  --flow:#0b5cab; --flow-bg:#dbe9f7; --flow-ink:#ffffff;
+  --ok:#17794a; --ok-bg:#dcf1e5; --wait:#96590a; --wait-bg:#fbeccd; --bad:#b93026; --bad-bg:#fadfdc; --idle:#5d6b79; --idle-bg:#e1e6eb;
+  --hz1:#e8b100; --hz2:#1c232b; --lamp-off:#c9d1d9; --shadow:0 1px 0 rgba(22,32,42,.06),0 6px 16px rgba(22,32,42,.07);
+  --f-sign:"Barlow Condensed","Arial Narrow",Impact,sans-serif; --f-text:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --f-data:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e141a; --panel:#151d26; --raised:#1b2530; --sunk:#0a0f14;
+  --ink:#e8eef4; --ink2:#c2ccd6; --muted:#8e9cab; --line:#2a3744; --line2:#3a4958;
+  --flow:#56adff; --flow-bg:#12304e; --flow-ink:#06131f;
+  --ok:#45d391; --ok-bg:#103424; --wait:#f4b942; --wait-bg:#3a2a08; --bad:#ff7366; --bad-bg:#421614; --idle:#8e9cab; --idle-bg:#222d39;
+  --hz1:#f2bd13; --hz2:#0a0f14; --lamp-off:#2a3744; --shadow:0 1px 0 rgba(0,0,0,.3),0 8px 20px rgba(0,0,0,.35); color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0e141a; --panel:#151d26; --raised:#1b2530; --sunk:#0a0f14;
+  --ink:#e8eef4; --ink2:#c2ccd6; --muted:#8e9cab; --line:#2a3744; --line2:#3a4958;
+  --flow:#56adff; --flow-bg:#12304e; --flow-ink:#06131f;
+  --ok:#45d391; --ok-bg:#103424; --wait:#f4b942; --wait-bg:#3a2a08; --bad:#ff7366; --bad-bg:#421614; --idle:#8e9cab; --idle-bg:#222d39;
+  --hz1:#f2bd13; --hz2:#0a0f14; --lamp-off:#2a3744; --shadow:0 1px 0 rgba(0,0,0,.3),0 8px 20px rgba(0,0,0,.35); color-scheme:dark }

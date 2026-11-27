@@ -169,7 +169,7 @@ Before each side effect the step is stored `planned`, with its slot. After it, `
 - Comment: the last line is `<!-- oxf:run id=<run id>.<slot> -->`. After a crash between the post and the record, the factory searches its own comments for that marker, from the run's `startedOnHost` onward.
 - Label: repeating it changes nothing.
 
-An answer posted from the web app has no run slot. It is found again by its exact body after the question comment.
+An answer posted from the web app has no run slot. It is found again by its exact body, by the propose token's user and unedited, after the question comment (record 0004).
 
 Before each step the run checks its claim (Part 2). If the claim has expired or was lost, the run publishes nothing more. It ends `failed` with `claim_lost`, uses no attempt and releases. A branch already pushed is left, and named in the run record.
 

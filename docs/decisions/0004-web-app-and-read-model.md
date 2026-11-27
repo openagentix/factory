@@ -284,7 +284,7 @@ A title may appear only in these places, each its own element, text only: on the
 | Pause and resume | `POST /line/pause`, `/line/resume` | Nothing | Nothing: a flag on this machine; new runs are held with `paused` |
 
 - **Two numbers.** `journalSeq` is in memory and only orders events. `stagingSeq` is the stored staging state number. Accept, Cancel and Undo are refused unless `stagingSeq` and `commit` match the latest published state; Undo also needs its removal list to match the preview.
-- **Undo.** `{id}` is the staging entry id. The page first reads `GET /api/v1/changes/{id}/undo-preview`, the changes that depend on this one and leave with it, shows that list, and sends it back as `alsoRemoved`. Preview, removal and rebuild run under the rebuild lock, so a change that passes meanwhile waits. Undo sends no `version` on purpose: it is bound by `stagingSeq`, `commit` and the removal list, under the rebuild lock.
+- **Undo.** `{id}` is the staging entry id. The page first reads `GET /api/v1/changes/{id}/undo-preview`, the changes that depend on this one and leave with it, shows that list, and sends it back as `alsoRemoved`. Preview, removal and rebuild run under the rebuild lock, so a change that passes meanwhile waits. Undo sends no `version` on purpose. It is refused with `stale` unless the holding area is published, not frozen, not pending and held by this machine, `stagingSeq` and `commit` match, and the removal list matches the preview, all under the rebuild lock.
 - **The `undo` field of `PieceDetail`** is set only for a piece at 06 when the holding area is published, not frozen, not pending and held by this machine. `undo` on `PieceDetail` is `{change, stagingSeq, commit}`. `change` is the staging entry id: the ticket's first applied entry. `GET /api/v1/changes/{id}/undo-preview` returns an `UndoPreview`. `alsoRemoved` holds the staging entry ids that depend on `change`, not `change` itself, in the order they stand in the holding area, oldest first. The server compares in the same order. `tickets` has one entry for `change` first, then one per `alsoRemoved` entry, in the same order. The body's `change` must equal the route's `{id}`, or it is `bad_request`. The plain screens show ticket numbers, never entry ids.
 
 ```ts
@@ -309,7 +309,7 @@ type UndoPreview = { change: string; stagingSeq: number; commit: string;
 | `unprocessable` | 422 | The answer is empty or holds characters that cannot be sent. |
 | `bad_level` | 422 | That level cannot be set. |
 | `payload_too_large` | 413 | This is too long. |
-| `unavailable` | 503 | The factory is not ready. Try again in a moment. |
+| `unavailable` | 503 | The factory is busy or not ready. Try again in a moment. |
 | `unauthorized` | 401 | The key is not valid any more. Open the newest link the factory printed. |
 | `too_many_requests` | 429 | Too many tries. Wait a minute. |
 | `read_failed` | 500 | The factory could not read this. Look again in a moment. |
@@ -481,7 +481,7 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 - A question's comment may end with the run marker in its plain form or its slot form (record 0003). A marker look-alike inside the agent's own text is shown as plain text.
 - Until the list of trusted logins is built, the first build counts a consequence answer, and an answer from the web app, only from the propose token's user. The rule that any trusted person may answer is the design, not the first build.
 - Cancel appears only when a merge started and did not finish. In the demo that happens only when the git host fails.
-- Retrying after a crash relies on the search for the same text, not on a stored record.
+- Retrying after a crash relies on what the factory reads from the git host: the search for the same answer text, a standing consequence comment, a label already set, `stagingSeq` and `commit`. It does not rely on a stored record.
 - **A plan edit can slip through.** An edit between the server's re-read and the label reaching the host is caught only by the factory's comment that repeats the recorded lines.
 
 ## Not settled

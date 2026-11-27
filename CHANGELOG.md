@@ -16,7 +16,7 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ### Added
 
-- Decision record 0003, running on one machine and in a team: the `oxf run` flags, machine settings, tokens from the operating system's credential tool, `trigger.json`, run record additions, a limit on cut-off runs, approving a goal by label, and the list of trusted logins with claims ordered by comment id. Designed, not built. A proposal.
+- Decision record 0003, running on one machine and in a team: the `oxf init` and `oxf run` commands, machine settings, tokens from the operating system's credential tool, `trigger.json`, run record additions, a limit on cut-off runs, approving a goal by label, and the list of trusted logins with claims ordered by comment id. Designed, not built. A proposal.
 - Design, not built: a list of trusted logins, claims across teammates' machines, and review on a different machine.
 - Three rules the first build established, in record 0001 and `AGENTS.md`.
 - The position on outside review services: the factory opens ordinary pull requests and does not depend on a review service.

@@ -85,7 +85,7 @@ Durable state lives in the git host and the orchestrator's store. An unattended 
 | `fix-ci` | A required check on the git host failed on an open agent pull request | A fix commit on that pull request's branch | The machine gate, again | Per ticket, shared with `implement` |
 | `review` | A spec, plan, set of checks or change is ready | `review.json` | Never gated. It is the opinion others use | None |
 
-- `maxAttempts` (default 3: one first try and two rework rounds) is one setting. It counts work-stage starts, including a person's take-the-wheel submission. A run cut off by sleep or a restart does not use up an attempt. Three cut-offs on one ticket stop it until a person acts (record 0003).
+- `maxAttempts` (default 3: one first try and two rework rounds) is one setting. It counts work-stage starts, including a person's take-the-wheel submission. A run cut off by sleep or a restart does not use up an attempt. Three cut-offs on one ticket stop it until a trusted person removes `factory:needs-human` (record 0003).
 - A ticket becomes `factory:ready` when the acceptance manifest of its goal is in staging (with or without a check for every criterion), every ticket it depends on is in staging, and the cap on open agent pull requests (`maxOpenAgentPullRequests`) allows it. Otherwise it stays `factory:planned` and the web app shows why.
 - At dial level 1 a person also approves each output before it is combined (see The dial).
 - When both harnesses are installed, `review` uses the one that did not write the subject.
@@ -103,7 +103,7 @@ The **unattended contract** is a fixed text placed before any method in every ru
 
 **Take the wheel.** A person can do a work stage, or a planning session, in their own session. `oxf` serves a Model Context Protocol endpoint with four tools, a public contract: `factory_list` (goals to plan and ready tickets), `factory_claim` (claims a goal or ticket, makes the workspace directory, returns the brief and paths), `factory_ask` (posts a question through the publish step), `factory_submit` (hands back a spec, a plan or a change). Verify, review, the machine gate and publish are unchanged.
 
-**Claims across machines.** A run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The live claim with the lowest comment id wins and the other run releases its claim and ends with no change. A claim expires after `claimExpiry` in `factory.yaml`, default 2 hours, so a crashed machine does not hold a ticket for ever. Detail in record 0003.
+**Claims across machines.** A run claims its ticket with a marker comment with its machine id and run id, then reads the comments back. The live claim with the lowest comment id wins, and only when it names this machine and this run. The other run releases its claim and ends with no change. Every run releases its claim when it ends. The label `factory:claimed` is a hint for people and for filtering; it never decides a claim. A claim expires after `claimExpiry` in `factory.yaml`, default 2 hours, so a crashed machine does not hold a ticket for ever. Detail in record 0003.
 
 **Team work** is part of the core. Designed, not built, beyond the claims above:
 
@@ -149,7 +149,7 @@ The factory never gives a worker a credential for the git host. The publish step
 
 | Key | Granted | Used for | Never used for |
 |---|---|---|---|
-| Propose token | At setup, required | Push branches under `factory/`; write `factory-staging` through the combine action; open and update draft pull requests and the one staging pull request; comment; update its own comments; lock the conversation of a ticket it created; add or remove labels from a fixed list; create at most twelve issues per run as sub-issues of the goal; set a commit status | Any write to the default branch |
+| Propose token | At setup, required | Push branches under `factory/`; write `factory-staging` through the combine action; open and update draft pull requests and the one staging pull request; comment; update its own comments; lock the conversation of a factory ticket, an approved goal or the staging pull request; add or remove labels from a fixed list; create at most twelve issues per run as sub-issues of the goal; set a commit status | Any write to the default branch |
 | Accept token | Separately by the person, optional | Merge staging into the default branch on a person's Accept; merge a revert on Undo after Accept; an earned automatic Accept | Anything else |
 
 The git host must enforce the split. On GitHub a token that can push a branch can also merge, so the propose token's user must be one that branch protection does not allow to update the default branch. The factory checks the protection rules at start and shows a standing warning when they are missing. For `factory-staging`, restrict who may push to the propose token's user. Do not forbid force pushes: every rebuild needs one.
@@ -191,7 +191,7 @@ The same for every runner and every harness. Paths are shown as in a container. 
 ```
 
 - `status` is one of `succeeded`, `failed`, `needs_human`, `no_change`. `criteria[].opinion` is one of `met`, `not_met`, `unsure`. It is shown in the engineering view only and never sets a criterion's state.
-- A **ruling** is written when the method would have asked a person, the choice can be undone and it is inside the ticket. Otherwise the worker writes a question and ends with `needs_human`. Questions go to the inbox. No run waits on them; the ticket stops until a person answers (record 0003).
+- A **ruling** is written when the method would have asked a person, the choice can be undone and it is inside the ticket. Otherwise the worker writes a question and ends with `needs_human`. Questions go to the inbox. No run waits on them; the ticket stops until a trusted person answers on the ticket and removes `factory:needs-human` (record 0003).
 - `usage.billing` is `metered` (an API key or gateway: dollars and tokens), `plan` (a subscription login: tokens, no dollar figure) or `unknown`. `costUSD` is given only for metered usage. No dollar figure is ever estimated for plan usage. `usage.source` and `usage.enforced` are written by the orchestrator; values from the worker are ignored. The evidence bundle takes `worker` and `usage` from the adapter the orchestrator started, never from `harness` or `usage` in `result.json` (record 0003).
 
 `/factory/out/issues.json`, from `decompose`:
@@ -277,7 +277,7 @@ There is one staging branch per repository, `factory-staging`. It is not under t
 - A change already contained in the default branch drops off the list.
 - If the default branch alone fails a task check, staging stops at the default branch. The outcome view says the project's own checks are failing and a developer is needed.
 - Each staging state is recorded: its commit, the default branch commit it was built on, its changes in order, and the state of every criterion.
-- With several machines, one machine holds the staging claim for a repository, taken and expired by the same rule as a ticket claim, on the staging pull request. Only that machine combines, rebuilds and accepts.
+- With several machines, one machine holds the staging claim for a repository, taken and expired by the same rule as a ticket claim, on the staging pull request, whose conversation is locked the same way (record 0003). Only that machine combines, rebuilds and accepts.
 
 **Agent pull requests.** Each change has a branch `factory/<run id>` and a draft pull request into `factory-staging`, labelled `factory:agent`. It is the engineering trace and the place where `fix-ci` works. When the change is combined, the publish step closes the pull request with a comment naming its commit on staging.
 
@@ -296,12 +296,12 @@ One level per unattended task sets where the factory stops for a person after th
 | Level | Name | A person approves |
 |---|---|---|
 | 0 | Off | The task does not run |
-| 1 | Guided | Each output of the task before it is combined. This is the engineering profile |
+| 1 | Guided | Each output of the task before it is combined. This is the engineering profile. Until a guided output can be approved, it starts no work |
 | 2 | Autopilot | Nothing until Accept. The default |
 | 3 | Automatic Accept | Nothing, for classes of change that earned it. Shown, not active, in the first release |
 
 - Exceptions reach a person at every level.
-- A missing or unreadable level means the task does not run. Until a guided output can be approved, level 1 starts no work (record 0003).
+- The first level of each task is written by `oxf init`, never by `oxf run`. A missing or unreadable level means the task is held (record 0003).
 - `spec.autonomy.ceiling` in the task file sets the highest level. It changes only through the default branch.
 - The current level is stored by the orchestrator and moved in the web app at or below the ceiling. Every change is logged with time and the previous level. On OpenAgentix, platform policy supplies the ceiling and can only lower it.
 
@@ -410,7 +410,7 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 
 ## Configuration
 
-In the repository under `.factory/`: `factory.yaml`, `tasks/*.yaml`, `prompts/*.md`. The orchestrator reads `.factory/` from the default branch only, so a change to it takes effect only after Accept. Unknown fields are an error. The schema version is in `apiVersion`.
+In the repository under `.factory/`: `factory.yaml`, `tasks/*.yaml`, `prompts/*.md`. The orchestrator reads `.factory/` from the default branch only, so a change to it takes effect only after Accept. Unknown fields are an error. The schema version is in `apiVersion`. Task files are never taken from the binary: a repository with no `.factory/` runs nothing. Until `onboard` is built, a person commits `.factory/` by hand. The prompts of the `builtin` method ship in the binary.
 
 **Protected paths.** `.factory/**` (except for `onboard`, which may change nothing else) and the acceptance path (except for `acceptance`) are always protected. `factory.yaml` `protectedPaths` adds to them and defaults to `.github/**`, so a change to CI configuration fails the run. A repository may remove `.github/**` from that list and put it under `riskPaths.security` instead. No path may appear both in a protected list and in `riskPaths`; validation rejects that. A task's `protectedPaths` adds to all of these.
 
@@ -423,6 +423,10 @@ spec:
   defaultWorker: { harness: claude-code }
   maxOpenAgentPullRequests: 3     # changes open and not yet combined
   pollInterval: 1m
+  trustedLogins:                  # required, 1 to 20; see record 0003
+    - { login: alice, id: 1001 }
+  claimExpiry: 2h                 # the default
+  lockTickets: true               # the default
   acceptancePath: acceptance
   start: "make run"               # optional, lets Try it start the application
   protectedPaths: [".github/**"]  # the default
@@ -503,4 +507,4 @@ The sections on the factory's own repository and on how changes are reviewed wer
 
 This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for an engineer who should not have to read every change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.
 
-On 2026-11-27 record 0003 changed these rules: triggers count only from trusted persons, claims are ordered by comment id with a 2 hour expiry in `factory.yaml`, cut-offs per ticket are limited, a missing dial level means do not run, questions stop their ticket, the run record has new fields, evidence takes worker and usage from the orchestrator, and the propose token may update its own comments and lock a ticket.
+On 2026-11-27 record 0003 changed these rules: triggers count only from trusted persons, claims are ordered by comment id with a 2 hour expiry in `factory.yaml`, cut-offs per ticket are limited, a missing dial level means do not run, questions stop their ticket, the run record has new fields, evidence takes worker and usage from the orchestrator, and the propose token may update its own comments and lock a ticket. After a review the same day: `oxf init` writes the first dial levels, claims must name their own machine and run and are always released, `factory:claimed` is a hint only, and task files never come from the binary.

@@ -1,26 +1,28 @@
 # 0003. Running on one machine and in a team
 
 - Status: proposed, 2026-11-27. Designed, not built. Nothing here has been run.
-- Scope: `oxf run` on one machine, and teammates' machines sharing one GitHub repository, in the first release. Record 0001 is the authority. Where this record changes it, "Changes to record 0001" says so, and 0001 was edited to agree.
+- Scope: `oxf init` and `oxf run` on one machine, and teammates' machines sharing one GitHub repository, in the first release. Record 0001 is the authority. Where this record changes it, "Changes to record 0001" says so, and 0001 was edited to agree.
 - **(call)** marks a call by the assistant, open to change. **(owner)** marks the owner's call.
 
 ## Part 1. One machine
 
-### The command
+### The commands
 
 ```
-oxf run --repo owner/name [--once]
-oxf run --demo [--once]
+oxf init --repo owner/name
+oxf run  --repo owner/name [--once]
+oxf run  --demo [--once]
 ```
 
-- `--repo` is required outside demo mode. It is the only repository the factory reads, fetches and writes, and the git remote is built from it. `spec.repository` in `factory.yaml` must be equal in ASCII lowercase, and the propose token must have push permission on it, or nothing runs.
-- `--once` runs one poll cycle and exits: 0 when it completed, 1 when a read failed or the start was refused, 2 for a usage error.
+- `--repo` is the only repository the factory reads, fetches and writes, and the git remote is built from it. `spec.repository` in `factory.yaml` must be equal in ASCII lowercase, and the propose token must have push permission on it, or nothing runs.
+- **`oxf init`** is run once by a person, per machine and data directory. It checks the settings, the tokens and the trusted list, then for each task it loads it writes the dial level `min(2, spec.autonomy.ceiling)`, prints the levels and exits. Run again, it sets a level only for a task that has none, and prints what it did. This is how a task added later gets a level before the web app exists. If the default branch has no `.factory/`, it prints starter files to standard output for a person to commit, and writes nothing into the repository.
+- **`oxf run`** never writes a level. `--once` runs one poll cycle and exits: 0 when it completed, 1 when a read failed or the start was refused, 2 for a usage error. Without `--once` it polls until a signal, then starts nothing new, cancels the run in flight, which is cut off, and exits.
 - `--demo` uses the fake git host, the stub harness, no token and a new temporary data directory. Every printed line starts with `DEMO`.
-- No other flags. Without `--once` it polls until a signal, then starts nothing new, cancels the run in flight, which is cut off, and exits.
+- No other flags.
 
-**Configuration** comes from the default branch only. Each cycle fetches it into the factory's own repository and reads fixed paths from that commit: `.factory/factory.yaml`, `.factory/tasks/<task>.yaml` and the prompts the tasks name. Never a local file, a working copy or another branch. A failed read or validation starts nothing. A missing task file means that task does not run; `oxf run` never falls back to the defaults in the binary. **(call)**
+**Configuration** comes from the default branch only. Each cycle fetches it into the factory's own repository and reads fixed paths from that commit: `.factory/factory.yaml`, `.factory/tasks/<task>.yaml` and the prompts the tasks name. Never a local file, a working copy or another branch. A failed read or validation starts nothing. The prompts of the `builtin` method ship in the binary and are always available. Task files are never taken from the binary: a repository with no `.factory/` runs nothing, and a missing task file means that task does not run. Until `onboard` is built, a person commits `.factory/` by hand.
 
-**One `oxf run` per data directory**, by an exclusive non-blocking lock on `<dataDir>/oxf.lock`, taken before any other read. A second process exits 1. One cycle at a time. **One run at a time per machine** in the first version. **(owner)**
+**Locks.** One `oxf` process per operating system user: an exclusive, non-blocking lock on `<config dir>/oxf/oxf.lock`, next to the settings, and a second on `<dataDir>/oxf.lock`. Both are taken before any other read, by `oxf init` and `oxf run`. A second process exits 1. One cycle at a time. **One run at a time per machine** in the first version. **(owner)**
 
 ### Machine settings
 
@@ -29,7 +31,7 @@ oxf run --demo [--once]
 ```yaml
 apiVersion: factory.openagentix.org/v1alpha1
 kind: MachineSettings
-machineId: alice-laptop                  # 1 to 64 of A-Z a-z 0-9 . _ -
+machineId: alice-laptop                  # 1 to 64 of A-Z a-z 0-9 . _ -, unique per login
 dataDir: /Users/alice/.local/share/oxf   # absolute
 harnesses:                               # one or two; stub is refused
   - { name: claude-code, path: /usr/local/bin/claude }
@@ -50,10 +52,11 @@ From the operating system's own credential tool, behind one interface, with no n
 | Linux | `/usr/bin/secret-tool lookup service oxf account <account>` | `secret-tool store --label=oxf service oxf account <account>`, from standard input |
 
 - The account is `<owner>/<name>/propose` or `<owner>/<name>/accept`. **(call)** The tool path is fixed, so `PATH` is not used. Tests inject a fake tool.
+- The propose token is required. The accept token is optional, and its absence is never an error. A missing or failing tool, or a missing propose token, stops the start.
 - The token is read from the tool's output. It never appears in an argument list, a log, an event, the database or an error.
-- Never from an environment variable, never from a file. No fallback. A missing or failing tool stops the start.
+- Never from an environment variable, never from a file. No fallback.
 
-Limits: any process of the same user, the agent included, can run the same read command. On macOS the first read after login can show a dialog, which stalls an unattended start. On Linux the tool needs a desktop secret service, which a headless server usually lacks. Headless Linux and other systems are not supported yet.
+On macOS the first read after login can show a dialog, which stalls an unattended start. On Linux the tool needs a desktop secret service, which a headless server usually lacks. Headless Linux and other systems are not supported yet.
 
 ### `trigger.json`
 
@@ -62,51 +65,66 @@ Written by the orchestrator to `/factory/in/trigger.json`. Never read back.
 ```json
 {
   "schemaVersion": 1,
-  "run": "r_01H8Z", "task": "implement", "attempt": 2,
+  "run": "r_01JDQ8Z3K4M5N6P7Q8R9S0T1V2", "task": "implement", "attempt": 2,
   "trigger": { "kind": "issueLabeled", "ref": "#42" },
   "goal": { "number": 40, "criteria": [ { "id": 1, "text": "A customer can move a booking to another day" } ] },
   "ticket": { "number": 42, "title": "Move endpoint", "body": "Let a customer move a booking.", "truncated": false, "criteria": [1] },
   "answers": [ { "question": "Keep the old endpoint?", "answer": "Yes, for one release." } ],
-  "rework": { "previousRun": "r_01H8Y", "reason": "check_failed",
-              "checks": [ { "name": "test", "exitCode": 1, "timedOut": false } ], "reviewPoints": [] }
+  "rework": { "previousRun": "r_01JDQ7...", "reason": "check_failed",
+              "checks": [ { "name": "test", "exitCode": 1, "timedOut": false } ],
+              "reviewPoints": [ { "severity": "minor", "text": "The error message is vague", "file": "internal/booking/move.go" } ] }
 }
 ```
 
-- Every `title`, `body`, `text`, `question` and `answer` is untrusted. The prompt marks it so.
+- `trigger` is the same as in the run record of 0001.
+- Every `title`, `body`, `text`, `question`, `answer` and `reviewPoints[].text` is untrusted. The prompt marks it so. `reviewPoints` has the schema of `points` in `review.json`.
 - `body` is cut at 32 KiB, and `truncated` says so. **(call)** `answers` holds only answers that count (Part 2).
-- `rework` is `null` on a first attempt. `reason` is one of `check_failed`, `protected_path`, `acceptance_regressed`, `review_disagrees`, `no_change`, `bad_result`, `deadline`. It never holds check output.
+- `rework` is `null` on a first attempt. `reason` is one of `check_failed`, `protected_path`, `acceptance_regressed`, `review_disagrees`, `no_change`, `bad_result`, `deadline`, `pull_request_closed`. It never holds check output.
 
 ### Run record additions
 
 | Field | Meaning |
 |---|---|
-| `heldReason` | Required in `held`, empty otherwise. One of `cap`, `throttle`, `staging_frozen`, `level_unset`, `level_off`, `level_guided`, `read_failed`, `key_busy`, `untrusted_trigger`, `too_many_cut_offs`, `needs_human` |
+| `id` | Now a time-ordered random id (ULID style) made on the machine, so run ids are unique across machines |
+| `heldReason` | Required in `held`, empty otherwise. One of `cap`, `throttle`, `staging_frozen`, `level_unset`, `level_off`, `level_guided`, `read_failed`, `key_busy`, `untrusted_trigger`, `too_many_cut_offs`, `needs_human`, `goal_not_approved` |
+| `endReason` | Required in `failed`. A `rework.reason`, or `claim_lost`, or `cut_off` |
 | `concurrencyKey` | The resolved key. At most one unfinished run holds a key |
 | `input.base` | The full commit id the work was built on |
 | `input.subject` | For `review`: `{ run, commit, attempt }` of the subject |
-| `cutOff` | True when the run was cut off. The phase is then `failed` |
+| `claim` | `{ comment, released }`: the claim comment id, and whether its release was posted |
+| `startedOnHost` | The host's time when the run started |
 
-At start, before the first cycle: a `working` run is cut off; a `verifying` run is verified again from its stored commit; a `publishing` run continues its steps from the record. A `working` run with no live process while `oxf` kept running is failed and uses an attempt.
+At start, before the first cycle:
+
+- A `working` run is cut off. A `verifying` run is verified again from its stored commit. A `publishing` run continues its steps from the record.
+- A finished run whose claim was not released is released now.
+- A `working` run with no live process while `oxf` kept running is failed and uses an attempt.
 
 ### Cut-off runs
 
-A cut-off run still uses no attempt, as 0001 says. A separate limit is added: **three cut-offs per ticket, then `factory:needs-human`.** **(call)** Why: the agent runs as the same user as `oxf` and can stop it, so without a limit each stop is a free try. The cost: a laptop that sleeps often stalls a ticket sooner.
+A cut-off run still uses no attempt, as 0001 says. A separate limit is added: **three cut-offs per ticket, then `factory:needs-human`.** **(call)** Why: the agent runs as the same user as `oxf` and can stop it, so without a limit each stop is a free try.
+
+- The count is in the store. It resets only when a trusted person removes `factory:needs-human`.
+- A stop that a person asks for, by a signal to `oxf`, cuts the run off but does not count. A crash, a power loss or a kill does.
+- The cost: a laptop that sleeps often stalls a ticket sooner.
 
 ### The dial
 
-- On first start, `oxf run` writes level 2 for each task it loads, logs it as "set at setup" and prints it. **(call)** After that, a missing or unreadable level means do not run. A lost database never means autopilot.
-- **Interim limit:** at level 1 (guided) no work starts until there is a way to approve a guided output, so guided work cannot pile up that nobody can release.
+- Only `oxf init` writes a first level. A missing or unreadable level means the task is held with `level_unset`. A lost database never means autopilot. `store.GetLevel` returns the default level for a missing row today; that must change.
+- Level 1 (guided) is the engineering profile by design. **Interim limit:** until a guided output can be approved, a task at level 1 starts no work (`level_guided`).
 
 ### Labels
 
-| Label | On | Set by | Means |
+| Label | On | Counts when added by | Means |
 |---|---|---|---|
-| `factory:needs-human` | A ticket | The factory, or a trusted person | The ticket stops for a person. A trusted person removes it to let the factory try again |
+| `factory:needs-human` | A ticket | The factory or a trusted person | The ticket stops for a person. A trusted person removes it to let the factory try again |
 | `factory:approved` | A goal | A trusted person | The person confirms the acceptance lines. The plan is approved |
+| `factory:ready` | A ticket | Any trusted person's login | The ticket may be claimed. A machine acts as its person |
+| `factory:claimed` | A ticket | Anyone | A hint for people and for cheap filtering. It never decides a claim; only markers do |
 
-- A trusted person is defined in Part 2.
-- A label change counts only when its latest event came from the factory's own user or a trusted person. The actor is read from the issue's events. `factory:ready` counts only when the factory added it.
-- Removing `factory:needs-human` resets the cut-off count, never the attempts.
+- A trusted person is defined in Part 2. The actor and time of a label change are read from the issue's events. Anyone else's change is ignored.
+- The label alone never starts a run. The claiming machine checks the dependencies, the acceptance manifest and the cap again at claim time.
+- Removing `factory:needs-human` resets the cut-off count, never the attempts. When attempts run out, 0001's off-course rule applies.
 
 ### Approving a quick-lane goal
 
@@ -124,24 +142,30 @@ and a trusted person adds `factory:approved`. Parsing:
 - `\r\n` and `\n` are accepted. Nothing else is changed first.
 - Exactly one line equals `## How we will know it works`. The section runs to the next line starting with `#`, or the end.
 - The section holds only blank lines and one to three lines starting `1. `, `2. `, `3. ` in order, each with 1 to 200 characters of text: no leading or trailing space, no control or format characters, no `<!--`.
-- The issue is open, `factory:goal` and `factory:approved` were both set by a trusted person, and the body was not edited after the label was added, by the host's times.
 
-Anything else means not approved. The factory posts one fixed comment, "These lines could not be read, so the goal is not approved", and starts nothing. Once approved, the lines are recorded, and later edits change nothing for this goal.
+The factory reads, in one GraphQL response, the body, its `lastEditedAt` (null means never edited, so the creation time is used) and the label events with actor and time. The goal is approved only when it is open, `factory:goal` was added by a trusted person, the latest add of `factory:approved` is by a trusted person and is later than the body's last edit, and the section parses. A failed, partial or capped read means not approved.
+
+- The lines are recorded from that same response, and never rewritten. On approval the factory posts one comment that repeats them exactly: "These are the lines the factory will build to:" and the list.
+- Anything else means not approved. The factory posts one fixed comment per add of the label, "These lines could not be read, so the goal is not approved", and starts nothing.
+- Removing `factory:approved`, or closing the goal, holds every unfinished ticket of the goal (`goal_not_approved`). Nothing already combined is undone.
+- Adding the label again resumes with the same recorded lines. Changed lines need a new goal. If the body differs, the factory says so in one fixed comment.
 
 ### When an agent ends with a question
 
-**(owner)** The run ends `needs_human` and has used an attempt. That ticket stops and is labelled `factory:needs-human`. The questions go in one comment on the goal issue, in a code block. Other work goes on. A trusted person answers in a comment and removes the label. The next run gets both in `answers`.
+**(owner)** The run ends `needs_human` and uses an attempt, as 0001 counts work-stage starts. That ticket stops and is labelled `factory:needs-human`. The questions go in one comment on the ticket issue, in a code block, with the run marker. Other work goes on.
+
+The answer is every comment by a trusted person on that ticket, unedited, after the question comment and before the removal of `factory:needs-human`. Comments are read from the question's comment id onward, not with the claim window. The next run gets them in `answers`.
 
 ### Publish steps
 
-Before each side effect the step is stored `planned`, with its slot. After it, `done`, with the host's reference. Never `done` without one. On resume a `planned` step is done again:
+Before each side effect the step is stored `planned`, with its slot. After it, `done`, with the host's id for what it made. Never `done` without one. The store is the main guard against a second post. On resume a `planned` step is done again:
 
 - Push `factory/<run id>`: the recorded commit again.
-- Pull request: update the open one for that branch. A recorded one that is now closed is never reopened; the run ends as an exception.
-- Comment: the last line is `<!-- oxf:run id=<run id>.<slot> -->`. The factory searches its own comments for it before posting.
+- Pull request: update the open one for that branch. If a recorded one is now closed, the run ends `failed` with `pull_request_closed`, uses the attempt, and the ticket takes its normal rework path.
+- Comment: the last line is `<!-- oxf:run id=<run id>.<slot> -->`. After a crash between the post and the record, the factory searches its own comments for that marker, from the run's `startedOnHost` onward.
 - Label: repeating it changes nothing.
 
-A run checks its claim before each step (Part 2).
+Before each step the run checks its claim (Part 2). If the claim has expired or was lost, the run publishes nothing more. It ends `failed` with `claim_lost`, uses no attempt and releases. A branch already pushed is left, and named in the run record.
 
 ### The evidence bundle
 
@@ -162,7 +186,7 @@ How we will know it works, as of the latest version you can try:
 <!-- oxf:run id=goal-40.list -->
 ```
 
-Three states only: Working, Not working yet, Could not confirm. Plain words, never pull request, merge, diff, review, branch or commit. The factory finds the comment by its stored id, and posts a new one if that is lost.
+Three states only: Working, Not working yet, Could not confirm. Plain words, never pull request, merge, diff, review, branch or commit. The factory finds the comment by its stored id.
 
 ## Part 2. A team
 
@@ -177,19 +201,19 @@ spec:
   lockTickets: true           # default true
 ```
 
-- A missing or empty list means nobody acts. Never everyone, never the token's own user.
+- A missing or empty list is a validation error that stops the start. Nobody acts. Never everyone, never the token's own user.
 - `login` is 1 to 39 ASCII letters, digits and `-`, with no `-` at either end and no `--`. `id` is the account's numeric id, above 0. No duplicate login or id. Logins are compared in ASCII lowercase, never with Unicode case folding.
 - Bots and placeholders are refused: any login with `[bot]`, and `ghost`. At start the factory reads each id from the host. A login that does not match its id, or an account that is not a user, stops the start.
-- The token's own user must be on the list, by id, or `oxf run` refuses to start.
-- The list is under `.factory/`, so any agent run that changes it fails, `onboard` included. **(call)**
+- The token's own user must be on the list, by id, or the start is refused.
+- The list is under `.factory/`. As 0001 says, only `onboard` may change `.factory/`, and a change takes effect only after Accept.
 
 A **trusted person** is on the list, matched by id, and has write permission.
 
 ### Which comments count
 
-A marker, an answer or an approval counts only when its author is a trusted person and the comment was not edited after it was created. A marker's body must also be exact. An answer is a comment on the goal issue after the factory's question.
+A marker, an answer or an approval counts only when its author is a trusted person and it was not edited. A marker's body must also be exact. Anyone else's marker is plain text. An answer or approval from someone with write access who is not on the list is shown as context and does not count. **(owner)**
 
-Anyone else's marker is plain text. An answer or approval from someone with write access who is not on the list is shown as context and does not count. **(owner)**
+Edits are judged by GraphQL `lastEditedAt` of each candidate comment, read in one query. It is meant to change on body edits only. If a real run shows that a reaction or hiding a comment changes it, markers move to a hard lock, such as a ticket branch pushed without force, before team mode is used on a public repository. Until that is confirmed, team mode on a public repository is not proven.
 
 ### Claims
 
@@ -208,23 +232,25 @@ Claim released by a factory run.
 - Exact bodies, single ASCII spaces. An extra field, such as a time, is not a marker.
 - A claim is **live** while it counts, its creation time plus `claimExpiry` is after the host's time, and no later release by the same login names its machine and run.
 - **The lowest comment id among live claims wins.** Creation time is used only for expiry.
-- After posting, the factory reads, waits five seconds and reads again. **(call)** It has won only when both reads agree and the winner's author is its own user.
+- After posting, the factory reads, waits five seconds and reads again. **(call)** It has won only when both reads agree and the winning marker names its own machine id and its own run id, and its author is its own user. A second machine of one login with the same `machineId` is that person's error; the run id still stops a double build.
 - **The loser releases at once**, or its dead claim would win after the winner releases.
-- A run checks its claim again before work and before each publish step. Lost or expired: it stops with nothing published.
-- Its own claim missing from a read is an error, never "free". If a read fails after posting, it tries one release.
+- **Every run releases its claim when it ends**, whatever the outcome. A release that fails is retried at the next start, from the run record.
+- A run checks its claim again before work and before each publish step.
+- Its own claim missing from a read is an error, never "free".
 - Only the claimer's own login may release. One teammate cannot free another's ticket yet; a crashed machine's claim ends by expiry.
+- The staging claim (not built) will follow the same rules, on the staging pull request, and its conversation is locked the same way.
 
-**Expiry.** `claimExpiry` is in `factory.yaml`, so every machine agrees. Default 2 hours. **(owner)** It must exceed the longest task deadline plus ten minutes, or validation fails. Time is the host's: the `Date` header of the list response, and a missing header is an error. A time inside a marker is never read, and the local clock alone is never used.
+**Expiry.** `claimExpiry` is in `factory.yaml`, so every machine agrees. Default 2 hours. **(owner)** It must exceed the longest task deadline plus 30 minutes, for verify and publish, or validation fails. Time is the host's: the `Date` header of the list response, and a missing header is an error. A time inside a marker is never read, and the local clock alone is never used.
 
 ### Reading markers
 
 Comments are read ascending, with `since` at the host's time minus `claimExpiry` minus five minutes. A permission call is made only for authors on the list, at most 20, cached up to five minutes. A read that hits the page or size cap is an error: the ticket is blocked, never built twice.
 
-The honest cost: the host has no author filter, so every comment in the window is downloaded. A flood costs rate limit and can block a ticket until it is locked.
+The cost: the host has no author filter, so every comment in the window is downloaded. A flood costs rate limit and can block a ticket until it is locked.
 
-### Locked tickets
+### Locked conversations
 
-On a public repository the factory locks each ticket it creates, so only collaborators with write access can comment. `lockTickets: false` turns this off. It stops floods and hidden text from people without write access on factory tickets. It does not stop writers who are not on the list, edits of old comments or reactions, and it does not cover the goal issue. Outsiders lose a place to comment.
+With `lockTickets` (on by default; `false` turns it off), on a public repository the factory locks each ticket it creates, and the goal issue once it is approved. Then only collaborators with write access can comment. This stops floods and hidden text from people without write access. It does not stop writers who are not on the list, edits of old comments, or reactions, and outsiders lose a place to comment.
 
 ### Commits and logins
 
@@ -233,28 +259,32 @@ A commit a teammate's machine makes is signed off in that teammate's own name, f
 ## Changes to record 0001
 
 1. **Triggers**: an event counts only from a trusted person or the factory, not from any writer. This resolves the contradiction with "Team work".
-2. **Claims**: lowest comment id wins, not the earliest marker. The expiry moves to `factory.yaml`, default 2 hours.
+2. **Claims**: lowest comment id wins, not the earliest marker, and the marker must name this machine and run. Every run releases its claim. `factory:claimed` is a hint only. The expiry moves to `factory.yaml`, default 2 hours. The staging claim follows the same rules.
 3. **`maxAttempts`**: three cut-offs per ticket stop it.
-4. **Questions**: the ticket stops until a person answers. No run waits.
-5. **The dial**: a missing level means do not run. Level 1 starts nothing for now.
-6. **Run record**: new fields, and `held` has a reason code.
+4. **Questions**: the ticket stops until a trusted person answers on the ticket and removes `factory:needs-human`. No run waits.
+5. **The dial**: only `oxf init` writes a first level; a missing level holds the task. Level 1 starts nothing for now.
+6. **Run record**: run ids are unique across machines, new fields, and `held` and `failed` have reason codes.
 7. **Worker contract**: `worker` and `usage` in the evidence never come from `result.json`.
-8. **Propose token**: it may also update its own comments and lock a factory ticket.
+8. **Propose token**: it may also update its own comments and lock the conversations named above.
+9. **Configuration**: task files never come from the binary; a repository with no `.factory/` runs nothing. The `factory.yaml` example has the new fields.
 
 ## Limits
 
 - Designed, not built. No rule here is tested by a run.
-- One `oxf run` per user and one run at a time: work is serial, one repository per machine.
-- A same-user agent can read the tokens through the credential tool, and can stop `oxf`. The cut-off limit bounds only the second.
+- One `oxf` per user and one run at a time: work is serial, one repository per machine.
+- **A hostile agent running as the same user can read the propose token through the credential tool.** With it, it can do anything the token's trusted login can do on the host: approve, answer, claim, release, add or remove a label. It could also run `oxf init` itself. Running `oxf` under its own operating system user, or on a dedicated machine, narrows this. Neither is built. Later **(call)**: a dedicated factory account for the token, which is not itself trusted for approvals and answers.
+- The cut-off limit holds against an agent that stops the factory. It does not hold against one that also takes the token, because it can remove the label as the token's user. Deleting the store also loses the count.
+- The factory cannot always tell a person's stop from an agent's. A kill by an agent counts as a cut-off; a terminate signal sent by an agent looks like a person's stop and does not.
 - Writers not on the list can edit or delete comments and cause wasted work. They cannot win a claim.
 - Removing a login from the list does not revoke its token. The permission cache adds up to five minutes.
 - A trusted person's own typed or pasted marker counts, because the person and their machine share a login.
-- A dead loser that never released blocks the ticket until its claim expires.
+- A dead loser that never released blocks the ticket until its claim expires. When `claimExpiry` is lowered, machines may disagree for one old expiry period and double work is possible; the check before each publish step still stops a double publish.
+- A lost store can post a second acceptance-list comment.
 - A machine's sign-off says its person takes responsibility. Whether that meets a project's own sign-off rules is for that project.
 
 ## Not settled
 
-- Whether a reaction, hiding a comment, locking or a transfer changes an edit time on the host. If it does, anyone could void a marker or an approval.
+- Whether a reaction, hiding a comment, locking or a transfer changes `lastEditedAt`, and whether the GraphQL read of body, edit time and label events behaves as described. To be confirmed by a real run before team mode is merged.
 - Whether comment ids are strictly ordered by posting time. This record assumes so.
 - A second hard lock, such as a ticket branch pushed without force.
 - Signed markers, with a key per machine.

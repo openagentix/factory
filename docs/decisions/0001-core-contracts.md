@@ -406,7 +406,7 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 - A cost limit applies only to metered usage. The orchestrator reads usage from the event stream and cancels the run past the limit. This lags, so the web app says "best effort".
 - **Toolchain.** Locally the stages use the compilers on the machine. The container runner names a base image in `factory.yaml` (`image:`). Outbound network is open in both stages.
 - **Demo mode.** A fake git host with a seeded, made-up project and a story that waits for the person, the local runner and the stub harness. No login, no token. Every screen says it is a demo (record 0004).
-- **Listening.** On a laptop, localhost. On a dedicated machine `oxf` runs as a service and may listen on the local network. The web app has no user accounts: every data route needs the login token, on every address, localhost included (record 0004).
+- **Listening.** In the first release the web app listens on loopback only, on a laptop and on a dedicated machine; another address is refused at start. A dedicated machine is reached through a tunnel the person sets up, for example over ssh. Listening on another address, with encryption, is designed, not built. The web app has no user accounts: every data route needs the login token (record 0004).
 
 ## Configuration
 
@@ -459,7 +459,7 @@ spec:
   concurrencyKey: "issue-{{ .Number }}"
 ```
 
-Machine settings (installed harnesses, the listen address) live in the person's home directory, never in the repository. A value every machine of a team must share, such as the claim expiry, is in `factory.yaml` (record 0003). The two tokens are kept in the operating system's credential store, never in a task file, never in a plain file, never in the database. On localhost the login token is made fresh at each start and never stored; for a service on another address it is kept in the credential store (record 0004).
+Machine settings (installed harnesses, the web app's port) live in the person's home directory, never in the repository. A value every machine of a team must share, such as the claim expiry, is in `factory.yaml` (record 0003). The two tokens are kept in the operating system's credential store, never in a task file, never in a plain file, never in the database. The login token is made fresh at each start and never stored (record 0004).
 
 ## Stack
 
@@ -509,4 +509,4 @@ This record was consolidated on 2026-11-26, after three independent reviews in a
 
 On 2026-11-27 record 0003 changed these rules: triggers count only from trusted persons, claims are ordered by comment id with a 2 hour expiry in `factory.yaml`, cut-offs per ticket are limited, a missing dial level means do not run, questions stop their ticket, the run record has new fields, evidence takes worker and usage from the orchestrator, and the propose token may update its own comments and lock a ticket. After a review the same day: `oxf init` writes the first dial levels, claims must name their own machine and run and are always released, `factory:claimed` is a hint only, task files never come from the binary, and `onboard` may not change the team fields of `factory.yaml`.
 
-On 2026-11-27 record 0004 changed these rules: the outcome and engineering views are named screens of the approved design, demo mode uses the local runner and waits for the person, every data route needs the login token on every address, the login token is made fresh at each start on localhost, the dial level is per machine, an approval in the web app is the label of record 0003, and the Stack drops the utility style framework, reads live events with `fetch` and allows bundled fonts under the SIL Open Font Licence 1.1.
+On 2026-11-27 record 0004 changed these rules: the outcome and engineering views are named screens of the approved design, demo mode uses the local runner and waits for the person, the web app listens on loopback only and every data route needs the login token, the login token is made fresh at each start and never stored, the dial level is per machine, an approval in the web app is the label of record 0003, and the Stack drops the utility style framework, reads live events with `fetch` and allows bundled fonts under the SIL Open Font Licence 1.1.

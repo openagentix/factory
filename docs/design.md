@@ -273,9 +273,9 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 
 - In the target repository under `.factory/`: `factory.yaml`, `tasks/*.yaml`, `prompts/*.md`. Read from the default branch only. A protected path for every task except `onboard`.
 - The binary carries the prompts of the `builtin` method. Task files never come from the binary: a repository with no `.factory/` runs nothing. Until `onboard` is built, a person commits `.factory/` by hand; `oxf init` prints starter files for that.
-- Machine settings (which harnesses are installed, the listen address) live in the user's home directory, never in the repository. The GitHub tokens are kept in the operating system's credential store. On localhost the login token is made fresh at each start and never stored; for a service on another address it is kept in the credential store.
+- Machine settings (which harnesses are installed, the web app's port) live in the user's home directory, never in the repository. The GitHub tokens are kept in the operating system's credential store. The login token is made fresh at each start and never stored.
 - GitHub access in v0.1 is a fine-grained personal access token limited to the repository, as the propose token, and optionally a second one as the accept token. Branch protection must stop the propose token's user from updating the default branch. For `factory-staging`, restrict who may push; do not forbid force pushes, which every rebuild needs. A GitHub App comes later. **(call)**
-- On a dedicated machine `oxf` installs as a service and the web app can listen on the local network behind a login token. On a laptop it listens on localhost, on a fixed default port. The web app has no accounts, so every data route, reads included, needs the login token, on localhost too. Runs are designed to be safe to repeat, so sleep or a restart loses only the run in flight. **(call)**
+- In v0.1 the web app listens on loopback only, on a fixed default port, on a laptop and on a dedicated machine. A dedicated machine is reached through a tunnel the person sets up, for example over ssh. Listening on another address, with encryption, is designed, not built. The web app has no accounts, so every data route, reads included, needs the login token. Runs are designed to be safe to repeat, so sleep or a restart loses only the run in flight. **(call)**
 
 ## 10. The web app
 
@@ -312,7 +312,7 @@ The **outcome view** of record 0001 is the Floor, Needs you and Goals. The **eng
 
 Planning, Tasks and Settings are designed, not built, and not in the approved design. Planning will be reached from Plan a new goal and Keep planning; Tasks and Settings will sit under Engineering. Actions that are not built are shown disabled with "Not built yet".
 
-**The key.** Every data route needs the login token, which the screens call the key, on every address, the person's own laptop too. On localhost it is made fresh at each start and printed once as a link. **(call)**
+**The key.** In v0.1 the web app listens on loopback only. Every data route needs the login token, which the screens call the key, the person's own laptop too. It is made fresh at each start and never stored. When standard error is a terminal the link with the key is printed there once; otherwise only the path of a private file that holds it is printed. **(call)**
 
 **Demo mode** is marked everywhere: a band on every screen, a DEMO plate, a page title starting with DEMO, `mode: "demo"` in every API response, a "scripted" tag on each scripted station, and printed lines starting with `DEMO`. The project is made up and the git host is fake. The factory code that moves the line is real.
 

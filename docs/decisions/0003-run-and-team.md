@@ -36,7 +36,7 @@ dataDir: /Users/alice/.local/share/oxf   # absolute
 harnesses:                               # one or two; stub is refused
   - { name: claude-code, path: /usr/local/bin/claude }
   - { name: codex, path: /usr/local/bin/codex }
-# listen: 127.0.0.1:<port>              # optional; the web app's address and port (record 0004)
+# webPort: <port>                       # optional; the web app's port on 127.0.0.1 (record 0004)
 ```
 
 - Strict: an unknown or missing field, a duplicate harness or a relative path stops the start.
@@ -298,4 +298,4 @@ A commit a teammate's machine makes is signed off in that teammate's own name, f
 
 ## History
 
-On 2026-11-27 record 0004 changed these rules: an `oxf:answer` comment from a trusted person, unedited, is an answer; `paused` is a held reason; `person_said_no` is a rework reason; machine settings have an optional `listen` field.
+On 2026-11-27 record 0004 changed these rules: an `oxf:answer` comment from a trusted person, unedited, is an answer; `paused` is a held reason; `person_said_no` is a rework reason; machine settings have an optional `webPort` field.

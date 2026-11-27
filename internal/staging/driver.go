@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -60,12 +61,21 @@ func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, e
 	if !dec.PassFor(ref) || dec.VerifiedTask() != e.Task || !s.taskAllowed(e.Task) {
 		return State{}, ErrNotAdmitted
 	}
+	if err := s.probe(ctx, e); err != nil {
+		return State{}, err
+	}
 	frozen, err := s.frozen(ctx)
 	if err != nil {
 		return State{}, err
 	}
 	if err := s.cfg.Store.AddEntry(ctx, e, frozen); err != nil {
-		return State{}, err
+		retry, rerr := s.isUnrecordedRetry(ctx, e, err)
+		if rerr != nil {
+			return State{}, rerr
+		}
+		if !retry {
+			return State{}, err
+		}
 	}
 	if frozen {
 		return State{}, fmt.Errorf("%w: the change is kept and waits", ErrFrozen)
@@ -364,4 +374,57 @@ func (s *Staging) prBody(ctx context.Context, st State) string {
 		b.WriteString("ticket " + strconv.Itoa(a.Ticket) + " goal " + strconv.Itoa(a.Goal) + ": " + repo.Visible(titles[a.EntryID], 100) + "\n")
 	}
 	return b.String()
+}
+
+// probe tries the change once on the default commit before it is stored. A
+// change that cannot be replayed for a reason that package repo does not name
+// (it is missing, or has a header the factory never writes, or git failed) is
+// refused and nothing is stored, so it can never stop a later rebuild. The two
+// definite refusals, ErrReplayParent and ErrReplayGitlink, are stored: a
+// rebuild records them as bad entries.
+func (s *Staging) probe(ctx context.Context, e Entry) error {
+	def, err := s.readDefault(ctx)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.cfg.Repo.Replay(ctx, def, e.Commit, e.Parent, s.cfg.Author, commitMessage(e))
+	if err == nil || errors.Is(err, repo.ErrReplayParent) || errors.Is(err, repo.ErrReplayGitlink) {
+		return nil
+	}
+	return fmt.Errorf("staging: the change cannot be replayed: %w", err)
+}
+
+// isUnrecordedRetry reports whether an ErrDuplicate from the store is the same
+// Add made again after a rebuild failed: the identical entry is still in the
+// live list and no recorded state has applied or removed it. Then the Add only
+// rebuilds. In every other case a duplicate is refused.
+func (s *Staging) isUnrecordedRetry(ctx context.Context, e Entry, addErr error) (bool, error) {
+	if !errors.Is(addErr, ErrDuplicate) {
+		return false, nil
+	}
+	live, _, err := s.cfg.Store.Entries(ctx)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for _, l := range live {
+		if reflect.DeepEqual(l, e) || (l.ID == e.ID && l.Commit == e.Commit && l.Parent == e.Parent && l.Ticket == e.Ticket && l.Goal == e.Goal && l.Attempt == e.Attempt && l.Task == e.Task) {
+			found = true
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	latest, ok, err := s.cfg.Store.Latest(ctx)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		for _, a := range latest.Applied {
+			if a.EntryID == e.ID {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }

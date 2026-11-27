@@ -292,12 +292,13 @@ func commitMessage(e Entry) string {
 func (s *Staging) step(ctx context.Context, rs *runState, e Entry, prev string) (*Removal, string, error) {
 	r := s.cfg.Repo
 
+	// Only a definite answer from the repository takes a change out as bad.
+	// Any other error, from git or the machine, is returned and nothing is
+	// recorded: package repo does not tell a missing object or a refused
+	// header from a fault of git by the error alone.
 	anc, err := r.IsAncestor(ctx, e.Commit, rs.def)
 	if err != nil {
-		if s.infra(ctx, err) {
-			return nil, "", err
-		}
-		return s.removal(e, RemovedBadEntry, "the commit cannot be read as a change", nil), "", nil
+		return nil, "", fmt.Errorf("staging: change %s: %w", e.ID, err)
 	}
 	if anc {
 		return s.removal(e, RemovedContained, "the default branch has this change", nil), "", nil
@@ -305,17 +306,13 @@ func (s *Staging) step(ctx context.Context, rs *runState, e Entry, prev string) 
 
 	c, out, err := r.Replay(ctx, prev, e.Commit, e.Parent, s.cfg.Author, commitMessage(e))
 	if err != nil {
-		if s.infra(ctx, err) {
-			return nil, "", err
-		}
-		detail := "the change cannot be replayed"
 		switch {
 		case errors.Is(err, repo.ErrReplayParent):
-			detail = "the change is not on the one parent that was judged"
+			return s.removal(e, RemovedBadEntry, "the change is not on the one parent that was judged", nil), "", nil
 		case errors.Is(err, repo.ErrReplayGitlink):
-			detail = "the change touches a submodule entry"
+			return s.removal(e, RemovedBadEntry, "the change touches a submodule entry", nil), "", nil
 		}
-		return s.removal(e, RemovedBadEntry, detail, nil), "", nil
+		return nil, "", fmt.Errorf("staging: change %s: %w", e.ID, err)
 	}
 	switch out {
 	case repo.ReplayConflict:

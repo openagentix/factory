@@ -70,21 +70,22 @@ func TestAttack02_MergeCommitAsChange(t *testing.T) {
 	}
 }
 
-// Attack 3: a commit that does not exist is recorded as bad and the rest of
-// the rebuild goes on.
+// Attack 3: a commit that does not exist is refused at Add and nothing is
+// stored. Package repo does not tell a missing commit from a fault of git, so
+// it is never taken out as a bad entry. The change after it goes in.
 func TestAttack03_MissingCommit(t *testing.T) {
 	t.Parallel()
 	f := newFx(t)
-	st := f.add(f.entry(1, strings.Repeat("9", 40), f.def))
-	if removedIDs(st.Removed)["run-1"] != RemovedBadEntry || len(st.Applied) != 0 {
-		t.Fatalf("%+v", st)
+	e := f.entry(1, strings.Repeat("9", 40), f.def)
+	if _, err := f.s.Add(f.ctx, e, f.decision(e)); err == nil {
+		t.Fatal("a missing commit was admitted")
+	}
+	if len(f.liveIDs()) != 0 || f.latestSeq() != 0 {
+		t.Fatal("something was stored")
 	}
 	_, st2 := f.addFile(2, "ok.txt")
 	if len(st2.Applied) != 1 {
 		t.Fatalf("the good change after it: %+v", st2)
-	}
-	if got := f.liveIDs(); len(got) != 1 {
-		t.Errorf("the bad entry stayed in the list: %v", got)
 	}
 }
 

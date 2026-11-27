@@ -45,7 +45,7 @@ type Settings struct {
 }
 
 var machineIDPattern = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,64}\z`)
-var portPattern = regexp.MustCompile(`\A[0-9]{1,6}\z`)
+var portPattern = regexp.MustCompile(`\A[1-9][0-9]{0,4}\z`)
 
 // Parse reads and checks the text of a settings file.
 func Parse(data []byte) (Settings, error) {

@@ -117,6 +117,7 @@ type PieceDetail = {
   route: { station: StationNo; at: string | null }[];   // a time per station where known
   rulings: Untrusted[];        // at most 20
   unconfirmed: Untrusted[];
+  undo: null | { change: string; stagingSeq: number; commit: string };
 };
 type Goal = {
   goal: number; title: Untrusted; lane: "quick" | "standard" | null;
@@ -284,16 +285,39 @@ A title may appear only in these places, each its own element, text only: on the
 
 - **Two numbers.** `journalSeq` is in memory and only orders events. `stagingSeq` is the stored staging state number. Accept, Cancel and Undo are refused unless `stagingSeq` and `commit` match the latest published state; Undo also needs its removal list to match the preview.
 - **Undo.** `{id}` is the staging entry id. The page first reads `GET /api/v1/changes/{id}/undo-preview`, the changes that depend on this one and leave with it, shows that list, and sends it back as `alsoRemoved`. Preview, removal and rebuild run under the rebuild lock, so a change that passes meanwhile waits.
+- **The `undo` field of `PieceDetail`** is set only for a piece at 06 when the holding area is published, not frozen, not pending and held by this machine. `change` is the staging entry id: the ticket's first applied entry. `GET /api/v1/changes/{id}/undo-preview` returns this shape. `alsoRemoved` is in pass order and is sent back exactly. The plain screens show ticket numbers, never entry ids.
+
+```ts
+type UndoPreview = { change: string; stagingSeq: number; commit: string;
+                     alsoRemoved: string[]; tickets: { change: string; ticket: number }[] };
+```
 - **Version.** A call's `version` is a SHA-256 over what the person was shown, including a question's full text beyond the cut, and what the action depends on: for a plan, the lane, the lines as read from the goal body and the body's last edit time; for a question, the comment id; for a consequence, run, attempt, commit, risk and the machine that holds the decision; for an Accept, `stagingSeq`, commit, the pending flag, mode, pull request, frozen, published, who holds staging and the tickets at 06. Before any action the server reads the host and computes it again; a difference is refused with "This changed. Look again."
-- **Accept is one action for everything in the holding area**, listing each goal inside it. To leave a goal out, undo its changes first. **(call)** The Accept call is built from the pieces ready at 06 only. It offers Accept only when the holding area is published, not frozen, not pending, and held by this machine. While an Accept is pending it offers Cancel, on the machine that holds staging; in developer mode it names a developer and offers nothing.
+- **Accept is one action for everything in the holding area**, listing each goal inside it. To leave a goal out, undo its changes first. **(call)** Accept and Cancel send no version. They are refused unless the server's current Accept call `a-<stagingSeq>` offers them. The Accept call is built from the pieces ready at 06 only. It offers Accept only when the holding area is published, not frozen, not pending, and held by this machine. While an Accept is pending it offers Cancel, on the machine that holds staging; in developer mode it names a developer and offers nothing.
 - Accept, Cancel and Undo run only on the machine that holds staging; elsewhere they are disabled.
 - A plan call offers Approve only for a quick lane goal whose one to three lines were read.
 - A level above the ceiling, level 3 or an unknown task gets 422, and nothing changes. The ceiling stays shared in the repository. **(call)**
 - **Pause the line** stops this machine only, and says so. It is the one name on every screen. **(call)**
 - **Idempotency.** Every write carries an `Idempotency-Key`, stored `planned` then `done` like a publish step, and writes a journal entry.
+- **Action replies.** A write that was done answers 200 with `{"mode": <mode>, "result": "done" | "pending", "journalSeq": <n>}`. `pending` is an Accept that waits for a developer. A write still running after 8 seconds answers 202 with `"result": "running"`, and finishes. The picture never changes from a reply: the page fetches the snapshot again and draws what it says. **(call)**
+- **Refusals.** An error body is `{"error": <code>}` only, with one fixed sentence per code on the screen: **(call)**
+
+| Code | Status | Sentence |
+|---|---|---|
+| `stale` | 409 | This changed. Look again. |
+| `in_progress` | 409 | This is being done already. Wait for the line to show it. |
+| `host_failed` | 502 | The git host did not answer. Part of it may be done. Press again to finish it. |
+| `unprocessable` | 422 | The answer is empty or holds characters that cannot be sent. |
+| `payload_too_large` | 413 | The answer is too long. |
+| `unavailable` | 503 | The factory is not ready. Try again in a moment. |
+| `bad_request`, `bad_idempotency_key`, `idempotency_mismatch`, `not_found`, `internal` | 400, 400, 422, 404, 500 | The factory refused this. Look again. |
+
+  An action on a call that no longer exists, whose version differs, or whose `actions` no longer list it is `stale`. So is an Accept, Cancel or Undo that staging refuses. An id whose prefix does not fit the route is `not_found`.
+- **Idempotency key.** One `Idempotency-Key` header, 16 to 64 characters from `A-Z a-z 0-9 _ -`. The page makes a fresh random key for each press and reuses it only to send the same press again. The server keeps the route, the id, a hash of the body, the state and the reply in memory, at most 1,024 keys, until the next start; the key of the web app changes at start too. The same key with the same body: a finished write gives the same reply again, a running one `in_progress`, one that failed at the git host carries on from its last finished step. The same key with another route or body is `idempotency_mismatch`. **(call)**
+- **Journal.** A write that was done writes its journal entry in the same step as its last effect: `answered`, `consequence_answered`, `plan_approved`, one `accepted` per goal, `accept_cancelled`, and `undone` per change taken back. A refused or failed write writes none.
+- **After an action** the factory acts on what it reads back from the git host and the stores, not on the request. In the demo this happens in the same step: an answer starts a new try once the label is gone and an answer is found; a yes or no is applied from the lowest marker that matches the open exception; an approval is read from the label.
 - Actions not built are shown disabled with "Not built yet": Try it, Keep planning, Plan a new goal, Undo after Accept. **(call)**
 
-**Answers from the web app** pass the same safe-text function as other factory comments and are at most 4 KiB; more gets 413. The `oxf:answer` marker line must be the last line and exact. The text before it is free. The answer counts when its author is a trusted person and the comment is unedited. **(call)** It is posted as the propose token's user, who must be trusted (record 0003).
+**Answers from the web app** pass the same safe-text function as other factory comments and are at most 4 KiB; more gets 413. The `oxf:answer` marker line must be the last line and exact. The text before it is free. The answer counts when its author is a trusted person and the comment is unedited. **(call)** It is posted as the propose token's user, who must be trusted (record 0003). The 4 KiB is counted in bytes of the text as sent, before the safe-text function. Text that is empty after trimming, is not valid UTF-8, or holds a control character other than line feed and tab, a direction character or a zero-width character, is refused with `unprocessable`. Before it posts, the server looks for an answer with the same text after the question comment, posted by the propose token's user. If it finds one, it does not post again.
 
 ### Consequences
 
@@ -384,6 +408,8 @@ The fonts and both runtimes are listed in `THIRD-PARTY.md`; their notices ship w
 `oxf run --demo` (record 0003) serves a made-up project, `demo/booking`, on the fake git host, with no token. Real factory code moves the line, with a small driver in place of the orchestrator until it exists. The demo waits for the person: it never answers or accepts by itself, and does not loop. **(call)**
 
 - A band on every screen: "DEMO. A made-up project on a fake GitHub. The factory code that moves this line is real, except stations marked scripted."
+- Every response of the API carries `mode`, except an error body.
+- In the demo the sealed gate decision is kept in memory.
 - A DEMO plate, a page title starting with "DEMO", `mode: "demo"` in every response, the chip "demo/booking (fake)", and a "scripted" tag on each scripted station.
 - Every printed line starts with `DEMO`. The link, or the path of the link file, is printed within 2 seconds of start.
 - **The story follows the real code.** Each step of the story names the exact result it expects from the real parts, by code. When the real result differs, the story stops, the command says "the story did not go as written", and the screen keeps showing what really happened. A fact is recorded only after the real call it describes has succeeded.
@@ -446,6 +472,9 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 - **A host that hides a ticket.** When a run or a change in the holding area names a goal or ticket the git host does not list, the host counts as not read. One case stays unseen: a host that stops listing a ticket whose changes were all accepted.
 - A killed `--demo --once` run leaves its data directory. It holds no key.
 - A question's comment may end with the run marker in its plain form or its slot form (record 0003). A marker look-alike inside the agent's own text is shown as plain text.
+- A consequence answer counts only from the propose token's user until the list of trusted logins is built.
+- Cancel appears only when a merge started and did not finish. In the demo that happens only when the git host fails.
+- Retrying after a crash relies on the search for the same text, not on a stored record.
 - **A plan edit can slip through.** An edit between the server's re-read and the label reaching the host is caught only by the factory's comment that repeats the recorded lines.
 
 ## Not settled
@@ -458,3 +487,4 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 
 - 2026-11-27: the record was aligned with the built read model (`internal/floor`) after three review rounds.
 - 2026-11-27: the status and the demo's rules were aligned with the built demo line (`internal/floor/collect`, `internal/demo`, `oxf run --demo`) after three review rounds.
+- 2026-11-27: action replies, refusal codes, the idempotency key, the undo preview and the answer text rules were added before the actions are built.

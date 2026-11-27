@@ -188,9 +188,10 @@ func (r *reader) readHost(ctx context.Context, s Sources, lf LedgerFacts, ledger
 		}
 	}
 	in.Goals, in.Tickets, in.Questions = floor.Some(goals), floor.Some(tickets), floor.Some(questions)
-	if s.Now != nil {
-		now := s.Now()
-		in.HostTime, in.HostReadAt = floor.Some(now), floor.Some(now)
+	if !in.Now.IsZero() {
+		// The host read happened during this collection. Its time is the
+		// collection's own clock, so it can never be later than Now.
+		in.HostTime, in.HostReadAt = floor.Some(in.Now), floor.Some(in.Now)
 	}
 }
 

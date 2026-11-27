@@ -43,6 +43,8 @@ type flakyHost struct {
 	mergeHook func()
 	// prHead, when set, is the head the host reports for every pull request.
 	prHead string
+	// prBase and prHeadRef, when set, replace the base and head branch.
+	prBase, prHeadRef string
 }
 
 func (h *flakyHost) OpenPullRequest(ctx context.Context, spec githost.PRSpec) (githost.PullRequest, error) {
@@ -61,6 +63,12 @@ func (h *flakyHost) GetPullRequest(ctx context.Context, n int) (githost.PullRequ
 	defer h.mu.Unlock()
 	if err == nil && h.prHead != "" {
 		pr.HeadSHA = h.prHead
+	}
+	if err == nil && h.prBase != "" {
+		pr.Base = h.prBase
+	}
+	if err == nil && h.prHeadRef != "" {
+		pr.Head = h.prHeadRef
 	}
 	return pr, err
 }

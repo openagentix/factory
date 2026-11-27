@@ -53,6 +53,9 @@ const maxTitleRunes = 200
 func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkException(ctx); err != nil {
+		return State{}, err
+	}
 	e.Title = repo.Visible(strings.TrimSpace(e.Title), maxTitleRunes)
 	e.DependsOn = append([]int(nil), e.DependsOn...)
 	if err := checkEntry(e); err != nil {
@@ -93,6 +96,9 @@ func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, e
 func (s *Staging) Rebuild(ctx context.Context) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkException(ctx); err != nil {
+		return State{}, err
+	}
 	if frozen, err := s.frozen(ctx); err != nil {
 		return State{}, err
 	} else if frozen {
@@ -109,6 +115,9 @@ func (s *Staging) Rebuild(ctx context.Context) (State, error) {
 func (s *Staging) Undo(ctx context.Context, id string) (State, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkException(ctx); err != nil {
+		return State{}, nil, err
+	}
 	if frozen, err := s.frozen(ctx); err != nil {
 		return State{}, nil, err
 	} else if frozen {
@@ -163,6 +172,9 @@ func (s *Staging) Undo(ctx context.Context, id string) (State, []string, error) 
 func (s *Staging) Accept(ctx context.Context, seq int64, commit string) (AcceptResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkException(ctx); err != nil {
+		return AcceptResult{}, err
+	}
 	if seq < 1 || !commitRE.MatchString(commit) {
 		return AcceptResult{}, fmt.Errorf("%w: the state is named by a sequence number and a full commit id", ErrStale)
 	}
@@ -214,6 +226,9 @@ func (s *Staging) Accept(ctx context.Context, seq int64, commit string) (AcceptR
 	}
 	if pr.Number < 1 || pr.State != githost.PROpen || pr.HeadSHA != commit {
 		return AcceptResult{}, fmt.Errorf("%w: the staging branch on the host is not this commit", ErrStale)
+	}
+	if err := s.cfg.Store.SetStagingPR(ctx, pr.Number); err != nil {
+		return AcceptResult{}, err
 	}
 	mode := ModeDeveloper
 	if s.cfg.Accept != nil {
@@ -293,11 +308,17 @@ func (s *Staging) reconcilePending(ctx context.Context, p Pending) (PendingOutco
 	}
 	switch got.State {
 	case githost.PRMerged:
-		if got.HeadSHA == p.Commit {
+		if err := s.cfg.Store.SetStagingPR(ctx, 0); err != nil {
+			return "", err
+		}
+		if s.isStagingMerge(got) && got.HeadSHA == p.Commit {
 			if err := s.cfg.Store.ClearPending(ctx, OutcomeAccepted); err != nil {
 				return "", err
 			}
 			return OutcomeAccepted, nil
+		}
+		if err := s.cfg.Store.SetException(ctx, "the staging pull request was merged at a state nobody accepted"); err != nil {
+			return "", err
 		}
 		if err := s.cfg.Store.ClearPending(ctx, OutcomeException); err != nil {
 			return "", err
@@ -355,8 +376,79 @@ func (s *Staging) Resolve(ctx context.Context) (Resolution, error) {
 		if err != nil {
 			return res, err
 		}
+		return res, nil
 	}
-	return res, nil
+	out, err := s.reconcileUnstarted(ctx)
+	res.Pending = out
+	return res, err
+}
+
+// isStagingMerge reports whether a pull request is the staging pull request:
+// from the staging branch into the configured default branch. A merge of any
+// other pull request is never an Accept.
+func (s *Staging) isStagingMerge(pr githost.PullRequest) bool {
+	return pr.Head == githost.StagingBranch && pr.Base == s.cfg.DefaultBranch
+}
+
+// reconcileUnstarted reads the remembered staging pull request when no Accept
+// is pending. If it was merged, the merge is not one the factory started. At
+// the commit of a published state, that state is recorded as accepted. At any
+// other head, or from another branch, or into another base, it is an
+// exception that blocks Add, Rebuild, Undo and Accept until ClearException.
+func (s *Staging) reconcileUnstarted(ctx context.Context) (PendingOutcome, error) {
+	n, err := s.cfg.Store.StagingPR(ctx)
+	if err != nil || n < 1 {
+		return "", err
+	}
+	got, err := s.cfg.Host.GetPullRequest(ctx, n)
+	if err != nil {
+		return "", err
+	}
+	if got.State != githost.PRMerged {
+		return "", nil
+	}
+	if err := s.cfg.Store.SetStagingPR(ctx, 0); err != nil {
+		return "", err
+	}
+	if s.isStagingMerge(got) && commitRE.MatchString(got.HeadSHA) {
+		st, ok, err := s.cfg.Store.StateByCommit(ctx, got.HeadSHA)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			if err := s.cfg.Store.MarkAccepted(ctx, st.Seq); err != nil {
+				return "", err
+			}
+			return OutcomeAccepted, nil
+		}
+	}
+	if err := s.cfg.Store.SetException(ctx, "the staging pull request was merged at a state nobody accepted"); err != nil {
+		return "", err
+	}
+	return OutcomeException, ErrMergedUnseen
+}
+
+// checkException returns ErrMergedUnseen while an exception is recorded.
+func (s *Staging) checkException(ctx context.Context) error {
+	_, bad, err := s.cfg.Store.GetException(ctx)
+	if err != nil {
+		return err
+	}
+	if bad {
+		return ErrMergedUnseen
+	}
+	return nil
+}
+
+// ClearException is the explicit step of a person after a pull request was
+// merged at a state nobody accepted. Until it is called, Add, Rebuild, Undo
+// and Accept return ErrMergedUnseen. Clearing does not undo the merge. The
+// caller must fetch the default branch into the mirror before the next
+// rebuild.
+func (s *Staging) ClearException(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.Store.ClearException(ctx)
 }
 
 func (s *Staging) prTitle(st State) string {

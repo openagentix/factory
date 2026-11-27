@@ -57,6 +57,23 @@ type Store interface {
 	LastAccepted(ctx context.Context) (State, bool, error)
 	// IsAccepted reports whether the change was accepted.
 	IsAccepted(ctx context.Context, id string) (bool, error)
+
+	// SetStagingPR remembers the number of the staging pull request, and 0
+	// forgets it. StagingPR returns it, or 0.
+	SetStagingPR(ctx context.Context, n int) error
+	StagingPR(ctx context.Context) (int, error)
+	// StateByCommit returns the newest published state with this commit.
+	StateByCommit(ctx context.Context, commit string) (State, bool, error)
+	// MarkAccepted records a published state as accepted without a pending
+	// Accept (a developer merged the pull request). Its entries move from
+	// live to accepted, as in ClearPending with OutcomeAccepted.
+	MarkAccepted(ctx context.Context, seq int64) error
+	// SetException records that a pull request was merged at a state nobody
+	// accepted, with a fixed text. GetException returns it. ClearException is
+	// the explicit step of a person.
+	SetException(ctx context.Context, detail string) error
+	GetException(ctx context.Context) (string, bool, error)
+	ClearException(ctx context.Context) error
 }
 
 // MemStore is a Store in memory. It is safe for use from many goroutines.
@@ -70,6 +87,8 @@ type MemStore struct {
 	states       []State
 	pending      *Pending
 	lastAccepted int // index into states plus one, 0 for none
+	stagingPR    int
+	exception    string
 }
 
 // NewMemStore returns an empty MemStore.
@@ -256,19 +275,101 @@ func (m *MemStore) ClearPending(ctx context.Context, outcome PendingOutcome) err
 		return errors.New("staging: no accept is pending")
 	}
 	if outcome == OutcomeAccepted {
-		seq := m.pending.StateSeq
-		if seq < 1 || seq > int64(len(m.states)) {
-			return fmt.Errorf("staging: no state %d", seq)
+		if err := m.acceptLocked(m.pending.StateSeq); err != nil {
+			return err
 		}
-		ids := map[string]bool{}
-		for _, a := range m.states[seq-1].Applied {
-			ids[a.EntryID] = true
-			m.accepted[a.EntryID] = true
-		}
-		m.live = dropIDs(m.live, ids)
-		m.lastAccepted = int(seq)
 	}
 	m.pending = nil
+	return nil
+}
+
+func (m *MemStore) acceptLocked(seq int64) error {
+	if seq < 1 || seq > int64(len(m.states)) {
+		return fmt.Errorf("staging: no state %d", seq)
+	}
+	ids := map[string]bool{}
+	for _, a := range m.states[seq-1].Applied {
+		ids[a.EntryID] = true
+		m.accepted[a.EntryID] = true
+	}
+	m.live = dropIDs(m.live, ids)
+	if int(seq) > m.lastAccepted {
+		m.lastAccepted = int(seq)
+	}
+	return nil
+}
+
+func (m *MemStore) MarkAccepted(ctx context.Context, seq int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.states[max(seq, 1)-1].Published {
+		return fmt.Errorf("staging: state %d is not published", seq)
+	}
+	return m.acceptLocked(seq)
+}
+
+func (m *MemStore) SetStagingPR(ctx context.Context, n int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stagingPR = n
+	return nil
+}
+
+func (m *MemStore) StagingPR(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stagingPR, nil
+}
+
+func (m *MemStore) StateByCommit(ctx context.Context, commit string) (State, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return State{}, false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.states) - 1; i >= 0; i-- {
+		if m.states[i].Published && m.states[i].Commit == commit {
+			return cloneState(m.states[i]), true, nil
+		}
+	}
+	return State{}, false, nil
+}
+
+func (m *MemStore) SetException(ctx context.Context, detail string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.exception = detail
+	return nil
+}
+
+func (m *MemStore) GetException(ctx context.Context) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.exception, m.exception != "", nil
+}
+
+func (m *MemStore) ClearException(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.exception = ""
 	return nil
 }
 

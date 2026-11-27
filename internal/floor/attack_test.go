@@ -82,14 +82,18 @@ func rich() Inputs {
 	r12 := run(12, 1, api.PhaseSucceeded)
 	ra := run(0, 1, api.PhaseFailed)
 	ra.Task, ra.Ticket, ra.Goal, ra.EndReason = "acceptance", 0, 41, CheckFailed
-	in.Runs = Some([]RunIn{run(1, 1, api.PhaseWorking), r2, run(3, 1, api.PhaseQueued), r4, run(5, 1, api.PhaseSucceeded),
+	// Two runs of one age for one ticket, and two claims, so that order could matter.
+	r3b := run(3, 1, api.PhaseFailed)
+	r3b.ID, r3b.EndReason = "r_other3", Deadline
+	in.Runs = Some([]RunIn{run(1, 1, api.PhaseWorking), r2, run(3, 1, api.PhaseQueued), r3b, r4, run(5, 1, api.PhaseSucceeded),
 		run(6, 1, api.PhaseSucceeded), run(7, 1, api.PhaseSucceeded), r12, ra})
 	in.Questions = Some([]QuestionIn{{Ticket: 4, Goal: 40, CommentID: 77, Since: Some(at(-time.Hour)), Text: "Keep it?"}})
-	in.Claims = Some([]ClaimIn{claim(8, "bob-laptop", -time.Hour, time.Hour), claim(9, "carol-pc", -4*time.Hour, -time.Hour)})
+	in.Claims = Some([]ClaimIn{claim(8, "bob-laptop", -time.Hour, time.Hour), claim(8, "dave-pc", -2*time.Hour, 2*time.Hour), claim(9, "carol-pc", -4*time.Hour, -time.Hour)})
 	in.Gate = Some([]GateIn{{Ticket: 5, Status: GatePassed}, {Ticket: 6, Status: GatePassed},
 		{Ticket: 7, Status: GateConsequenceOpen, Risk: RiskContract, Run: "r_B7", Attempt: 1, Commit: strings.Repeat("e", 40), Machine: me, Since: Some(at(-time.Minute))},
 		{Ticket: 12, Status: GatePassed}})
 	h := holdingWith(true, 5)
+	h.Applied = append(h.Applied, EntryIn{Ticket: 5, Goal: 40, At: Some(at(-2 * time.Hour))})
 	h.Removed = []RemovedIn{{Ticket: 12, At: Some(at(-time.Minute))}}
 	in.Holding = Some(h)
 	in.Accepted = Some([]AcceptedIn{{Ticket: 6, Goal: 40, At: Some(at(-time.Hour))}, {Ticket: 20, Goal: 40, At: Some(at(-26 * time.Hour))}})

@@ -28,7 +28,8 @@ Record 0004 plans these for the web app. Nothing is installed yet. Versions are 
 
 | Part | Licence | Note |
 |---|---|---|
-| The web framework's runtime (`svelte`) | MIT | The only web code shipped in the binary. The build tools are not shipped |
+| The web framework's runtime (`svelte`) | MIT | Shipped in the binary |
+| The router's runtime (`@sveltejs/kit`) | MIT | Shipped in the binary. These two are the only web code shipped; the build tools are not |
 | Barlow Condensed font files | SIL Open Font Licence 1.1 | Font data, the one exception to the licence rule |
 | IBM Plex Sans and IBM Plex Mono font files | SIL Open Font Licence 1.1, reserved name "Plex" | The publisher's own unmodified files |
 

@@ -60,7 +60,7 @@ type Floor = {
   schemaVersion: 1;
   journalSeq: number;          // in memory, events only; never binds an action
   generatedAt: string;         // server time, RFC 3339 UTC
-  hostTime: string | null;     // the git host's time at the last read
+  hostTime: string | null;     // the git host's time at the last successful read
   mode: "demo" | "live";
   demo: null | { story: string; note: "made_up_project_fake_host" };
   repository: string;
@@ -68,7 +68,7 @@ type Floor = {
   sources: Record<SourceKey, "ok" | "not_built" | "read_failed">;
   signal: {
     lamp: "red" | "amber" | "green" | "off" | "unknown";
-    inputs: { moving: number; stuck: number; waitingForPerson: number; inHoldingArea: number;
+    inputs: { moving: number; movingElsewhere: number; stuck: number; waitingForPerson: number; inHoldingArea: number;
               oldestStuck: null | { piece: string; station: StationNo; since: string };
               paused: boolean; projectChecksFailing: boolean; unknownSources: SourceKey[] };
   };
@@ -134,38 +134,38 @@ type JournalEntry = { journalSeq: number; time: string; kind: JournalKind;
                       goal?: number; ticket?: number; facts?: Record<string, Fact> };
 ```
 
-**Three honest states**: "Not built yet", "Could not read", "Not enough yet". None is ever a zero, a default value or a green lamp. A station whose `source` is `not_built` is a dashed, empty bay with "Not built yet", and never a count.
+**Three honest states**: "Not built yet", "Could not read", "Not enough yet"; never a zero, a default or a green lamp. A station whose `source` is `not_built` is a dashed, empty bay with "Not built yet", and never a count.
 
-**Clocks.** Claim ages and expiries use the git host's time; local run ages use the server's clock; one subtraction never mixes them. The browser adds only the time since the fetch. **(call)**
+**Clocks.** Claim ages and expiries are as of `hostTime`, and the screen says "as of <time>". Local run ages use the server's clock. One subtraction never mixes the two. The browser adds only the time since the fetch. When the last successful host read is older than two poll intervals, `sources.host` is `read_failed`. **(call)**
 
 **The lamp**, in this order:
 
 1. `unknown` when a source the Floor needs failed to read: "Could not read".
 2. `red` when a piece is stuck or the project's own checks fail: "Stuck".
-3. `amber` when a call is open: "Needs a person".
-4. `green` when a piece is `working` and the line is not paused: "Running".
-5. `off` otherwise: "Paused on this machine" or "Idle".
+3. `amber` when a call is open, or a piece is `waiting_person` for any reason other than `paused` alone: "Needs a person".
+4. `green` when at least one piece is working on this machine and the line is not paused: "Running".
+5. `off` otherwise: "Paused", with "The line is paused on this machine", or "Idle".
 
-`signal.inputs.moving` counts pieces in state `working` only. A queue with no working piece is not moving.
+`signal.inputs.moving` counts pieces working on this machine only; `movingElsewhere` counts pieces claimed by other machines. The sentence says them apart: "1 moving. 1 claimed by another machine." A queue is not moving. Paused pieces are not "waiting for a person".
 
 ### Piece states
 
-**Precedence.** A piece with a run in `working`, `verifying` or `publishing` is `working`. Otherwise it is `stuck` if any rule makes it stuck; otherwise `waiting_person`; otherwise `waiting_machine`; otherwise `ready`. The mockup's "queued" is `waiting_machine`, and its "done" is `ready`.
+**Precedence.** A piece with a run in `working`, `verifying` or `publishing` is `working`. Otherwise it is `stuck` if any rule makes it stuck; otherwise `waiting_person`; otherwise `ready` if it is applied on the latest published staging state (06) or accepted (07); otherwise `waiting_machine`. A piece that matches no rule is drawn "Could not read", never `ready`. The mockup's "queued" is `waiting_machine`, and its "done" is `ready`.
 
-Every reason code maps to exactly one state:
+Each reason code maps to one state:
 
 | State | Reason codes |
 |---|---|
 | stuck | `check_failed`, `protected_path`, `acceptance_regressed`, `review_disagrees`, `person_said_no`, `no_change`, `bad_result`, `deadline`, `pull_request_closed`, `no_process`, `no_review`, `invalid_facts`, `setup_not_finished`, `acceptance_unconfirmed`, `attempts_used_up`, `taken_out`, `untrusted_trigger`, `too_many_cut_offs`, `too_many_claim_lost`, `read_failed`, `unknown` |
 | waiting_person | `needs_human`, `question_open`, `consequence_open`, `plan_waits`, `accept_pending`, `project_checks_failing`, `level_off`, `level_guided`, `level_unset`, `goal_not_approved`, `paused` |
-| waiting_machine | `cap`, `throttle`, `key_busy`, `staging_frozen`, `machine_busy`, `waiting_dependency`, `waiting_checks`, `waiting_combine`, `cut_off`, `claim_lost`, `claim_expired` |
-| ready | none |
+| waiting_machine | `queued` (ready with no run yet, or a run queued with no held reason), `cap`, `throttle`, `key_busy`, `staging_frozen`, `machine_busy`, `waiting_dependency`, `waiting_checks`, `waiting_combine`, `cut_off`, `claim_lost`, `claim_expired` |
+| ready | None: only the two station rules above |
 
 - A failed try leaves the piece `stuck` at its station until a later try runs.
-- `level_off`, `level_guided`, `level_unset` and `goal_not_approved` wait for anyone trusted on this machine: a person set, or must set, something. `paused` reads "The line is paused on this machine".
+- `level_off`, `level_guided`, `level_unset` and `goal_not_approved` wait for anyone trusted on this machine. `paused` reads "The line is paused on this machine".
 - **Waiting on another piece.** With `waiting_dependency` or `waiting_checks` the piece names it in `blockedBy`. When that piece is stuck or waits for a person, this one takes the same state.
-- **Another machine's claim.** A ticket claimed by another machine is `working`, with `machine.mine = false` and `claim` from the git host's time. The screen says "claimed by <machine> since <time>" and never shows a step. An expired claim makes it `waiting_machine` with `claim_expired`.
-- A run cut off by a restart is `waiting_machine` with `cut_off`; it starts again by itself.
+- **Another machine's claim.** A ticket claimed by another machine sits at station 03 and is `working`, with `machine.mine = false` and `claim` from the git host's time. The screen says "claimed by <machine> since <time>" and never shows a step. An expired claim makes it `waiting_machine` with `claim_expired`.
+- A run cut off by a restart is `waiting_machine` with `cut_off` and starts again.
 - **Pending Accept.** While an Accept is pending, every piece at 06 is `waiting_person` with `accept_pending`. In developer mode the call says a developer must finish the step.
 - **The project's own checks** failing is a line fact, not a piece state. It turns the lamp red, adds the statement "The project's own checks are failing. A developer is needed.", and makes every piece at 03 to 06 `waiting_person` with `project_checks_failing`.
 - A piece with `unknown` or `read_failed`, or whose source failed to read, is drawn with "Could not read", never as moving.
@@ -179,11 +179,11 @@ A goal before approval is one `plan` piece at 01. Its checks are one `checks` pi
 | 02 | Its goal's acceptance manifest is not yet on staging |
 | 03 | It is ready, building or reworking |
 | 04 | Its run is `verifying`, or the gate's verify step failed |
-| 05 | The gate waits for the review, a consequence is open, another exception holds it (stuck, with its code), or it passed the gate and is not yet on a published staging state (`waiting_combine`). A run that is publishing or succeeded stays here until both are true |
+| 05 | The gate waits for the review, a consequence is open, another exception holds it (stuck, with its code), or it passed the gate and is not yet on a published staging state (`waiting_combine`). A run that is publishing or succeeded stays here until the gate has passed and the change is applied on a published staging state |
 | 06 | It is applied on the latest published staging state and not accepted |
 | 07 | It was accepted today |
 
-**Bay state.** The worst piece wins, in this order: stuck, waiting for a person, working, waiting for a machine, ready, empty. A stuck bay shows hazard stripes and its oldest stuck piece's reason in words.
+**Bay state.** The worst piece wins: stuck, waiting for a person, working, waiting for a machine, ready, empty. A stuck bay shows hazard stripes and its oldest stuck piece's reason.
 
 An unknown reason code reads "The factory could not say why", never a pass.
 
@@ -201,9 +201,9 @@ Every gauge with a threshold needs five cases. **(call)**
 
 ## Sentences and untrusted text
 
-Every sentence, call text, reason line, log line and status line is built in the web app from one table of fixed phrases, keyed by reason code, call kind or journal kind, filled with `Fact` values only: "Ticket 57: checks failed twice. One try left." It refers to a goal or ticket by its number. It never contains a title or any agent text.
+Every sentence, call text, reason line, log line and status line comes from one table of fixed phrases, keyed by code or kind, filled with `Fact` values only: "Ticket 57: checks failed twice. One try left." It refers to a goal or ticket by its number. It never contains a title or any agent text.
 
-A title may appear only as the label of a tag (cut at 120 characters), of a lane (120) or of the drawer heading (250), each in its own element, beside or beneath the sentence. **(call)** These count as quoted places. Other `Untrusted` text, such as an agent's question or rulings, appears only in a quoted box that says who wrote it. All of it is text, never markup. The server cuts it, shows control and direction characters visibly, and redacts known secrets. No link is made from it; host links are built from the repository and a number.
+A title may appear only in these places, each its own element, text only: on the Floor, tags and lanes (cut at 120 characters) and the drawer heading (250); on Goals, a goal's row heading (120); on Live, the job line and the waiting table (120); on Runs and changes, the ticket column (120); on Needs you, beneath a call's sentence (120). **(call)** These count as quoted places. Goal lines are the person's own words, shown as text in their own list element under a label that says so; that is a quoted place too. Other `Untrusted` text, such as an agent's question or rulings, appears only in a quoted box that says who wrote it. All of it is text, never markup. The server cuts it, shows control and direction characters visibly, and redacts known secrets. No link is made from it; host links are built from the repository and a number.
 
 ## Events
 
@@ -218,8 +218,8 @@ A title may appear only as the label of a tag (cut at 120 characters), of a lane
 | `reset` | Fetch the snapshot again |
 | `: ping` | A comment every 15 seconds |
 
-- **Resume.** The client sends `Last-Event-ID`; an id that is not a number, or older than the kept 1,000 entries, gets `reset`. The client refetches at most every 250 ms and animates a tag whose station changed.
-- **No secrets.** Events carry codes, numbers and redacted `Untrusted` text. Never an error's text, check output or a command line.
+- **Resume.** `Last-Event-ID` that is not a number, or older than the kept 1,000 entries, gets `reset`. The client refetches at most every 250 ms.
+- **No secrets.** Codes, numbers and redacted `Untrusted` text only; never an error's text, check output or a command line.
 - **Limits.** 8 streams; a write deadline of 10 seconds; slow readers are dropped; a stream closes after 30 minutes.
 - **Journal kinds** **(call)**: `plan_approved`, `checks_written`, `entered_holding_area`, `check_failed`, `taken_out`, `question_asked`, `answered`, `consequence_answered`, `could_not_confirm`, `accepted`, `accept_cancelled`, `undone`, `dial_moved`, `paused`, `resumed`.
 - The journal is kept in memory first, and in a store table later. **(call)**
@@ -229,7 +229,7 @@ A title may appear only as the label of a tag (cut at 120 characters), of a lane
 **The key rule.** Every `/api/v1/` route needs the login token, reads included, also on the person's own laptop. **(call)** Only static files and `/healthz` do not. The plain screens call the login token "the key".
 
 - The key is 32 random bytes, made fresh in memory at each start and never stored. **(call)**
-- When standard error is a terminal, the link `http://127.0.0.1:<port>/#t=<key>` is printed there once. Otherwise nothing with the key is printed: the link is written to a file with mode 0600 in the data directory, and only the file's path is printed. The key never goes to a log file, an event, a response body, an error or the store.
+- When standard error is a terminal, the link `http://127.0.0.1:<port>/#t=<key>` is printed there once. Otherwise nothing with the key is printed: the link is written to a file made with exclusive create and mode 0600, inside the data directory, which must be mode 0700. Only the file's path is printed. The file is removed at exit and at the next start. The key never goes to a log file, an event, a response body, an error or the store.
 - The page moves the key from the fragment into session storage and clears the address bar.
 - Constant-time compare. 429 after 10 requests with a wrong key in a minute, counted per remote address. A request refused for its `Host`, `Origin` or fetch site does not count, and gets no detail.
 
@@ -244,9 +244,9 @@ A title may appear only as the label of a tag (cut at 120 characters), of a lane
 | Move a dial | `PUT /autonomy/{task}` | `level`, `from` | Nothing: the level is per machine |
 | Pause and resume | `POST /line/pause`, `/line/resume` | Nothing | Nothing: a flag on this machine; new runs are held with `paused` |
 
-- **Two numbers.** `journalSeq` is in memory and only orders events. `stagingSeq` is the stored staging state number. Accept and Cancel are refused unless `stagingSeq` and `commit` match the latest published state.
-- **Undo** first reads `GET /api/v1/changes/{id}/undo-preview`, which lists the changes that depend on this one and leave with it. The page shows that list to the person and sends it back as `alsoRemoved`. The server refuses if the list it computes differs.
-- **Version.** A call's `version` is a hash over exactly what the person was shown and what the action depends on: for a plan, the recorded lines and the body's last edit time on the host; for a question, the question comment id; for a consequence, run, attempt and commit; for an Accept, `stagingSeq` and commit. Before any action the server reads the host again and computes the version again. A difference is refused with "This changed. Look again."
+- **Two numbers.** `journalSeq` is in memory and only orders events. `stagingSeq` is the stored staging state number. Accept, Cancel and Undo are refused unless `stagingSeq` and `commit` match the latest published state; Undo also needs its removal list to match the preview.
+- **Undo.** `{id}` is the staging entry id. The page first reads `GET /api/v1/changes/{id}/undo-preview`, the changes that depend on this one and leave with it, shows that list, and sends it back as `alsoRemoved`. Preview, removal and rebuild run under the rebuild lock, so a change that passes meanwhile waits.
+- **Version.** A call's `version` hashes what the person was shown and what the action depends on: for a plan, the lines as read from the goal body and the body's last edit time; for a question, the question comment id; for a consequence, run, attempt and commit; for an Accept, `stagingSeq` and commit. Before any action the server reads the host and computes it again; a difference is refused with "This changed. Look again."
 - **Accept is one action for everything in the holding area**, listing each goal inside it. To leave a goal out, undo its changes first. **(call)**
 - Accept, Cancel and Undo run only on the machine that holds staging; elsewhere they are disabled.
 - A level above the ceiling, level 3 or an unknown task gets 422, and nothing changes. The ceiling stays shared in the repository. **(call)**
@@ -254,13 +254,23 @@ A title may appear only as the label of a tag (cut at 120 characters), of a lane
 - **Idempotency.** Every write carries an `Idempotency-Key`, stored `planned` then `done` like a publish step, and writes a journal entry.
 - Actions not built are shown disabled with "Not built yet": Try it, Keep planning, Plan a new goal, Undo after Accept. **(call)**
 
-**Answers from the web app** pass the same safe-text function as every other factory comment (no marker, no mention, no closing keyword) and are at most 4 KiB; more gets 413. The `oxf:answer` marker line must be the last line and exact. The text before it is free. The answer counts when its author is a trusted person and the comment is unedited. **(call)** It is posted as the propose token's user, who must be trusted (record 0003).
+**Answers from the web app** pass the same safe-text function as other factory comments and are at most 4 KiB; more gets 413. The `oxf:answer` marker line must be the last line and exact. The text before it is free. The answer counts when its author is a trusted person and the comment is unedited. **(call)** It is posted as the propose token's user, who must be trusted (record 0003).
 
 ### Consequences
 
-The gate keeps no state. The machine that ran the gate stores the sealed decision with the run record, and only that machine can apply a person's answer.
+The gate keeps no state. The machine that ran the gate stores the sealed decision with the run record; only it can apply an answer.
 
-The question is posted on the ticket as a factory comment with the run marker, in a code block, as one fixed phrase chosen by the risk reason, so every machine's Floor can show the call:
+The question is posted on the ticket as a factory comment with the run marker, so every machine's Floor can show the call. Its code block holds exactly five lines, single ASCII spaces, nothing else: **(call)**
+
+```
+<fixed phrase>
+run=<run id>
+attempt=<n>
+commit=<full commit id>
+machine=<machine id>
+```
+
+Any machine can then build the answer and name who applies it. The phrase follows the risk reason:
 
 | Risk reason | Phrase |
 |---|---|
@@ -277,7 +287,7 @@ Yes, that is what I want.
 <!-- oxf:consequence run=<run id> attempt=<n> commit=<full commit id> answer=yes -->
 ```
 
-It counts only when its author is a trusted person, it is unedited, and run, attempt and commit match the open exception. If more than one valid answer exists, the lowest comment id counts. The machine that holds the decision applies it at its next cycle. If that machine is gone, the call stays open and names the machine that must come back. A no is rework with `person_said_no` and uses an attempt; with no attempt left the goal is off course, as the gate already does.
+It counts only when its author is a trusted person, it is unedited, and run, attempt and commit match the open exception. Only one answer counts: the lowest comment id. After a mistaken no, the ticket is reworked and asks again. After a mistaken yes, the person uses Undo. The machine that holds the decision applies it at its next cycle. If that machine is gone, the call stays open and names the machine that must come back. A no is rework with `person_said_no` and uses an attempt; with no attempt left the goal is off course, as the gate already does.
 
 ## Code that must change
 
@@ -290,13 +300,15 @@ Checked against `internal/` on 2026-11-27:
 - `GetLevel` returns autopilot when no level is set.
 - Runs have no phase-change time, held reason or end reason.
 - Risk reasons are free text with paths, not codes, so a phrase cannot be chosen from them yet.
+- No builder or parser for the consequence marker. An unknown `oxf:` marker is classified as a person's comment, so the rule that a marker comment is never an answer, except `oxf:answer`, is not coded.
+- No idempotency records. `stagingSeq` and the rebuild lock exist only in the staging work, which is not merged; there is no staging entry id route.
 - Not stored anywhere: the sealed gate decision, the accept time, the pause flag, a goal's approval time, and the lane (quick until the standard lane exists). A goal's course needs trajectory rules, added to the backend order; until then the chip reads "Course: not built yet".
 
 ## Stack and dependencies
 
 The stack is Svelte 5 with runes, SvelteKit as a static single-page app, Vite and strict TypeScript, installed with pnpm on Node 22, with no Tailwind for now. **(call)** The design's CSS variables are the tokens.
 
-All are `devDependencies`, used at build time, pinned exactly, installed from the lockfile with install scripts off. Only the framework's runtime ships in the binary. **To be confirmed at install time against the lockfile.**
+All are `devDependencies`, used at build time, pinned exactly, installed from the lockfile with install scripts off. Only the runtime of the framework and its router ships in the binary. **To be confirmed at install time against the lockfile.**
 
 | Package | Version | Licence |
 |---|---|---|
@@ -316,7 +328,7 @@ All are `devDependencies`, used at build time, pinned exactly, installed from th
 | Left out: `axe-core` | | MPL-2.0; role queries and our own checks instead |
 | Left out: `tailwindcss` | | Pulls in an MPL-2.0 build tool |
 
-Any other licence in the lockfile is listed in `THIRD-PARTY.md` as build-time only, or the package is replaced. No accessibility library with a licence outside the rule. **(call)**
+Any other licence in the lockfile is listed in `THIRD-PARTY.md` as build-time only, or replaced. No accessibility library with a licence outside the rule. **(call)**
 
 **Fonts** ship as bundled data files under the SIL Open Font Licence 1.1, never fetched. This is an exception to the MIT and Apache-2.0 rule, for fonts only. **(call)**
 
@@ -325,7 +337,7 @@ Any other licence in the lockfile is listed in `THIRD-PARTY.md` as build-time on
 | Barlow Condensed 500, 600, 700 | OFL-1.1 | No reserved name; a Latin subset is allowed |
 | IBM Plex Sans 400, 500, 600; IBM Plex Mono 400, 500 | OFL-1.1, reserved name "Plex" | The publisher's own unmodified files; our own subset could not keep the name |
 
-The fonts and the framework's runtime are listed in `THIRD-PARTY.md`. Their licence notices ship with the binary.
+The fonts and both runtimes are listed in `THIRD-PARTY.md`; their notices ship with the binary.
 
 **Files in the binary.** The built web files are embedded with `go:embed` and not committed. **(call)** A plain `go build` embeds a placeholder page that says how to build the web app, and the API still works. `make build` and `make test` need Go only. A `go install` user gets the placeholder. This is decided again before the first release.
 
@@ -335,7 +347,7 @@ The fonts and the framework's runtime are listed in `THIRD-PARTY.md`. Their lice
 
 **No inline script.** A build step moves the start script into its own file. A test parses the built page and fails on any inline script or `style` attribute.
 
-**Listening.** In the first release the web app listens on loopback only, `127.0.0.1`, on a fixed default port that the machine settings can change. A busy port stops the start; `oxf` never picks another. Any other listen address is refused at start as not built. **(call)** To reach a dedicated machine, a person sets up a tunnel, for example over ssh. `--demo` uses the same rules.
+**Listening.** In the first release the web app listens on loopback only, `127.0.0.1`, on a fixed default port that `webPort` in the machine settings can change, from 1024 to 65535. A busy port stops the start; `oxf` never picks another. Any other listen address is refused at start as not built. **(call)** To reach a dedicated machine, a person sets up a tunnel, for example over ssh. `--demo` uses the same rules.
 
 **Request checks**, before routing:
 
@@ -395,19 +407,19 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 9. **0003, When an agent ends with a question**: a comment ending with the `oxf:answer` marker is an answer when its author is a trusted person and it is unedited.
 10. **0003, Run record additions**: `paused` joins the held reasons.
 11. **0003, `trigger.json`**: `person_said_no` joins the rework reasons.
-12. **0003, Machine settings**: an optional `webPort` field.
+12. **0003, Machine settings**: an optional `webPort` field, 1024 to 65535.
 
 ## Limits
 
-- **An agent running as the same user can find the key**: in the link file, session storage, browser history or the terminal. With it, it can answer its own question or press Accept. An Accept is still bound to `stagingSeq` and commit and journaled. As record 0002 says, running `oxf` as its own user narrows this.
-- **The dial and Pause the line are per machine.** Teammates may run one task at different levels.
-- **A consequence waits for the machine that ran the gate.** If it never comes back, the call stays open.
+- **An agent running as the same user can find the key**: in the link file, session storage, browser history or the terminal. A terminal session that is itself recorded to a file records the link. With it, it can answer its own question or press Accept. An Accept is still bound to `stagingSeq` and commit and journaled. As record 0002 says, running `oxf` as its own user narrows this.
+- **The dial and Pause the line are per machine.**
+- **A consequence waits for the machine that ran the gate**, which may never come back.
 - **The demo is a made-up project** and proves nothing about a real job.
 - The journal is in memory at first; a restart loses the shift log.
+- **A plan edit can slip through.** An edit between the server's re-read and the label reaching the host is caught only by the factory's comment that repeats the recorded lines.
 
 ## Not settled
 
 - The default port number.
-- Routes and payloads of the other screens, written down when built.
 - Whether the build minifies with an MPL-2.0 tool by default; if so, it is switched off or recorded.
 - Whether to commit the built web files before the first release.

@@ -36,7 +36,7 @@ dataDir: /Users/alice/.local/share/oxf   # absolute
 harnesses:                               # one or two; stub is refused
   - { name: claude-code, path: /usr/local/bin/claude }
   - { name: codex, path: /usr/local/bin/codex }
-# webPort: <port>                       # optional; the web app's port on 127.0.0.1 (record 0004)
+# webPort: <port>                       # optional; 1024 to 65535, the web app's port on 127.0.0.1 (record 0004)
 ```
 
 - Strict: an unknown or missing field, a duplicate harness or a relative path stops the start.

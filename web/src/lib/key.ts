@@ -28,8 +28,9 @@ function readStore(env: KeyEnv): string | null {
 export function readKeys(env: KeyEnv): { candidate: string | null; stored: string | null } {
     const frag = env.location.hash.replace(/^#/, '');
     let candidate: string | null = null;
-    if (frag.startsWith('t=')) {
-        const k = frag.slice(2);
+    // A fragment with t= anywhere leaves the address bar at once. Only exactly t=<key> is a candidate.
+    if (frag.includes('t=')) {
+        const k = frag.startsWith('t=') ? frag.slice(2) : '';
         if (SHAPE.test(k)) candidate = k;
         try {
             env.history.replaceState(null, '', env.location.pathname + env.location.search);

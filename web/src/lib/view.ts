@@ -97,6 +97,9 @@ const LABELS: Record<Gauge['key'], string> = {
     attention: 'Your attention',
 };
 
+// A value above its cap reads Could not read. Durations: ten years in seconds. Attention is in hundredths.
+const GAUGE_MAX: Record<string, number> = { in_work: 1_000_000, accepted_today: 1_000_000, right_first_time: 100, goal_to_holding: 315_576_000, attention: 1_000_000 };
+
 export function gaugeView(g: Gauge): GaugeView {
     const base = { key: g.key, label: pick(LABELS, g.key) ?? COULD_NOT_READ, series: null as number[] | null };
     const honest = (text: string): GaugeView => ({ ...base, kind: 'honest', value: null, unit: '', detail: '', honest: text });
@@ -105,7 +108,7 @@ export function gaugeView(g: Gauge): GaugeView {
     if (g.state === 'not_enough_yet') return honest(NOT_ENOUGH);
     if (g.state === 'read_failed' || g.value === null || !Number.isSafeInteger(g.value)) return honest(COULD_NOT_READ);
     const v = g.value;
-    const max = g.key === 'right_first_time' ? 100 : 1_000_000_000;
+    const max = pick(GAUGE_MAX, g.key) ?? 0;
     if (v < 0 || v > max) return honest(COULD_NOT_READ);
     switch (g.key) {
         case 'in_work':

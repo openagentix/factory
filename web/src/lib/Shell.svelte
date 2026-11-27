@@ -61,7 +61,8 @@
     }
 
     const f = $derived(app.floor);
-    const badge = $derived(f !== null && f.calls.length > 0 ? f.calls.length : null);
+    // The count is data of the last snapshot. In the failed state it is hidden.
+    const badge = $derived(f !== null && !app.failed && f.calls.length > 0 ? f.calls.length : null);
     const dataScreen = $derived(app.route === 'floor' || app.route === 'needs-you' || app.route === 'goals');
 </script>
 
@@ -77,7 +78,7 @@
                 <svg viewBox="0 0 30 30" aria-hidden="true"><path d="M2 27V13l8 5v-5l8 5V6h8v21z" fill="currentColor" /><path d="M7 22h3M13 22h3M19 22h4" stroke="var(--bg)" stroke-width="2" /></svg>
                 <div><b>Factory</b><span>OpenAgentix Software Factory</span></div>
             </div>
-            {#if app.demo}<div class="demoplate">Demo</div>{/if}
+            {#if app.demo}<div class="demoplate{app.failed ? ' stale' : ''}">Demo</div>{/if}
             {#each NAV as g (g.group)}
                 <nav class="navg" aria-label={g.group}>
                     <h3>{g.group}{#if g.note} <em>{g.note}</em>{/if}</h3>
@@ -97,7 +98,7 @@
         <main id="main">
             <div class="screen">
                 {#if app.demo}
-                    <div class="band" role="note">DEMO. A made-up project on a fake GitHub. The factory code that moves this line is real, except stations marked scripted.</div>
+                    <div class="band{app.failed ? ' stale' : ''}" role="note">DEMO. A made-up project on a fake GitHub. The factory code that moves this line is real, except stations marked scripted.</div>
                 {:else if f !== null && modeKind(f.mode) !== 'live'}
                     <div class="band warn" role="note">{COULD_NOT_READ}. The factory could not tell whether this is a demo or a real project.</div>
                 {/if}

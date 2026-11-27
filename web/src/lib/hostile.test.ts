@@ -50,7 +50,8 @@ describe('A. a hostile snapshot after a good one lands in the failed state, neve
         const green: Any = clone(FIXTURES.demo);
         green.signal = { lamp: 'green', word: 'running', inputs: { ...green.signal.inputs, stuck: 0, waitingForPerson: 0, oldestStuck: null } };
         green.stations.forEach((s: Any) => (s.oldestStuck = null));
-        green.pieces.forEach((p: Any) => { if (p.state === 'stuck') p.state = 'working'; });
+        green.calls = [];
+        green.pieces.forEach((p: Any) => { p.call = null; if (p.state === 'stuck' || p.state === 'waiting_person') p.state = 'ready'; });
         const m = await mount(green);
         expect(txt(m.container.querySelector('.status .st'))).toBe('Running');
         const bad: Any = clone(FIXTURES.demo);
@@ -67,6 +68,7 @@ describe('A. a hostile snapshot after a good one lands in the failed state, neve
         good.signal = { lamp: 'amber', word: 'needs_a_person', inputs: { ...good.signal.inputs, stuck: 0, oldestStuck: null } };
         good.stations.forEach((s: Any) => (s.oldestStuck = null));
         good.pieces.forEach((p: Any) => { if (p.state === 'stuck') p.state = 'waiting_person'; });
+        good.signal.inputs.waitingForPerson = good.pieces.filter((p: Any) => p.state === 'waiting_person').length;
         m.fake.setSnapshot(good);
         m.fake.event('floor');
         await vi.waitFor(() => expect(m.container.querySelector('[role=alert]')).toBeNull(), { timeout: 4000 });

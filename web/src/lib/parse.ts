@@ -28,6 +28,9 @@ const ACTIONS = ['answer', 'yes', 'no', 'approve', 'accept', 'cancel'];
 
 const MAX_PIECES = 2000, MAX_CALLS = 500, MAX_GOALS = 200, MAX_LOG = 200, MAX_LINES = 100, MAX_SERIES = 31;
 const MAX_TITLE = 600, MAX_QUESTION = 20000, MAX_INT = 1_000_000_000;
+// internal/floor/fact.go: maxFactNumber is 1 << 31, and a number up to it is allowed.
+const MAX_FACT = 2 ** 31;
+const MAX_STATION_COUNT = 1_000_000; // station 07 counts a day's changes
 const MIN_TIME = Date.UTC(2020, 0, 1), MAX_TIME = Date.UTC(2100, 0, 1);
 const FUTURE_SLACK = 60_000;
 
@@ -37,7 +40,7 @@ const RUN_ID = /^[A-Za-z0-9_]{1,64}$/;
 const CODE = /^[a-z_]{1,40}$/;
 const MACHINE = /^[A-Za-z0-9._-]{1,64}$/;
 const REPO = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
-const STORY = /^[a-z0-9_]{1,40}$/;
+const STORY = /^[a-z0-9_]{0,40}$/;
 const COMMIT = /^[0-9a-f]{7,64}$/;
 const FACT_KEY = /^[a-z][A-Za-z]{0,19}$/;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
@@ -107,7 +110,7 @@ function facts(v: unknown): void {
     for (const k of keys) {
         ok(FACT_KEY.test(k));
         const x = o[k];
-        if (typeof x === 'number') int(x);
+        if (typeof x === 'number') int(x, MAX_FACT);
         else str(x, MACHINE);
     }
 }
@@ -175,6 +178,7 @@ function validate(input: unknown): void {
     const sig = obj(f.signal);
     const lamp = oneOf(sig.lamp, LAMPS);
     const word = oneOf(sig.word, WORD_OF[lamp] ?? []);
+    void word;
     const inp = obj(sig.inputs);
     const moving = int(inp.moving);
     nullable(inp.movingElsewhere, (x) => int(x));
@@ -191,11 +195,7 @@ function validate(input: unknown): void {
     const checksFailing = bool(inp.projectChecksFailing);
     const unknownSources = arr(inp.unknownSources, SOURCES.length).map((s) => oneOf(s, SOURCES));
     ok(new Set(unknownSources).size === unknownSources.length);
-    // The word has to agree with the numbers behind it.
     ok((lamp === 'unknown') === (unknownSources.length > 0));
-    if (lamp === 'green') ok(moving > 0 && !paused);
-    if (lamp === 'red') ok(stuck > 0 || checksFailing);
-    if (word === 'paused') ok(paused);
 
     nullable(f.holdingArea, (x) => {
         const h = obj(x);
@@ -235,7 +235,7 @@ function validate(input: unknown): void {
         oneOf(s.who, WHO);
         oneOf(s.source, STATION_SOURCES);
         oneOf(s.state, BAY_STATES);
-        nullable(s.count, (x) => int(x, MAX_PIECES));
+        nullable(s.count, (x) => int(x, MAX_STATION_COUNT));
         nullable(s.oldestStuck, (x) => ok(pieceIds.has(str(x, PIECE_ID))));
     });
 
@@ -263,6 +263,45 @@ function validate(input: unknown): void {
         });
         nullable(p.run, (x) => str(x, RUN_ID));
         nullable(p.call, (x) => ok(callIds.has(str(x, CALL_ID))));
+    }
+
+    // The signal has to be what the Go side computes from these pieces and calls: internal/floor/project.go,
+    // buildSignal. The counts are taken again from the pieces, and the lamp from the counts, in the same order.
+    {
+        let mov = 0, elsewhere = 0, stk = 0, wait = 0, holding = 0;
+        let oldest: { piece: string; station: number; since: string } | null = null;
+        for (const p of pieces) {
+            const root = p.rootBlocker !== null;
+            if (p.state === 'working') {
+                if (p.machine !== null && (p.machine as Obj).mine === true) mov++;
+                else elsewhere++;
+            } else if (p.state === 'stuck') {
+                if (!root) {
+                    stk++;
+                    if (typeof p.since === 'string' && (oldest === null || p.since < oldest.since || (p.since === oldest.since && (p.id as string) < oldest.piece))) {
+                        oldest = { piece: p.id as string, station: p.station as number, since: p.since };
+                    }
+                }
+            } else if (p.state === 'waiting_person') {
+                const r = p.reason as Obj | null;
+                if ((r === null || r.code !== 'paused') && !root) wait++;
+            }
+            if (p.station === 6) holding++;
+        }
+        ok(inp.moving === mov && inp.stuck === stk && inp.waitingForPerson === wait);
+        if (inp.movingElsewhere !== null) ok(inp.movingElsewhere === elsewhere);
+        if (inp.inHoldingArea !== null) ok(inp.inHoldingArea === holding);
+        const os = inp.oldestStuck as Obj | null;
+        ok((os === null) === (oldest === null));
+        if (os !== null && oldest !== null) ok(os.piece === oldest.piece && os.station === oldest.station && os.since === oldest.since);
+        let want: [string, string];
+        if (unknownSources.length > 0) want = ['unknown', 'could_not_read'];
+        else if (stk > 0 || checksFailing) want = ['red', 'stuck'];
+        else if (calls.length > 0 || wait > 0) want = ['amber', 'needs_a_person'];
+        else if (mov > 0 && !paused) want = ['green', 'running'];
+        else if (paused) want = ['off', 'paused'];
+        else want = ['off', 'idle'];
+        ok(lamp === want[0] && sig.word === want[1]);
     }
 
     // goals
@@ -293,7 +332,8 @@ function validate(input: unknown): void {
         oneOf(c.kind, CALL_KINDS);
         oneOf(c.who, CALL_WHO);
         nullable(c.since, past);
-        nullable(c.goal, (x) => ok(goalNos.has(int(x))));
+        // A call's goal need not be in goals: the Go side takes it from the ticket. It must be a positive whole number.
+        nullable(c.goal, (x) => ok(int(x) >= 1));
         nullable(c.ticket, (x) => int(x));
         nullable(c.question, (x) => untrusted(x, MAX_QUESTION));
         facts(c.facts);

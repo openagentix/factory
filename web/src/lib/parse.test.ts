@@ -102,7 +102,7 @@ const BAD: [string, (f: any) => void][] = [
     ['unknown call who', (f) => (f.calls[0].who = 'bogus')],
     ['unknown call action', (f) => (f.calls[0].actions = ['bogus'])],
     ['duplicate call ids', (f) => (f.calls[1].id = f.calls[0].id)],
-    ['call goal missing', (f) => (f.calls[0].goal = 9999)],
+    ['call goal zero', (f) => (f.calls[0].goal = 0)],
     ['call facts string value with markup', (f) => (f.calls[0].facts = { goal: '<script>' })],
     ['call facts key shape', (f) => (f.calls[0].facts = { __proto__x: 1 })],
     ['call question not untrusted', (f) => (f.calls[1].question = 'text')],

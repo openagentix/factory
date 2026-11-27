@@ -5,7 +5,7 @@
     import Pending from './Pending.svelte';
     import { isUnreadable, reasonText } from './text';
     import { goalById, pieceById, pieceAge, pieceLook, stationName, two } from './view';
-    import { NOT_BUILT } from './text';
+    import { COULD_NOT_READ, NOT_BUILT, clockText } from './text';
 
     let { app }: { app: AppState } = $props();
     const f = $derived(app.floor!);
@@ -51,7 +51,7 @@
 <div class="scrim" role="presentation" onclick={() => app.closeDrawer()}></div>
 <div
     bind:this={root}
-    class="drawer"
+    class="drawer{app.failed ? ' stale' : ''}"
     role="dialog"
     aria-modal="true"
     aria-label={p ? `${p.kind === 'ticket' && p.ticket !== null ? 'Ticket ' + p.ticket : p.kind === 'plan' ? 'Plan of goal ' + p.goal : 'Checks of goal ' + p.goal}` : 'Piece'}
@@ -63,6 +63,7 @@
         </div>
         <button class="btn sm" type="button" onclick={() => app.closeDrawer()}>Close</button>
     </div>
+    {#if app.failed}<p class="asof">Last good snapshot, as of {clockText(f.generatedAt) ?? COULD_NOT_READ}. Everything here is old.</p>{/if}
     {#if p && look}
         <div class="dchips">
             <span class="chip {look.chip}"><Icon name={look.icon} />{p.station === 7 ? 'Accepted' : look.word}</span>

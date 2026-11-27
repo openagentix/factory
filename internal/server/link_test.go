@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -100,6 +101,11 @@ func TestDeliverLinkRefusesAWideOrBadDirectory(t *testing.T) {
 	}
 }
 
+// "Replaced, not reused" is tested without inode numbers, which a file system
+// may hand out again right after a remove. A descriptor opened on the old
+// file before the call, and a hard link to it, must both still see the old
+// content afterwards. If the file had been opened and truncated, they would
+// see the new content.
 func TestDeliverLinkReplacesAnOlderFile(t *testing.T) {
 	dir := privateDir(t)
 	path := filepath.Join(dir, LinkFileName)
@@ -109,17 +115,31 @@ func TestDeliverLinkReplacesAnOlderFile(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil { // not narrowed by the umask
 		t.Fatal(err)
 	}
-	before, _ := os.Lstat(path)
+	held, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	hard := filepath.Join(t.TempDir(), "hard")
+	if err := os.Link(path, hard); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
 	if _, err := DeliverLink(&bytes.Buffer{}, false, dir, testLink); err != nil {
 		t.Fatal(err)
 	}
-	fi, _ := os.Lstat(path)
-	if os.SameFile(before, fi) {
-		t.Error("the old file was reused, not replaced")
-	}
 	b, _ := os.ReadFile(path)
+	fi, _ := os.Lstat(path)
 	if string(b) != testLink+"\n" || fi.Mode() != 0o600 {
-		t.Errorf("old file not replaced: %q %v", b, fi.Mode())
+		t.Errorf("path holds %q mode %v", b, fi.Mode())
+	}
+	if old, _ := io.ReadAll(io.NewSectionReader(held, 0, 1<<10)); string(old) != "old" {
+		t.Errorf("the held old file now reads %q: it was written through", old)
+	}
+	if old, _ := os.ReadFile(hard); string(old) != "old" {
+		t.Errorf("the hard link now reads %q: it was written through", old)
+	}
+	if hi, _ := os.Lstat(hard); hi.Mode().Perm() != 0o644 {
+		t.Errorf("the old file's mode changed to %v", hi.Mode().Perm())
 	}
 }
 

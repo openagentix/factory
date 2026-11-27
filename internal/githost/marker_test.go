@@ -117,3 +117,32 @@ func TestRunMarkerText(t *testing.T) {
 		})
 	}
 }
+
+func TestMarkerIDBelongsToRun(t *testing.T) {
+	tests := []struct {
+		id, run string
+		want    bool
+	}{
+		{"run1", "run1", true},
+		{"run1.1", "run1", true},
+		{"run1.a_b-c", "run1", true},
+		{"run10", "run1", false},
+		{"run1x", "run1", false},
+		{"run1..", "run1", false},
+		{"run1.", "run1", false},
+		{"run1.1.2", "run1", false},
+		{"run1.1 ", "run1", false},
+		{"run", "run1", false},
+		{"", "run1", false},
+		{"run1", "", false},
+		{".1", "", false},
+		{"a.b", "a", true}, // the rule alone cannot tell run a.b from run a, slot b
+		{"a.b", "a.b", true},
+		{"run1." + strings.Repeat("x", 33), "run1", false},
+	}
+	for _, tc := range tests {
+		if got := MarkerIDBelongsToRun(tc.id, tc.run); got != tc.want {
+			t.Errorf("MarkerIDBelongsToRun(%q, %q) = %v, want %v", tc.id, tc.run, got, tc.want)
+		}
+	}
+}

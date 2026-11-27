@@ -73,7 +73,7 @@ func TestQuestionsOfStripsTheMarkerAndKeepsOnlyQuestions(t *testing.T) {
 	if err := h.PostComment(ctx, tk, "run007", "Another run's text"); err != nil {
 		t.Fatal(err)
 	}
-	qs, err := questionsOf(ctx, h, tk, 1, "run008")
+	qs, err := questionsOf(ctx, h, tk, 1, "run008", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,5 +85,34 @@ func TestQuestionsOfStripsTheMarkerAndKeepsOnlyQuestions(t *testing.T) {
 	}
 	if !strings.Contains(qs[0].Text, "Which colour?") || !strings.Contains(qs[0].Text, "id=run999") || !strings.Contains(qs[0].Text, "still the question") {
 		t.Errorf("the question text was changed: %q", qs[0].Text)
+	}
+}
+
+// A question comment counts for run R when its final marker is R or R.slot.
+func TestQuestionsOfTakesTheSlotFormOfTheRunMarker(t *testing.T) {
+	ctx := context.Background()
+	h, tk := hostWithTicket(t)
+	for _, id := range []string{"run1", "run1.1", "run1.a_b", "run10", "run1x", "run1..", "run1.", "run1.1.2", "run2", "run1.other"} {
+		if err := h.PostComment(ctx, tk, id, "Question of "+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// run1.other is a run of its own here, so it is not a slot of run1.
+	qs, err := questionsOf(ctx, h, tk, 1, "run1", map[string]bool{"run1.other": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, q := range qs {
+		got = append(got, q.Text)
+	}
+	want := []string{"Question of run1", "Question of run1.1", "Question of run1.a_b"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("questions %q, want %q", got, want)
+	}
+	for i := 1; i < len(qs); i++ {
+		if qs[i].CommentID <= qs[i-1].CommentID {
+			t.Errorf("comment ids are not in order: %v", qs)
+		}
 	}
 }

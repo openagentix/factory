@@ -174,6 +174,10 @@ func (r *reader) readHost(ctx context.Context, s Sources, lf LedgerFacts, ledger
 	var tickets []floor.TicketIn
 	var questions []floor.QuestionIn
 	runsByTicket := latestRuns(in.Runs.Val)
+	otherRuns := map[string]bool{}
+	for _, r := range in.Runs.Val {
+		otherRuns[r.ID] = true
+	}
 	for _, label := range s.TicketLabels {
 		list, err := s.Host.ListIssues(ctx, label)
 		if err != nil {
@@ -189,7 +193,7 @@ func (r *reader) readHost(ctx context.Context, s Sources, lf LedgerFacts, ledger
 			goal := s.Parent(iss.Number)
 			tickets = append(tickets, TicketFromIssue(iss, goal, deps, lf.Tickets[iss.Number], time.Time{}))
 			if run, ok := runsByTicket[iss.Number]; ok && run.Phase == api.PhaseNeedsHuman {
-				qs, err := questionsOf(ctx, s.Host, iss.Number, goal, run.ID)
+				qs, err := questionsOf(ctx, s.Host, iss.Number, goal, run.ID, otherRuns)
 				if err != nil {
 					r.fail(floor.SourceHost)
 					return
@@ -221,21 +225,25 @@ func latestRuns(runs []floor.RunIn) map[int]floor.RunIn {
 
 // questionsOf reads the factory's comments that carry the run marker of the
 // run that stopped with a question. The comment is the agent's own question.
-func questionsOf(ctx context.Context, h githost.Proposer, ticket, goal int, runID string) ([]floor.QuestionIn, error) {
+// Of several comments of one run, floor shows the lowest comment id; the
+// order here is the host's, oldest first.
+func questionsOf(ctx context.Context, h githost.Proposer, ticket, goal int, runID string, otherRuns map[string]bool) ([]floor.QuestionIn, error) {
 	cs, err := h.ListComments(ctx, ticket, time.Time{})
 	if err != nil {
 		return nil, err
 	}
 	var out []floor.QuestionIn
 	for _, c := range cs {
-		if c.RunID != runID || c.Kind != githost.KindFactory || c.Claim != nil {
+		if c.Kind != githost.KindFactory || c.Claim != nil {
 			continue
 		}
 		// Only a comment whose final marker is this run's run marker is a
 		// question. The marker line is not part of the text. A comment that is
 		// only a marker has no question in it.
 		text, id, ok := githost.RunMarkerText(c.Body)
-		if !ok || id != runID || strings.TrimSpace(text) == "" {
+		// The marker names the run, or the run and a publish slot. An id that
+		// is exactly another run's id belongs to that run.
+		if !ok || !githost.MarkerIDBelongsToRun(id, runID) || (id != runID && otherRuns[id]) || strings.TrimSpace(text) == "" {
 			continue
 		}
 		out = append(out, floor.QuestionIn{Ticket: ticket, Goal: goal, CommentID: c.ID, Since: opt(c.Created), Text: text})

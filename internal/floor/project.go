@@ -189,6 +189,7 @@ func newCtx(in Inputs) *ctx {
 	c.applied, c.removed, c.accepted = map[int]bool{}, map[int][]RemovedIn{}, map[int][]AcceptedIn{}
 	if c.ok(SourceStaging) {
 		c.holding = in.Holding.Val
+		c.holding.Applied = sortCanon(c.holding.Applied)
 		if c.holding.Exists {
 			for _, e := range c.holding.Applied {
 				c.applied[e.Ticket] = true
@@ -491,7 +492,7 @@ func (c *ctx) buildGoals() []Goal {
 		}
 		if c.ok(SourceAcceptance) && g.Lines.Known {
 			o.Lines = []Line{}
-			ls := append([]LineIn(nil), g.Lines.Val...)
+			ls := sortCanon(g.Lines.Val)
 			sort.SliceStable(ls, func(i, j int) bool { return ls[i].ID < ls[j].ID })
 			for _, l := range ls {
 				ln := Line{ID: l.ID, Text: NewUntrusted(l.Text, 200), State: l.State}

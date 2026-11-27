@@ -563,6 +563,7 @@ func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationN
 			for _, e := range c.holding.Applied {
 				if e.Ticket == tk.Number {
 					at = c.fmtPast(e.At)
+					break
 				}
 			}
 			if c.holding.Published {

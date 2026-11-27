@@ -37,6 +37,7 @@ type ctx struct {
 	runsBad        map[int]bool    // tickets whose runs contradict each other
 	goalRunsBad    map[int]bool
 	reviewActive   map[int][]RunIn // second-opinion runs that are running
+	reviewRuns     map[int][]RunIn // all second-opinion runs
 	phrases        map[PhraseKey]string
 	openTicket     map[int]bool
 	cycle          map[int]bool // tickets on a dependency cycle
@@ -165,12 +166,14 @@ func newCtx(in Inputs) *ctx {
 
 	c.runs, c.goalRuns = map[int][]RunIn{}, map[int][]RunIn{}
 	c.runsBad, c.goalRunsBad, c.reviewActive = map[int]bool{}, map[int]bool{}, map[int][]RunIn{}
+	c.reviewRuns = map[int][]RunIn{}
 	rawRuns, rawGoalRuns := map[int][]RunIn{}, map[int][]RunIn{}
 	for _, r := range sortCanon(in.Runs.Val) {
 		switch {
 		case r.Task == "acceptance" && r.Ticket == 0:
 			rawGoalRuns[r.Goal] = append(rawGoalRuns[r.Goal], r)
 		case r.Task == "review" && r.Ticket > 0:
+			c.reviewRuns[r.Ticket] = append(c.reviewRuns[r.Ticket], r)
 			if isActive(r.Phase) {
 				c.reviewActive[r.Ticket] = append(c.reviewActive[r.Ticket], r)
 			}
@@ -202,20 +205,6 @@ func newCtx(in Inputs) *ctx {
 	}
 	c.applied, c.removed, c.accepted = map[int]bool{}, map[int][]RemovedIn{}, map[int][]AcceptedIn{}
 	if c.ok(SourceStaging) {
-		c.holding = in.Holding.Val
-		c.holding.Applied = sortCanon(c.holding.Applied)
-		c.appliedEntries = map[int][]EntryIn{}
-		for _, e := range c.holding.Applied {
-			c.appliedEntries[e.Ticket] = append(c.appliedEntries[e.Ticket], e)
-		}
-		if c.holding.Exists {
-			for _, e := range c.holding.Applied {
-				c.applied[e.Ticket] = true
-			}
-			for _, r := range sortCanon(c.holding.Removed) {
-				c.removed[r.Ticket] = append(c.removed[r.Ticket], r)
-			}
-		}
 		prev := ""
 		for i, a := range sortCanon(in.Accepted.Val) {
 			key := fmt.Sprintf("%+v", a)
@@ -228,6 +217,31 @@ func newCtx(in Inputs) *ctx {
 				continue
 			}
 			c.accepted[a.Ticket] = append(c.accepted[a.Ticket], a)
+		}
+		c.holding = in.Holding.Val
+		// An applied entry whose ticket was accepted at or after the time it was
+		// applied is already accepted: the list is stale. It is not counted
+		// anywhere. An entry with no time stays. (Fix round 2.)
+		var live []EntryIn
+		for _, e := range sortCanon(c.holding.Applied) {
+			et, eok := known(e.At)
+			if at, ok := c.lastAccept(e.Ticket); ok && eok && !at.Before(et) {
+				continue
+			}
+			live = append(live, e)
+		}
+		c.holding.Applied = live
+		c.appliedEntries = map[int][]EntryIn{}
+		for _, e := range c.holding.Applied {
+			c.appliedEntries[e.Ticket] = append(c.appliedEntries[e.Ticket], e)
+		}
+		if c.holding.Exists {
+			for _, e := range c.holding.Applied {
+				c.applied[e.Ticket] = true
+			}
+			for _, r := range sortCanon(c.holding.Removed) {
+				c.removed[r.Ticket] = append(c.removed[r.Ticket], r)
+			}
 		}
 	}
 	c.phrases = Phrases()
@@ -363,6 +377,9 @@ func (c *ctx) buildSignal(pieces []Piece, calls []Call) Signal {
 				elsewhere++
 			}
 		case StateStuck:
+			if p.RootBlocker != nil {
+				break // counted once, by its root (fix round 2)
+			}
 			s.Stuck++
 			if p.Since != nil {
 				if s.OldestStuck == nil || *p.Since < s.OldestStuck.Since || (*p.Since == s.OldestStuck.Since && p.ID < s.OldestStuck.Piece) {
@@ -370,7 +387,7 @@ func (c *ctx) buildSignal(pieces []Piece, calls []Call) Signal {
 				}
 			}
 		case StateWaitingPerson:
-			if p.Reason == nil || p.Reason.Code != Paused {
+			if (p.Reason == nil || p.Reason.Code != Paused) && p.RootBlocker == nil {
 				s.WaitingForPerson++
 			}
 		}
@@ -574,7 +591,7 @@ func (c *ctx) buildLog() ([]JournalEntry, int64) {
 	var seq int64
 	var all []JournalIn
 	for _, j := range sortCanon(c.in.Journal.Val) {
-		if j.Seq <= 0 || !j.Kind.Valid() {
+		if j.Seq <= 0 {
 			continue
 		}
 		all = append(all, j)
@@ -591,6 +608,11 @@ func (c *ctx) buildLog() ([]JournalEntry, int64) {
 		if t, ok := known(j.Time); ok && !t.After(c.now) {
 			e.Time = ptr(fmtTime(t))
 		}
+		if !j.Kind.Valid() {
+			e.Kind = JournalUnreadable
+			out = append(out, e) // fix round 2: kept, with only its number and time
+			continue
+		}
 		if j.Goal > 0 {
 			e.Goal = j.Goal
 		}
@@ -602,7 +624,8 @@ func (c *ctx) buildLog() ([]JournalEntry, int64) {
 			e.Facts = nil
 		}
 		if !c.journalFillable(e) {
-			continue // fix round 1: an entry whose phrase would have an open slot is not shown
+			out = append(out, JournalEntry{JournalSeq: e.JournalSeq, Time: e.Time, Kind: JournalUnreadable})
+			continue
 		}
 		out = append(out, e)
 	}

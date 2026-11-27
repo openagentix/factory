@@ -196,7 +196,9 @@ func TestA_GateRunMismatch(t *testing.T) {
 
 func TestA_FrozenAccept(t *testing.T) {
 	mk := func(mut func(*HoldingIn)) Call {
-		in := healthy()
+		r := run(7, 1, api.PhaseSucceeded)
+		in := withRuns(withTickets(healthy(), ticket(7)), r)
+		in.Gate = Some([]GateIn{gateOf(r, GatePassed)})
 		h := publishedHolding(entry(7, 15*time.Minute))
 		mut(&h)
 		in.Holding = Some(h)

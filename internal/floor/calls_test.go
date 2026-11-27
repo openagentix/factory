@@ -261,12 +261,12 @@ func TestPlanCall(t *testing.T) {
 
 func TestAcceptVersionFollowsTheStagingStateAndItsContents(t *testing.T) {
 	mk := func(mut func(*HoldingIn)) string {
-		in := withTickets(healthy(), ticket(57))
+		in := withTickets(healthy(), ticket(57), ticket(99))
 		h := holdingWith(true, 57)
 		mut(&h)
 		in.Holding = Some(h)
-		in = withRuns(in, run(57, 1, api.PhaseSucceeded))
-		in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}})
+		in = withRuns(in, run(57, 1, api.PhaseSucceeded), run(99, 1, api.PhaseSucceeded))
+		in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}, {Ticket: 99, Run: "r_B99", Attempt: 1, Status: GatePassed}})
 		return versionOf(Project(in), CallAccept)
 	}
 	v0 := mk(func(*HoldingIn) {})

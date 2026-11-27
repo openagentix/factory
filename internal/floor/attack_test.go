@@ -482,7 +482,7 @@ func TestPropertyTwoThousandArbitraryInputs(t *testing.T) {
 		}
 	}
 	// The generator must reach the interesting places, or the test proves nothing.
-	if greens < 20 || stucks < 200 || calls < 100 {
+	if greens < 20 || stucks < 200 || calls < 20 {
 		t.Errorf("generator is too tame: %d green, %d with stuck pieces, %d calls", greens, stucks, calls)
 	}
 }

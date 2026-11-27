@@ -175,12 +175,24 @@ func (c *ctx) buildCalls(pieces []Piece) {
 	if c.ok(SourceStaging) && c.checks {
 		c.store(Call{ID: "s-project-checks", Kind: CallStatement, Who: WhoADeveloper, Actions: []ActionName{}, Facts: map[string]Fact{}}, "", nil)
 	}
-	if c.ok(SourceStaging) && c.holding.Exists && c.holding.Published && len(c.holding.Applied) > 0 {
+	if c.ok(SourceStaging) && c.holding.Exists && c.holding.Published {
 		h := c.holding
+		// The call counts the pieces that are at 06, and nothing else. An entry
+		// already accepted was taken out of the holding area before this point.
 		tickets := map[int]bool{}
+		for _, p := range pieces {
+			if p.Station == 6 && p.Ticket != nil {
+				tickets[*p.Ticket] = true
+			}
+		}
+		if len(tickets) == 0 {
+			return
+		}
 		allAt, first := true, ""
 		for _, e := range h.Applied {
-			tickets[e.Ticket] = true
+			if !tickets[e.Ticket] {
+				continue
+			}
 			if s := c.fmtPast(e.At); s == nil {
 				allAt = false
 			} else if first == "" || *s < first {

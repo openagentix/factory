@@ -542,8 +542,14 @@ func (c *ctx) classify(tk TicketIn) *draft {
 		if len(rv) > 1 || c.runBad(rv[0]) || ck == claimLive {
 			return stuck(5, InvalidFacts)
 		}
-		if _, ok := known(rv[0].PhaseSince); !ok || c.timedOut(rv[0]) {
+		if _, ok := known(rv[0].PhaseSince); !ok {
 			return stuck(5, InvalidFacts)
+		}
+		if c.timedOut(rv[0]) {
+			c.mark(d, 5, NoProcess) // fix round 2: a review past its deadline is not moving, like a build run
+			d.p.Since = c.fmtPast(rv[0].PhaseSince)
+			c.tryNumbers(d, latest)
+			return d
 		}
 		d.p.State, d.p.Station = StateWorking, 5
 		d.p.Since = c.fmtPast(rv[0].PhaseSince)
@@ -805,7 +811,8 @@ func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationN
 		return InvalidFacts, 5, since, nil, nil // a fact for another run, or two for this one
 	}
 	if len(match) == 0 {
-		return WaitingReview, 5, since, nil, nil // the second opinion has not come yet
+		code, st, sn, tr := c.waitingReview(tk.Number, r, since)
+		return code, st, sn, nil, tr
 	}
 	g := match[0]
 	gsince := c.fmtPast(g.Since)
@@ -823,7 +830,8 @@ func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationN
 	case GateConsequenceOpen:
 		return ConsequenceOpen, 5, gsince, &g, nil
 	case GateWaitingReview:
-		return WaitingReview, 5, gsince, nil, nil
+		code, st, sn, tr := c.waitingReview(tk.Number, r, gsince)
+		return code, st, sn, nil, tr
 	case GatePassed:
 		if c.applied[tk.Number] {
 			var at *string
@@ -838,6 +846,43 @@ func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationN
 		return WaitingCombine, 5, gsince, nil, nil
 	}
 	return Unknown, 5, gsince, nil, nil
+}
+
+// waitingReview decides a change whose second opinion has not come. It is
+// stuck when a review run for this build run failed and none after it
+// succeeded (with the run's end reason as the code, no_review when that is not
+// a stuck code), and stuck with no_review when it has waited more than 24
+// hours since the build run's last phase change. (Fix round 2.)
+func (c *ctx) waitingReview(n int, r RunIn, since *string) (ReasonCode, StationNo, *string, *RunIn) {
+	var failed *RunIn
+	for i := range c.reviewRuns[n] {
+		rv := &c.reviewRuns[n][i]
+		if rv.SubjectRun != r.ID || rv.SubjectAttempt != r.Attempt {
+			continue
+		}
+		if rv.Phase == api.PhaseSucceeded {
+			failed = nil
+			break
+		}
+		if rv.Phase == api.PhaseFailed && (failed == nil || rv.Attempt > failed.Attempt) {
+			failed = rv
+		}
+	}
+	if failed != nil {
+		code := failed.EndReason
+		if !code.Valid() || code.State() != StateStuck {
+			code = NoReview
+		}
+		var try *RunIn
+		if isRework(code) || code == AttemptsUsedUp {
+			try = &r
+		}
+		return code, 5, c.fmtPast(failed.PhaseSince), try
+	}
+	if ps, ok := known(r.PhaseSince); ok && c.now.Sub(ps) > 24*time.Hour {
+		return NoReview, 5, since, nil
+	}
+	return WaitingReview, 5, since, nil
 }
 
 func (c *ctx) reworkOrUsed(code ReasonCode, r RunIn) ReasonCode {
@@ -1001,6 +1046,11 @@ func (c *ctx) resolve(ds []*draft) {
 				d.p.BlockedBy = ptr(pick.p.ID)
 				if rank(pick.p.State) > 0 {
 					d.p.State, d.p.Since = pick.p.State, pick.p.Since
+					root := pick.p.ID
+					if pick.p.RootBlocker != nil {
+						root = *pick.p.RootBlocker
+					}
+					d.p.RootBlocker = ptr(root) // the root is the one that is counted
 				}
 			}
 		}

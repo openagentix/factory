@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,36 +21,40 @@ var errBadJSON = errors.New("bad json")
 // a body of at most 16 KiB, and strict decoding. On success it returns the
 // decoded value. On failure it returns a status and a fixed code.
 //
-// An empty body is allowed (the value stays empty), because some actions
-// send nothing. This is a ruling: the record is silent.
-func readBody(w http.ResponseWriter, r *http.Request, rt *route) (any, int, Code) {
+// It also returns the SHA-256 of the raw bytes, which the idempotency record
+// compares on a replay. An empty body is allowed (the value stays empty),
+// because some actions send nothing. This is a ruling: the record is silent,
+// so each handler checks its own required fields.
+func readBody(w http.ResponseWriter, r *http.Request, rt *route) (any, [sha256.Size]byte, int, Code) {
+	var none [sha256.Size]byte
 	if ct := r.Header["Content-Type"]; len(ct) != 1 || ct[0] != "application/json" {
-		return nil, http.StatusUnsupportedMediaType, CodeUnsupportedMedia
+		return nil, none, http.StatusUnsupportedMediaType, CodeUnsupportedMedia
 	}
 	if r.ContentLength > maxBodyBytes {
-		return nil, http.StatusRequestEntityTooLarge, CodePayloadTooLarge
+		return nil, none, http.StatusRequestEntityTooLarge, CodePayloadTooLarge
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			return nil, http.StatusRequestEntityTooLarge, CodePayloadTooLarge
+			return nil, none, http.StatusRequestEntityTooLarge, CodePayloadTooLarge
 		}
-		return nil, http.StatusBadRequest, CodeBadRequest
+		return nil, none, http.StatusBadRequest, CodeBadRequest
 	}
 	var target any = &struct{}{}
 	if rt.newBody != nil {
 		if target = rt.newBody(); target == nil {
-			return nil, http.StatusInternalServerError, CodeInternal
+			return nil, none, http.StatusInternalServerError, CodeInternal
 		}
 	}
+	sum := sha256.Sum256(raw)
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return target, 0, ""
+		return target, sum, 0, ""
 	}
 	if err := decodeStrict(raw, target); err != nil {
-		return nil, http.StatusBadRequest, CodeBadRequest
+		return nil, none, http.StatusBadRequest, CodeBadRequest
 	}
-	return target, 0, ""
+	return target, sum, 0, ""
 }
 
 // decodeStrict refuses invalid JSON, a top level that is not an object, a

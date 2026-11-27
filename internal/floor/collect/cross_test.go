@@ -85,7 +85,7 @@ func newWorld(t *testing.T) *world {
 	fx := githost.Fixture{DefaultBranch: "main", DefaultCommit: strings.Repeat("a", 40), FactoryLogin: "factory-bot", AcceptLogin: "owner",
 		Permissions: map[string]string{"owner": "admin"},
 		Issues: []githost.FixtureIssue{
-			{Title: "Goal", Body: "- a", Labels: []string{githost.LabelGoal, ApprovedLabel}, Author: "owner", Association: "OWNER"},
+			{Title: "Goal", Body: "- a", Labels: []string{githost.LabelGoal, githost.LabelApproved}, Author: "owner", Association: "OWNER"},
 			{Title: "One", Body: "t", Labels: []string{githost.LabelReady}, Author: "factory-bot", Association: "NONE"},
 			{Title: "Two", Body: "t", Labels: []string{githost.LabelReady}, Author: "factory-bot", Association: "NONE"},
 		}}

@@ -21,6 +21,8 @@ export type Fake = {
     store: Map<string, string>;
     calls: { url: string; headers: Record<string, string> }[];
     urls: string[];
+    /** Every POST the page sent. */
+    writes: { url: string; headers: Record<string, string>; body: string; init: RequestInit }[];
     /** Change what the next snapshot read returns. A number is a status code. */
     setSnapshot(v: unknown): void;
     /** Send a server event on the stream. */
@@ -29,13 +31,14 @@ export type Fake = {
     served: () => number;
 };
 
-export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: string | null; accept?: string[] } = {}): Fake {
+export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: string | null; accept?: string[]; write?: (url: string, init: RequestInit) => Response | Promise<Response> } = {}): Fake {
     const store = new Map<string, string>();
     if (opts.stored) store.set('oxf-key', opts.stored);
     const local = new Map<string, string>();
     let snap: unknown = opts.snapshot ?? demo;
     const calls: Fake['calls'] = [];
     const urls: string[] = [];
+    const writes: Fake['writes'] = [];
     let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
     const enc = new TextEncoder();
     const perf = { now: 0 };
@@ -45,6 +48,10 @@ export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: stri
             const hdrs = { ...(init?.headers as Record<string, string>) };
             calls.push({ url: String(url), headers: hdrs });
             if (opts.accept && !opts.accept.some((a) => hdrs.Authorization === 'Bearer ' + a)) return new Response('{}', { status: 401 });
+            if (init?.method === 'POST') {
+                writes.push({ url: String(url), headers: hdrs, body: String(init.body ?? ''), init });
+                return opts.write ? opts.write(String(url), init) : new Response('{"error":"internal"}', { status: 500 });
+            }
             if (String(url).endsWith('/events')) {
                 const body = new ReadableStream<Uint8Array>({
                     start(c) {
@@ -65,7 +72,7 @@ export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: stri
         matchMedia: () => ({ matches: false }),
     };
     return {
-        env, store, calls, urls, perf,
+        env, store, calls, urls, writes, perf,
         served: () => calls.filter((c) => c.url.endsWith('/floor')).length,
         setSnapshot: (v) => void (snap = v),
         event: (name) => ctl?.enqueue(enc.encode(`event: ${name}\ndata: {}\n\n`)),

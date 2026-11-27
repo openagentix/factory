@@ -1,6 +1,6 @@
 # 0004. The web app and its read model
 
-- Status: proposed, 2026-11-27. Built and tested: the read model (`internal/floor`), the collector that fills it (`internal/floor/collect`), the server without the actions (`internal/server`), the Floor, Needs you and Goals screens with their buttons switched off, and the demo (`oxf run --demo`). The actions and the other screens are not built. The demo has been run. Nothing here has been run on a real repository.
+- Status: proposed, 2026-11-27. Built and tested: the read model (`internal/floor`), the collector that fills it (`internal/floor/collect`), the server with three actions (`internal/server`: answer, yes or no, approve), the Floor, Needs you and Goals screens, and the demo (`oxf run --demo`). Accept, Cancel, Undo, the dial, Pause and the other screens are not built. The demo has been run. Nothing here has been run on a real repository.
 - Scope: the web app of the first release. Records 0001, 0002 and 0003 are the authority. Where this record changes them, "Changes to records 0001, 0002 and 0003" says so, and each was edited to agree.
 - **(owner)** marks the owner's call. **(call)** marks a call by the assistant, open to change.
 
@@ -29,7 +29,7 @@ Also different: bundled fonts, decoration-only reduced motion, numbers in senten
 
 ## The screens
 
-The Floor, Needs you and Goals screens are built and shown with the demo's data only. Their buttons are switched off until the actions are built. The other screens say they are not built.
+The Floor, Needs you and Goals screens are built and shown with the demo's data only. Answer, yes or no, and Approve work. The other buttons are switched off until their actions are built. The other screens say they are not built.
 
 | Group | Screen | Status |
 |---|---|---|
@@ -364,15 +364,13 @@ It counts only when its author is a trusted person, it is unedited, and run, att
 
 Checked against `internal/` on 2026-11-27:
 
-- The fixed label list lacks `factory:approved` and `factory:needs-human`.
 - Markers count only from the factory's own user, not from trusted people. `oxf:answer` is recognised only for the factory's own login.
 - The earliest claim is picked by creation time, not by lowest comment id. There is no parser for claim releases.
 - Edit detection uses an update time that record 0003 lists as unproven.
 - `GetLevel` returns autopilot when no level is set.
 - Runs have no phase-change time, held reason or end reason.
 - Risk reasons are free text with paths, not codes, so a phrase cannot be chosen from them yet.
-- No builder or parser for the consequence marker. An unknown `oxf:` marker is classified as a person's comment, so the rule that a marker comment is never an answer, except `oxf:answer`, is not coded.
-- No idempotency records. `stagingSeq` and the rebuild lock exist only in the staging work, which is not merged; there is no staging entry id route.
+- `stagingSeq` and the rebuild lock exist only in the staging work, which is not merged; there is no staging entry id route.
 - Not stored anywhere: the sealed gate decision, the accept time, the pause flag, a goal's approval time, and the lane (quick until the standard lane exists). A goal's course needs trajectory rules, added to the backend order; until then the chip reads "Course: not built yet".
 
 ## Stack and dependencies
@@ -482,6 +480,12 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 - Until the list of trusted logins is built, the first build counts a consequence answer, and an answer from the web app, only from the propose token's user. The rule that any trusted person may answer is the design, not the first build.
 - Cancel appears only when a merge started and did not finish. In the demo that happens only when the git host fails.
 - Retrying after a crash relies on what the factory reads from the git host: the search for the same answer text, a standing consequence comment, a label already set, `stagingSeq` and `commit`. It does not rely on a stored record.
+- **Built for the demo only.** Answer, yes or no, and Approve are built against the demo's driver and the fake git host. No action has been run against a real git host.
+- **An answer must show something.** An answer with no letter, number, punctuation mark or symbol a person can see is refused with `unprocessable`, in the page and in the server.
+- **The screen can lag behind a press.** While the demo does the work that follows a press, the screen may show the last whole picture for a short time, with the button offered again. A second press is then refused with "This changed. Look again." or carries on the first.
+- **A label removed by hand.** When a person removes `factory:approved` from an approved goal on the host and approves again at the same version, the demo queues the builds a second time and the story stops as "did not go as written".
+- **A factory ticket edited by a person during a failed Approve** is not taken up again. A new ticket is made and the edited one stays waiting.
+- **A press at the moment of stopping** may be refused with `unavailable` or end as `internal`. It is never reported done with nothing written.
 - **A plan edit can slip through.** An edit between the server's re-read and the label reaching the host is caught only by the factory's comment that repeats the recorded lines.
 
 ## Not settled
@@ -495,3 +499,4 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 - 2026-11-27: the record was aligned with the built read model (`internal/floor`) after three review rounds.
 - 2026-11-27: the status and the demo's rules were aligned with the built demo line (`internal/floor/collect`, `internal/demo`, `oxf run --demo`) after three review rounds.
 - 2026-11-27: action replies, refusal codes, the idempotency key, the undo preview and the answer text rules were added before the actions are built.
+- 2026-11-28: answer, yes or no, and Approve were built for the demo after two review rounds. The limits found are listed above.

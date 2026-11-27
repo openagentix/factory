@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -60,6 +61,9 @@ type Config struct {
 	// wrapHost lets a test in this package put a wrapper around the host that
 	// staging sees. Unexported, nil in the product.
 	wrapHost func(githost.Proposer) githost.Proposer
+	// Report takes the lines the demo says about work that went wrong after an
+	// action was accepted. Each starts with "DEMO ". Nil means none.
+	Report func(line string)
 	// OnBeat is called after each beat of the story is done. It must return
 	// quickly. Nil means none.
 	OnBeat func(name string)
@@ -104,6 +108,35 @@ type Demo struct {
 	pendingSource map[int]string
 	// jobHook may change a job before it runs. Tests only.
 	jobHook func(*job)
+
+	// What the actions need. The rule for all state of the story, the actions
+	// and the follow-up loop: whoever changes it holds stepMu (one step, one
+	// action or one follow-up task at a time, so an action's check and effect
+	// are one step with respect to the story) and, to change facts, mu (so no
+	// snapshot sees half of it). Lock order: stepMu, then mu. The queue has
+	// its own lock.
+	sealed map[int]sealedChange // the gate's sealed decision of a change held for a yes or no
+	jobs   map[string]job       // run id to the job it runs
+	latest map[int]string       // ticket to the id of its latest run
+	// noAnswer holds the runs whose fixed "no answer" line is posted and whose
+	// label is not yet back.
+	noAnswer map[string]bool
+	// approving holds, by goal, the version of an Approve that put the label on
+	// and did not finish.
+	approving map[int]string
+	fuMu      sync.Mutex
+	fu        []followup
+	wake      chan struct{}
+	// addHook may fail the step that adds an answered change to the holding
+	// area. Tests only.
+	addHook func() error
+	// taskHook is called when a follow-up task starts. Tests only.
+	taskHook func()
+	// taskErr sees the error of a follow-up task that failed. Tests only.
+	taskErr func(error)
+	failed  atomic.Bool
+	// closing is set when Close starts: no action, step or task starts after it.
+	closing atomic.Bool
 }
 
 type beat struct {
@@ -127,7 +160,8 @@ func New(ctx context.Context, cfg Config) (*Demo, error) {
 	if fi, err := os.Stat(cfg.DataDir); err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
 		return nil, errors.New("demo: the data directory must exist with mode 0700")
 	}
-	d := &Demo{cfg: cfg, led: newLedger(), factory: factoryFile(), attempt: map[int]int{}, tk: map[string]int{}, reported: map[int]bool{}}
+	d := &Demo{cfg: cfg, led: newLedger(), factory: factoryFile(), attempt: map[int]int{}, tk: map[string]int{}, reported: map[int]bool{},
+		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, noAnswer: map[string]bool{}, approving: map[int]string{}, wake: make(chan struct{}, 1)}
 	d.env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C"}
 	if err := d.setup(ctx); err != nil {
 		d.Close()
@@ -168,11 +202,11 @@ func (d *Demo) setup(ctx context.Context) error {
 	d.def = def
 
 	fx := githost.Fixture{
-		DefaultBranch: "main", DefaultCommit: def, FactoryLogin: "factory-bot", AcceptLogin: "repo-owner",
+		DefaultBranch: "main", DefaultCommit: def, FactoryLogin: factoryLogin, AcceptLogin: "repo-owner",
 		Permissions: map[string]string{"repo-owner": "admin"},
 		Issues: []githost.FixtureIssue{
 			// Goal 1 is approved: the label is seeded, as a person would set it.
-			{Title: "Let customers move a booking", Body: goalMoveBody, Labels: []string{githost.LabelGoal, collect.ApprovedLabel}, Author: "repo-owner", Association: "OWNER"},
+			{Title: "Let customers move a booking", Body: goalMoveBody, Labels: []string{githost.LabelGoal, githost.LabelApproved}, Author: "repo-owner", Association: "OWNER"},
 			{Title: "Let customers cancel a booking", Body: goalCancelBody, Labels: []string{githost.LabelGoal}, Author: "repo-owner", Association: "OWNER"},
 		},
 	}
@@ -345,8 +379,24 @@ func (d *Demo) Beats() []string {
 // Step performs the next beat. It returns the beat's name and whether the
 // story is now at its waiting point. After the last beat it does nothing.
 func (d *Demo) Step(ctx context.Context) (string, bool, error) {
+	name, done, err := d.stepOnce(ctx)
+	if err != nil || done {
+		return name, done, err
+	}
+	// The pause between beats is taken outside the step lock, so an action
+	// is not kept waiting for it.
+	if err := d.pause(ctx, d.cfg.BeatDelay); err != nil {
+		return name, false, err
+	}
+	return name, false, nil
+}
+
+func (d *Demo) stepOnce(ctx context.Context) (string, bool, error) {
 	d.stepMu.Lock()
 	defer d.stepMu.Unlock()
+	if d.closing.Load() {
+		return "", false, errors.New("demo: closed")
+	}
 	if d.next >= len(d.beats) {
 		return "", true, nil
 	}
@@ -361,11 +411,6 @@ func (d *Demo) Step(ctx context.Context) (string, bool, error) {
 	d.publish(ctx)
 	if d.cfg.OnBeat != nil {
 		d.cfg.OnBeat(b.name)
-	}
-	if d.next < len(d.beats) {
-		if err := d.pause(ctx, d.cfg.BeatDelay); err != nil {
-			return b.name, false, err
-		}
 	}
 	return b.name, d.next >= len(d.beats), nil
 }
@@ -383,8 +428,13 @@ func (d *Demo) Play(ctx context.Context) error {
 	}
 }
 
-// Close releases the store. It is safe to call twice.
+// Close stops the demo. From now on no action, step or follow-up task starts.
+// It waits for the one in flight, then releases the store, so nothing ever meets
+// a closed store. It is safe to call twice.
 func (d *Demo) Close() {
+	d.closing.Store(true)
+	d.stepMu.Lock()
+	defer d.stepMu.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {

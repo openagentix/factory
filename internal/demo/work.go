@@ -14,6 +14,7 @@ import (
 	"github.com/openagentix/factory/internal/floor"
 	"github.com/openagentix/factory/internal/floor/collect"
 	"github.com/openagentix/factory/internal/gate"
+	"github.com/openagentix/factory/internal/githost"
 	"github.com/openagentix/factory/internal/harness"
 	"github.com/openagentix/factory/internal/runner"
 	"github.com/openagentix/factory/internal/staging"
@@ -30,6 +31,10 @@ type job struct {
 	deps   []int
 	title  string
 	script harness.StubScript
+	key    string // the ticket's key, empty for the checks of a goal
+	try    int    // index of the script, one less than the attempt
+	// trigger is the file the agent reads about this try. Empty means {}.
+	trigger []byte
 }
 
 // result is what a job produced.
@@ -54,6 +59,18 @@ func (d *Demo) newRunID() string {
 }
 
 func (d *Demo) createRun(ctx context.Context, j job) (string, int, error) {
+	var id string
+	var n int
+	err := d.mutate(ctx, func() (err error) {
+		id, n, err = d.createRunLocked(ctx, j)
+		return err
+	})
+	return id, n, err
+}
+
+// createRunLocked makes the queued run of a try. The caller holds the write
+// lock. A gate fact of an earlier try of the ticket stops counting.
+func (d *Demo) createRunLocked(ctx context.Context, j job) (string, int, error) {
 	id := d.newRunID()
 	n := d.attempt[j.ticket] + 1
 	if j.ticket == 0 {
@@ -67,15 +84,17 @@ func (d *Demo) createRun(ctx context.Context, j job) (string, int, error) {
 	run := &api.Run{ID: id, Task: j.task, Attempt: n, Goal: j.goal, Ticket: j.ticket, Mode: api.ModeUnattended,
 		Method: api.MethodBuiltin, MethodUsed: api.MethodBuiltin, Trigger: api.TriggerRef{Kind: api.TriggerFactory, Ref: ref},
 		Limits: api.RunLimits{Deadline: "5m"}, Phase: api.PhaseQueued, CreatedAt: now}
-	err := d.mutate(ctx, func() error {
-		if err := d.st.CreateRun(ctx, run); err != nil {
-			return err
-		}
-		d.attempt[j.ticket] = n // counted only once the record exists
-		d.led.run(id, func(r *collect.RunFacts) { r.PhaseSince, r.Deadline = now, 5*time.Minute })
-		return nil
-	})
-	return id, n, err
+	if err := d.st.CreateRun(ctx, run); err != nil {
+		return "", 0, err
+	}
+	d.attempt[j.ticket] = n // counted only once the record exists
+	d.led.run(id, func(r *collect.RunFacts) { r.PhaseSince, r.Deadline = now, 5*time.Minute })
+	d.jobs[id] = j
+	if j.ticket > 0 {
+		d.latest[j.ticket] = id
+		d.led.dropGate(j.ticket)
+	}
+	return id, n, nil
 }
 
 // setPhase moves a run to a new phase and records the time and the facts.
@@ -111,7 +130,10 @@ func (d *Demo) movePhase(ctx context.Context, id string, to api.Phase, fn func(*
 }
 
 // runAgent starts the stub harness through the local runner and waits.
-func (d *Demo) runAgent(ctx context.Context, id, task string, parent string, script harness.StubScript) (runner.Outcome, error) {
+func (d *Demo) runAgent(ctx context.Context, id, task string, parent string, script harness.StubScript, trigger []byte) (runner.Outcome, error) {
+	if len(trigger) == 0 {
+		trigger = []byte(`{}`)
+	}
 	sdir := filepath.Join(d.cfg.DataDir, "scripts")
 	if err := os.MkdirAll(sdir, 0o700); err != nil {
 		return runner.Outcome{}, err
@@ -127,7 +149,7 @@ func (d *Demo) runAgent(ctx context.Context, id, task string, parent string, scr
 	spec := runner.Spec{
 		Repo: d.repo, Commit: parent, DataDir: d.cfg.DataDir,
 		Task:        *taskFor(task),
-		TriggerJSON: []byte(`{}`),
+		TriggerJSON: trigger,
 		Prompt:      harness.PromptParts{TaskPrompt: "Demo task. A stub follows a fixed script.", Trigger: "demo"},
 		Adapter:     &harness.Stub{Program: d.cfg.Program},
 		Harness:     harness.Spec{StubScript: sp},
@@ -160,6 +182,12 @@ func (d *Demo) work(ctx context.Context, j job) (*result, error) {
 	if err != nil {
 		return nil, err
 	}
+	return d.runJob(ctx, j, id, n)
+}
+
+// runJob runs a job whose queued run already exists.
+func (d *Demo) runJob(ctx context.Context, j job, id string, n int) (*result, error) {
+	var err error
 	res := &result{runID: id, attempt: n}
 	if err := d.pause(ctx, d.cfg.Dwell); err != nil {
 		return nil, err
@@ -170,7 +198,7 @@ func (d *Demo) work(ctx context.Context, j job) (*result, error) {
 	if err := d.pause(ctx, d.cfg.Dwell); err != nil {
 		return nil, err
 	}
-	out, err := d.runAgent(ctx, id, j.task, d.def, j.script)
+	out, err := d.runAgent(ctx, id, j.task, d.def, j.script, j.trigger)
 	if err != nil {
 		return nil, err
 	}
@@ -189,6 +217,10 @@ func (d *Demo) work(ctx context.Context, j job) (*result, error) {
 				if err := d.host.PostComment(ctx, j.ticket, id, res.question); err != nil {
 					return err
 				}
+				if err := d.host.AddLabel(ctx, j.ticket, githost.LabelNeedsHuman); err != nil {
+					return err
+				}
+				d.led.journal("question_asked", 0, j.ticket, d.now())
 			}
 			return d.movePhase(ctx, id, api.PhaseNeedsHuman, nil)
 		})
@@ -440,6 +472,8 @@ func (d *Demo) admitThen(ctx context.Context, j job, res *result, dec gate.Decis
 		gi.Risk = d.riskReason(res.changed)
 		return consequenceOutcome(dec.Exception, gi.Risk), d.mutate(ctx, func() error {
 			d.led.setGate(gi)
+			// The sealed decision stays in memory: only it can be answered.
+			d.sealed[ticket] = sealedChange{dec: dec, j: j, res: res}
 			return nil
 		})
 	default:

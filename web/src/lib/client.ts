@@ -68,7 +68,10 @@ export type ClientOptions = {
     minGapMs?: number;
 };
 
-export type Client = { stop(): void; refresh(): void };
+/** How a write ended. A 200 or a 202 is "ok"; anything else carries the server's fixed code. Status 0 means no answer. */
+export type WriteResult = { ok: true; status: number; result: 'done' | 'pending' | 'running' } | { ok: false; status: number; code: string };
+
+export type Client = { stop(): void; refresh(): void; write(path: string, body: unknown, idemKey: string): Promise<WriteResult> };
 
 const BACKOFF_START = 1000;
 const BACKOFF_MAX = 30000;
@@ -201,7 +204,48 @@ export function startClient(o: ClientOptions): Client {
         }
     }
 
+    // A write is one POST. The page never trusts the reply to change what it draws: it only reads the snapshot again.
+    async function write(path: string, body: unknown, idemKey: string): Promise<WriteResult> {
+        let out: WriteResult = { ok: false, status: 0, code: 'unreachable' };
+        try {
+            const r = await o.fetch(path, {
+                method: 'POST',
+                headers: { ...authHeaders(o.key), 'Content-Type': 'application/json', 'Idempotency-Key': idemKey },
+                body: JSON.stringify(body),
+                credentials: 'omit',
+                cache: 'no-store',
+                redirect: 'error',
+            });
+            let j: unknown = null;
+            try {
+                j = await r.json();
+            } catch {
+                /* a reply with no body */
+            }
+            const rec = j !== null && typeof j === 'object' ? (j as Record<string, unknown>) : {};
+            if (r.status === 401) {
+                stop();
+                o.onFailure('denied');
+                return { ok: false, status: 401, code: 'unauthorized' };
+            }
+            if (r.status === 200 || r.status === 202) {
+                const res = rec.result;
+                out =
+                    (r.status === 200 && (res === 'done' || res === 'pending')) || (r.status === 202 && res === 'running')
+                        ? { ok: true, status: r.status, result: res }
+                        : { ok: false, status: r.status, code: 'internal' };
+            } else {
+                const code = typeof rec.error === 'string' && /^[a-z_]{1,40}$/.test(rec.error) ? rec.error : 'internal';
+                out = { ok: false, status: r.status, code };
+            }
+        } catch {
+            /* no answer: the write may or may not have happened, and the snapshot will say */
+        }
+        refresh();
+        return out;
+    }
+
     refresh();
     void stream();
-    return { stop, refresh };
+    return { stop, refresh, write };
 }

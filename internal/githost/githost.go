@@ -37,11 +37,15 @@ const (
 	LabelReady   = "factory:ready"
 	LabelClaimed = "factory:claimed"
 	LabelAgent   = "factory:agent"
+	// LabelApproved records the approval of a plan (record 0003).
+	LabelApproved = "factory:approved"
+	// LabelNeedsHuman is on a ticket whose agent ended with a question.
+	LabelNeedsHuman = "factory:needs-human"
 )
 
 // FixedLabels returns the labels the factory may add, remove or list by.
 func FixedLabels() []string {
-	return []string{LabelGoal, LabelPlanned, LabelReady, LabelClaimed, LabelAgent}
+	return []string{LabelGoal, LabelPlanned, LabelReady, LabelClaimed, LabelAgent, LabelApproved, LabelNeedsHuman}
 }
 
 // Errors. Use errors.Is to test for them.
@@ -147,6 +151,10 @@ type Issue struct {
 	// Association is the host's word for the author. It is information only.
 	// Trust never depends on it.
 	Association string
+	// BodyEditedAt is when the body last changed, as far as the host says. It
+	// is the zero time when the host does not say. Nothing may be assumed from
+	// a zero value.
+	BodyEditedAt time.Time
 	// Trusted is true when the author has write, maintain or admin permission
 	// on the repository, or is the factory itself.
 	Trusted bool
@@ -172,6 +180,9 @@ const (
 	KindFactory
 	// KindAnswer is an answer a person typed in the web app, posted by the factory.
 	KindAnswer
+	// KindConsequence is a yes or no on a consequence, posted by the factory.
+	// It is never an answer to a question.
+	KindConsequence
 )
 
 func (k CommentKind) String() string {
@@ -180,6 +191,8 @@ func (k CommentKind) String() string {
 		return "factory"
 	case KindAnswer:
 		return "answer"
+	case KindConsequence:
+		return "consequence"
 	}
 	return "person"
 }
@@ -201,6 +214,8 @@ type Comment struct {
 	RunID string
 	// Claim is set when the comment is a claim marker.
 	Claim *ClaimMarker
+	// Consequence is set when the comment is a consequence answer marker.
+	Consequence *ConsequenceMarker
 }
 
 // ClaimMarker is the content of a claim marker comment.
@@ -305,8 +320,12 @@ type Proposer interface {
 	ListComments(ctx context.Context, number int, since time.Time) ([]Comment, error)
 	// PostComment posts a comment carrying a run marker.
 	PostComment(ctx context.Context, number int, runID, body string) error
-	// PostAnswer posts an answer a person typed in the web app, with an answer marker.
-	PostAnswer(ctx context.Context, number int, body string) error
+	// PostAnswer posts an answer a person typed in the web app, with an answer
+	// marker. It returns the host's id of the new comment.
+	PostAnswer(ctx context.Context, number int, body string) (int64, error)
+	// PostConsequenceAnswer posts the fixed yes or no on a consequence, with
+	// its consequence marker. It returns the host's id of the new comment.
+	PostConsequenceAnswer(ctx context.Context, number int, m ConsequenceMarker) (int64, error)
 	// AddLabel and RemoveLabel accept only labels from FixedLabels.
 	AddLabel(ctx context.Context, number int, label string) error
 	RemoveLabel(ctx context.Context, number int, label string) error

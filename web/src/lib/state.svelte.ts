@@ -1,6 +1,6 @@
 // The state of the page: the key, the latest snapshot, the clock, the route and the open drawer.
 import { startClient, type Client } from './client';
-import type { Floor } from './floor';
+import type { Call, Floor } from './floor';
 import { readKeys, rememberKey, type KeyEnv } from './key';
 import { lampWord } from './text';
 import { modeKind, signalView } from './view';
@@ -21,6 +21,21 @@ export type Env = KeyEnv & {
     matchMedia?: (q: string) => { matches: boolean };
 };
 
+/**
+ * One press of a button: sending; sent (done, waiting for a snapshot to show it); running (a 202: still being done); again (a later
+ * snapshot still has the call, so the button is live and a press sends the same key); refused with the server's code; or failed with no answer.
+ */
+export type Act = { phase: 'sending' | 'sent' | 'running' | 'again' | 'refused' | 'failed'; code?: string };
+export type ActionKind = 'answer' | 'yes' | 'no' | 'approve';
+const actKey = (c: Pick<Call, 'id' | 'version'>) => `${c.id}|${c.version}`;
+
+/** A fresh random Idempotency-Key. It has nothing to do with the login key. */
+function newIdemKey(): string {
+    const b = new Uint8Array(24);
+    globalThis.crypto.getRandomValues(b);
+    return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 export type Status = 'loading' | 'nokey' | 'denied' | 'ready';
 
 export class AppState {
@@ -39,6 +54,10 @@ export class AppState {
     /** Ids of pieces whose station changed between the last two snapshots. */
     fresh = $state.raw<ReadonlySet<string>>(new Set());
     reduceMotion = false;
+    /** The state of each button press, by call id and version. Only a later snapshot clears a sent press. */
+    acts = $state.raw<Readonly<Record<string, Act>>>({});
+    /** The Idempotency-Key of a press, kept until the snapshot shows the result, so a repeat sends the same key. */
+    private idem = new Map<string, { key: string; body: string }>();
 
     private tick = $state(0);
     private serverMs = 0;
@@ -102,6 +121,31 @@ export class AppState {
         });
     }
 
+    /**
+     * Presses a button of a call. The reply changes nothing on the screen: the call stays where it is until a later
+     * snapshot no longer has it at this version. A refusal or a failure keeps the call and says why.
+     */
+    async act(call: Call, action: ActionKind, text?: string): Promise<void> {
+        const k = actKey(call);
+        const cur = this.acts[k];
+        if (cur && (cur.phase === 'sending' || cur.phase === 'sent' || cur.phase === 'running')) return;
+        if (!(call.actions as string[]).includes(action) || this.client === null) return;
+        const body: Record<string, string> = { version: call.version };
+        if (action === 'answer') body.text = (text ?? '').replace(/\r\n?/g, '\n');
+        const json = JSON.stringify(body);
+        let held = this.idem.get(k);
+        if (!held || held.body !== json) {
+            held = { key: newIdemKey(), body: json };
+            this.idem.set(k, held);
+        }
+        this.acts = { ...this.acts, [k]: { phase: 'sending' } };
+        const r = await this.client.write(`/api/v1/calls/${encodeURIComponent(call.id)}/${action}`, body, held.key);
+        // A snapshot may have dropped this press while it was sent. Then nothing is left to say.
+        if (!(k in this.acts)) return;
+        const next: Act = r.ok ? { phase: r.status === 202 ? 'running' : 'sent' } : r.status === 0 ? { phase: 'failed' } : { phase: 'refused', code: r.code };
+        this.acts = { ...this.acts, [k]: next };
+    }
+
     /** The failed state: an alert band, the unknown lamp, an "as of" mark on what is old, and one announcement. */
     private fail(message: string): void {
         if (!this.failed) this.announce = message;
@@ -138,6 +182,7 @@ export class AppState {
         this.serverMs = Number.isNaN(t) ? 0 : t;
         this.recvPerf = this.env.perfNow();
         this.floor = f;
+        this.dropActs(f);
         this.failed = false;
         if (this.crashed) {
             this.crashed = false;
@@ -152,6 +197,23 @@ export class AppState {
             this.lastSignal = k;
             this.announce = [lampWord(sv.word) + '.', ...sv.parts.map((p) => p.text)].join(' ');
         }
+    }
+
+    /** A press is forgotten, and its key with it, once the snapshot no longer has that call at that version. */
+    private dropActs(f: Floor): void {
+        const live = new Set(f.calls.map(actKey));
+        const keep: Record<string, Act> = {};
+        let changed = false;
+        for (const [k, v] of Object.entries(this.acts)) {
+            if (!live.has(k)) changed = true;
+            // A press that was accepted, and a snapshot that still has the call at the same version: the person is not locked out.
+            else if (v.phase === 'sent' || v.phase === 'running') {
+                keep[k] = { phase: 'again' };
+                changed = true;
+            } else keep[k] = v;
+        }
+        for (const k of [...this.idem.keys()]) if (!live.has(k)) this.idem.delete(k);
+        if (changed) this.acts = keep;
     }
 
     go(r: Route): void {

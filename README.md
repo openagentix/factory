@@ -11,7 +11,7 @@ Small engineering teams first, roughly two to twenty engineers on a shared codeb
 > **Status: early. Not usable yet.**
 >
 > - The design is written. Fourteen Go packages are built and tested: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner`, `staging`, `floor` (the read model of the Floor screen), `floor/collect`, `server` (the local web server) and `demo`, all under `internal/`. They are wired together only in a demo.
-> - `oxf run --demo` shows the Floor screen with a made-up project on a fake git host. Real factory code moves the line. The buttons do not work yet. It proves nothing about a real job.
+> - `oxf run --demo` shows the Floor screen with a made-up project on a fake git host. Real factory code moves the line. Three buttons work: answer a question, yes or no on a risky change, and approve a plan. Accept and Undo are not built. It proves nothing about a real job.
 > - Four trial runs by hand show that an installed agent can be started unattended. See [the trial record](docs/trials/2026-11-26-unattended-runs.md).
 > - There is no release, and no command works on a real repository. Every feature below is a plan.
 
@@ -72,7 +72,7 @@ make build-web
 bin/oxf run --demo
 ```
 
-It prints a link. Open it in a browser. Stop it with Ctrl-C. Every line it prints starts with `DEMO`. The project is made up and the git host is fake. The factory code that moves the line is real, except the stations marked scripted. The story stops where a person would answer or accept, because the buttons are not built yet. It uses port 7477 on this machine only, and needs no login and no token.
+It prints a link. Open it in a browser. Stop it with Ctrl-C. Every line it prints starts with `DEMO`. The project is made up and the git host is fake. The factory code that moves the line is real, except the stations marked scripted. The story waits where a person would act. You can answer the question, say yes or no to the risky change, and approve the plan of the second goal, and the line moves on. Accept and Undo are not built yet. It uses port 7477 on this machine only, and needs no login and no token.
 
 ## Where it runs
 

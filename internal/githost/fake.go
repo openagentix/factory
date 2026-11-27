@@ -2,6 +2,7 @@ package githost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -86,6 +87,7 @@ type fakeState struct {
 	protected     bool
 	parents       map[int]int
 	permissions   map[string]string
+	failures      map[string]failure // op -> how the next call of it fails; one shot
 }
 
 // Fake is an in memory git host that follows the same rules as the real one,
@@ -134,7 +136,7 @@ func (s *fakeState) newItem(title, body, author, assoc string) *fakeItem {
 	s.next++
 	it := &fakeItem{Issue: Issue{
 		Number: s.next, ID: int64(1000 + s.next), Title: title, Body: body, State: "open",
-		Author: author, Association: assoc,
+		Author: author, Association: assoc, BodyEditedAt: s.clock(),
 	}}
 	s.items[s.next] = it
 	return it
@@ -207,6 +209,16 @@ func (f *Fake) SeedIssue(title, body, author, assoc string, labels ...string) in
 	defer f.mu.Unlock()
 	it := f.newItem(title, body, author, assoc)
 	it.Labels = labels
+	return it.Number
+}
+
+// SeedSubIssue adds an issue from any user as a sub-issue of a goal, for tests,
+// and returns its number.
+func (f *Fake) SeedSubIssue(goal int, title, body, author, assoc string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	it := f.newItem(title, body, author, assoc)
+	f.parents[it.Number] = goal
 	return it.Number
 }
 
@@ -292,15 +304,85 @@ func (f *Fake) ListComments(_ context.Context, n int, since time.Time) ([]Commen
 	return classify(it.comments, f.factoryLogin, since, f.writer), nil
 }
 
-func (f *Fake) post(n int, text, marker string) error {
+type failure struct {
+	skip  int  // calls of the op that go through first
+	after bool // fail after the write
+}
+
+// FailNext makes the next call of op fail once. With afterWrite false the
+// call fails before it writes anything. With afterWrite true it writes, then
+// reports a failure, as a host does when its answer is lost. op is a method
+// name: PostComment, PostAnswer, PostConsequenceAnswer, AddLabel,
+// RemoveLabel, MergeStaging, CreateSubIssues. The error holds no text from the caller.
+func (f *Fake) FailNext(op string, afterWrite bool) { f.FailAfter(op, 0, afterWrite) }
+
+// FailAfter is FailNext for the call after the next `calls` calls of op.
+func (f *Fake) FailAfter(op string, calls int, afterWrite bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failures == nil {
+		f.failures = map[string]failure{}
+	}
+	f.failures[op] = failure{skip: calls, after: afterWrite}
+}
+
+// takeFailure reports whether op must fail, and when. The caller holds f.mu.
+func (s *fakeState) takeFailure(op string) (fail, afterWrite bool) {
+	fl, ok := s.failures[op]
+	if !ok {
+		return false, false
+	}
+	if fl.skip > 0 {
+		fl.skip--
+		s.failures[op] = fl
+		return false, false
+	}
+	delete(s.failures, op)
+	return true, fl.after
+}
+
+var errFakeFailure = errors.New("githost: the fake host failed on purpose")
+
+// EditIssueBody changes the body of an issue, as a person editing it would.
+func (f *Fake) EditIssueBody(number int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil {
+		it.Body = body
+		it.BodyEditedAt = f.clock()
+	}
+}
+
+// CloseIssue closes an issue, as a person would.
+func (f *Fake) CloseIssue(number int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil {
+		it.State = "closed"
+	}
+}
+
+// postRaw posts body exactly as given, under op's failure hook.
+func (f *Fake) postRaw(op string, n int, body string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fail, after := f.takeFailure(op)
+	if fail && !after {
+		return 0, errFakeFailure
+	}
 	it, err := f.get(n)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	f.addRawComment(it, f.factoryLogin, "NONE", withMarker(text, marker))
-	return nil
+	f.addRawComment(it, f.factoryLogin, "NONE", body)
+	if fail {
+		return 0, errFakeFailure
+	}
+	return f.nextComment, nil
+}
+
+func (f *Fake) post(op string, n int, text, marker string) (int64, error) {
+	return f.postRaw(op, n, withMarker(text, marker))
 }
 
 func (f *Fake) PostComment(_ context.Context, n int, runID, body string) error {
@@ -308,11 +390,20 @@ func (f *Fake) PostComment(_ context.Context, n int, runID, body string) error {
 	if err != nil {
 		return err
 	}
-	return f.post(n, body, m)
+	_, err = f.post("PostComment", n, body, m)
+	return err
 }
 
-func (f *Fake) PostAnswer(_ context.Context, n int, body string) error {
-	return f.post(n, body, AnswerMarker())
+func (f *Fake) PostAnswer(_ context.Context, n int, body string) (int64, error) {
+	return f.postRaw("PostAnswer", n, AnswerBody(body))
+}
+
+func (f *Fake) PostConsequenceAnswer(_ context.Context, n int, m ConsequenceMarker) (int64, error) {
+	body, err := ConsequenceAnswerBody(m.Run, m.Attempt, m.Commit, m.Yes)
+	if err != nil {
+		return 0, err
+	}
+	return f.postRaw("PostConsequenceAnswer", n, body)
 }
 
 func (f *Fake) AddLabel(_ context.Context, n int, label string) error {
@@ -321,12 +412,19 @@ func (f *Fake) AddLabel(_ context.Context, n int, label string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("AddLabel")
+	if fail && !after {
+		return errFakeFailure
+	}
 	it, err := f.get(n)
 	if err != nil {
 		return err
 	}
 	if !it.HasLabel(label) {
 		it.Labels = append(it.Labels, label)
+	}
+	if fail {
+		return errFakeFailure
 	}
 	return nil
 }
@@ -337,6 +435,10 @@ func (f *Fake) RemoveLabel(_ context.Context, n int, label string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("RemoveLabel")
+	if fail && !after {
+		return errFakeFailure
+	}
 	it, err := f.get(n)
 	if err != nil {
 		return err
@@ -348,6 +450,9 @@ func (f *Fake) RemoveLabel(_ context.Context, n int, label string) error {
 		}
 	}
 	it.Labels = keep
+	if fail {
+		return errFakeFailure
+	}
 	return nil
 }
 
@@ -359,7 +464,7 @@ func (f *Fake) Claim(ctx context.Context, n int, machineID, runID string, expiry
 		return ClaimResult{}, err
 	}
 	m, _ := ClaimMarkerText(machineID, runID)
-	if err := f.post(n, "Claimed by a factory run.", m); err != nil {
+	if _, err := f.post("Claim", n, "Claimed by a factory run.", m); err != nil {
 		return ClaimResult{}, err
 	}
 	now := f.clock()
@@ -385,7 +490,17 @@ func (f *Fake) linkSubIssue(_ context.Context, goal, child Issue) error {
 }
 
 func (f *Fake) CreateSubIssues(ctx context.Context, goal int, p []api.IssueProposal) ([]Issue, error) {
-	return createSubIssues(ctx, f, goal, p)
+	f.mu.Lock()
+	fail, after := f.takeFailure("CreateSubIssues")
+	f.mu.Unlock()
+	if fail && !after {
+		return nil, errFakeFailure
+	}
+	out, err := createSubIssues(ctx, f, goal, p)
+	if err == nil && fail {
+		return nil, errFakeFailure // the issues exist, the reply is lost
+	}
+	return out, err
 }
 
 func (f *Fake) OpenPullRequest(_ context.Context, spec PRSpec) (PullRequest, error) {
@@ -506,11 +621,21 @@ func (f *Fake) MergeStaging(_ context.Context, spec MergeSpec) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("MergeStaging")
+	if fail && !after {
+		return errFakeFailure
+	}
 	it, err := f.get(spec.PullRequest)
 	if err != nil {
 		return err
 	}
-	return f.mergeLocked(it, StagingBranch, spec.Commit)
+	if err := f.mergeLocked(it, StagingBranch, spec.Commit); err != nil {
+		return err
+	}
+	if fail {
+		return errFakeFailure
+	}
+	return nil
 }
 
 func (f *Fake) OpenRevert(_ context.Context, spec RevertSpec) (PullRequest, error) {

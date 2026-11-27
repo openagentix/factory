@@ -67,6 +67,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		return errors.New("server: stopped with an error")
 	case <-ctx.Done():
 	}
+	// A stop: no new write starts, and the writes in flight get the shutdown
+	// limit to end. After it their context ends and their reply is a failure.
+	s.beginStop()
+	s.drain(5 * time.Second)
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(sctx); err != nil {

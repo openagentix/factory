@@ -102,19 +102,22 @@ func (e *DivergedError) Error() string {
 }
 
 func (d *Demo) ticketJob(key string, try int) (job, error) {
-	specs := tickets()
-	for _, s := range specs {
-		if s.key != key {
-			continue
+	for _, goal := range []int{goalMove, goalCancel} {
+		specs := ticketsOf(goal)
+		for _, s := range specs {
+			if s.key != key {
+				continue
+			}
+			if try < 0 || try >= len(s.scripts) {
+				return job{}, fmt.Errorf("no script for try %d of %s", try, key)
+			}
+			var deps []int
+			for _, i := range s.depends {
+				deps = append(deps, d.tk[specs[i].key])
+			}
+			return job{task: api.TaskImplement, goal: s.goal, ticket: d.tk[key], served: s.served, deps: deps, title: s.title,
+				script: s.scripts[try], key: key, try: try}, nil
 		}
-		if try >= len(s.scripts) {
-			return job{}, fmt.Errorf("no script for try %d of %s", try, key)
-		}
-		var deps []int
-		for _, i := range s.depends {
-			deps = append(deps, d.tk[specs[i].key])
-		}
-		return job{task: api.TaskImplement, goal: goalMove, ticket: d.tk[key], served: s.served, deps: deps, title: s.title, script: s.scripts[try]}, nil
 	}
 	return job{}, fmt.Errorf("no ticket %s", key)
 }
@@ -195,8 +198,12 @@ func (d *Demo) checkFailedOutcome(j job, res *result) Outcome {
 	return o
 }
 
-func beatWriteChecks(ctx context.Context, d *Demo) error {
-	j := job{task: api.TaskAcceptance, goal: goalMove, title: "Checks for goal 1", script: acceptanceScript()}
+func beatWriteChecks(ctx context.Context, d *Demo) error { return d.writeChecks(ctx, goalMove) }
+
+// writeChecks has the agent write the checks of a goal, and adds them to the
+// holding area when the gate passes them.
+func (d *Demo) writeChecks(ctx context.Context, goal int) error {
+	j := job{task: api.TaskAcceptance, goal: goal, title: fmt.Sprintf("Checks for goal %d", goal), script: acceptanceScriptFor(goal)}
 	res, err := d.work(ctx, j)
 	if err != nil {
 		return err
@@ -206,7 +213,7 @@ func beatWriteChecks(ctx context.Context, d *Demo) error {
 	}
 	// The baseline: the checks run on the commit before any building, red first.
 	opts := acceptance.Options{Check: verify.CheckOptions{Deadline: 30 * time.Second, Environ: d.env}}
-	b, err := acceptance.Baseline(ctx, d.repo, acceptance.Request{Judged: d.def, Source: res.commit, Goal: goalMove, AcceptancePath: api.DefaultAcceptancePath}, opts)
+	b, err := acceptance.Baseline(ctx, d.repo, acceptance.Request{Judged: d.def, Source: res.commit, Goal: goal, AcceptancePath: api.DefaultAcceptancePath}, opts)
 	if err != nil {
 		return err
 	}
@@ -221,11 +228,11 @@ func beatWriteChecks(ctx context.Context, d *Demo) error {
 	// The facts about the checks are written only after the holding area has
 	// taken them. Until then the staging step reads the source from d.pending.
 	d.mu.Lock()
-	d.pendingSource = map[int]string{goalMove: res.commit}
+	d.pendingSource = map[int]string{goal: res.commit}
 	d.mu.Unlock()
 	defer func() { d.mu.Lock(); d.pendingSource = nil; d.mu.Unlock() }()
 	got, err := d.admitThen(ctx, j, res, dec, func() {
-		d.led.goal(goalMove, func(g *collect.GoalFacts) {
+		d.led.goal(goal, func(g *collect.GoalFacts) {
 			g.AcceptanceSource, g.Baseline, g.ManifestEntry = res.commit, states, res.runID
 		})
 	})

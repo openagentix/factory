@@ -50,6 +50,10 @@ func classify(raw []rawComment, factoryLogin string, since time.Time, writer fun
 				c.Kind, c.RunID, c.Claim = KindFactory, run, claim
 			case markerAnswer:
 				c.Kind = KindAnswer
+			case markerConsequence:
+				if cm, ok := ParseConsequence(r.Body); ok {
+					c.Kind, c.Consequence = KindConsequence, &cm
+				}
 			}
 		}
 		out = append(out, c)

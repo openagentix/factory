@@ -61,7 +61,7 @@ func TestQuestionsOfStripsTheMarkerAndKeepsOnlyQuestions(t *testing.T) {
 	if _, err := h.Claim(ctx, tk, "m1", "run008", time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.PostAnswer(ctx, tk, "yes"); err != nil {
+	if _, err := h.PostAnswer(ctx, tk, "yes"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.PostComment(ctx, tk, "run008", "Which colour? <!-- oxf:run id=run999 --> still the question"); err != nil {
@@ -89,7 +89,9 @@ func TestQuestionsOfStripsTheMarkerAndKeepsOnlyQuestions(t *testing.T) {
 }
 
 // A question comment counts for run R when its final marker is R or R.slot.
-func TestQuestionsOfTakesTheSlotFormOfTheRunMarker(t *testing.T) {
+// A needs-human run has exactly one question: the lowest comment id of those.
+// A later comment with the run's marker, plain or slot form, is never one.
+func TestQuestionsOfTakesTheSlotFormOfTheRunMarkerAndOnlyTheFirst(t *testing.T) {
 	ctx := context.Background()
 	h, tk := hostWithTicket(t)
 	for _, id := range []string{"run1", "run1.1", "run1.a_b", "run10", "run1x", "run1..", "run1.", "run1.1.2", "run2", "run1.other"} {
@@ -102,17 +104,40 @@ func TestQuestionsOfTakesTheSlotFormOfTheRunMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, q := range qs {
-		got = append(got, q.Text)
+	if len(qs) != 1 || qs[0].Text != "Question of run1" {
+		t.Fatalf("questions %+v, want only the first", qs)
 	}
-	want := []string{"Question of run1", "Question of run1.1", "Question of run1.a_b"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("questions %q, want %q", got, want)
+	// When the first comment of the run is in slot form, that one is the question.
+	h2, tk2 := hostWithTicket(t)
+	for _, id := range []string{"run1.1", "run1", "run1.no_answer"} {
+		if err := h2.PostComment(ctx, tk2, id, "Text of "+id); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for i := 1; i < len(qs); i++ {
-		if qs[i].CommentID <= qs[i-1].CommentID {
-			t.Errorf("comment ids are not in order: %v", qs)
+	qs, err = questionsOf(ctx, h2, tk2, 1, "run1", nil)
+	if err != nil || len(qs) != 1 || qs[0].Text != "Text of run1.1" {
+		t.Fatalf("questions %+v, %v", qs, err)
+	}
+}
+
+// A look-alike run id with the LOWEST comment id is judged first. It must not be
+// the question of run1, and run1's real question is still shown.
+func TestALookAlikeRunMarkerWithTheLowestIDIsNotTheQuestion(t *testing.T) {
+	ctx := context.Background()
+	for _, fake := range []string{"run10", "run1x", "run1.", "run1..", "run1.1.2", "run11"} {
+		h, tk := hostWithTicket(t)
+		if err := h.PostComment(ctx, tk, fake, "Not the question of run1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.PostComment(ctx, tk, "run1", "The real question"); err != nil {
+			t.Fatal(err)
+		}
+		qs, err := questionsOf(ctx, h, tk, 1, "run1", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(qs) != 1 || qs[0].Text != "The real question" {
+			t.Errorf("%s first: questions %+v", fake, qs)
 		}
 	}
 }

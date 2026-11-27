@@ -11,11 +11,6 @@ import (
 	"github.com/openagentix/factory/internal/staging"
 )
 
-// ApprovedLabel is the label that records the approval of a plan (record
-// 0004, "Triggers"). It is not on the fixed list of labels the factory may
-// write, so only a person or a seed can set it.
-const ApprovedLabel = "factory:approved"
-
 const maxPlanLines = 20
 
 // PlanLines reads the lines of a goal from its body: each bullet item is one
@@ -50,15 +45,19 @@ func opt(t time.Time) floor.Opt[time.Time] {
 // the labels the host returned: a goal without the approved label is known to
 // be not approved.
 func GoalFromIssue(iss githost.Issue, f GoalFacts) floor.GoalIn {
+	edited := f.BodyEditedAt
+	if !iss.BodyEditedAt.IsZero() {
+		edited = iss.BodyEditedAt // what the host says wins over what the ledger remembers
+	}
 	return floor.GoalIn{
 		Number:       iss.Number,
 		Title:        iss.Title,
 		Open:         iss.State == "open",
-		Approved:     floor.Some(iss.HasLabel(ApprovedLabel)),
+		Approved:     floor.Some(iss.HasLabel(githost.LabelApproved)),
 		PlanSince:    opt(f.PlanSince),
 		Lane:         f.Lane,
 		PlanLines:    floor.Some(PlanLines(iss.Body)),
-		BodyEditedAt: opt(f.BodyEditedAt),
+		BodyEditedAt: opt(edited),
 	}
 }
 

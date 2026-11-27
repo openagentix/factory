@@ -52,10 +52,9 @@
     <div class="hz"></div>
     <div class="bh">
         <span class="no">{two(st.no)}</span>
-        <span class="nm">{stationName(st.no)}
-            {#if st.source === 'scripted'}<span class="stn">scripted</span>{:else if st.source === 'partly_real'}<span class="stn">partly real</span>{/if}
-        </span>
+        <span class="nm">{stationName(st.no)}</span>
         <span class="who"><Icon name={who.icon} />{who.text}</span>
+        {#if st.source === 'scripted'}<span class="stn">scripted</span>{:else if st.source === 'partly_real'}<span class="stn">partly real</span>{/if}
     </div>
     <div class="bstat">
         <div class="top">

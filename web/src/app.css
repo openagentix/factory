@@ -256,3 +256,8 @@ td.num{font-family:var(--f-data);text-align:right} th.num{text-align:right}
 .small .ttl,.acc-goals .ttl{display:inline}
 .tag .id{flex-wrap:wrap}
 .tag .id span:first-child{white-space:nowrap}
+
+/* Text someone else wrote: isolate its direction so it cannot reorder the words around it, and break long words. */
+.tag .t,.ttl,.lt,.tx,.quote .tx,.repo,.who,.tag .id,.note,.claimed{unicode-bidi:isolate;overflow-wrap:anywhere}
+.bh .stn{grid-column:2;justify-self:start;margin-top:3px}
+.asof{padding:4px 2px 10px;font-size:13px;color:var(--wait);font-weight:600}

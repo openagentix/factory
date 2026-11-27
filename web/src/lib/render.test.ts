@@ -2,7 +2,7 @@
 import { fireEvent } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { FIXTURES, KEY, clone, fakeEnv, mount, type Json } from './testkit';
+import { FIXTURES, KEY, UNKNOWN_NO_TIME, clone, fakeEnv, mount, type Json } from './testkit';
 import { render } from '@testing-library/svelte';
 import Shell from './Shell.svelte';
 
@@ -128,6 +128,14 @@ describe('Floor: honest states', () => {
         expect(t).toContain('Ticket 58: the agent asked a question.');
         expect(t).toContain('Ticket 55: a change needs your yes or no.');
         expect(t).toContain('Ticket 61: waiting for Checks of goal 43.');
+    });
+});
+
+describe('a snapshot with no server time', () => {
+    it('is rejected: Could not read, no gauges, no pieces', async () => {
+        const { container } = await mount(UNKNOWN_NO_TIME);
+        expect(text(container)).toContain('Could not read');
+        expect(container.querySelectorAll('.tag, .gauges')).toHaveLength(0);
     });
 });
 
@@ -272,15 +280,14 @@ describe('untrusted text', () => {
         for (const t of c.querySelectorAll('.tag .t')) expect(t.children.length).toBe(0);
     });
 
-    it('a hostile string in a number slot makes the sentence read Could not read, not markup', async () => {
-        const f = clone(FIXTURES.demo) as unknown as { pieces: { id: string; reason: { code: string; attempt: number | string } | null }[]; log: { goal?: unknown; kind: string }[] };
-        const p = f.pieces.find((x) => x.id === 't57')!;
-        p.reason!.attempt = '<img src=x>';
-        f.log[0] = { journalSeq: 99, time: null, kind: 'accepted', goal: '<script>' } as unknown as (typeof f.log)[number];
+    it('a hostile string in a number slot rejects the whole snapshot: Could not read, never markup', async () => {
+        const f = clone(FIXTURES.demo) as unknown as { pieces: { id: string; reason: { code: string; attempt: number | string } | null }[] };
+        f.pieces.find((x) => x.id === 't57')!.reason!.attempt = '<img src=x>';
         const m = await mount(f);
         expect(m.container.querySelector('main img')).toBeNull();
         expect(text(m.container)).not.toContain('<img src=x>');
-        expect(text(m.container)).toContain('One entry could not be read.');
+        expect(text(m.container)).toContain('Could not read');
+        expect(m.container.querySelectorAll('.tag')).toHaveLength(0);
     });
 });
 
@@ -355,8 +362,8 @@ describe('the key and the data', () => {
         expect(container.querySelector('.rail')).toBeNull();
     });
 
-    it('takes the key from the fragment, keeps it in session storage, clears the address bar, and sends it only as a header', async () => {
-        const fake = fakeEnv({ hash: '#t=' + KEY });
+    it('takes the key from the fragment, keeps it in session storage once the server accepts it, clears the address bar, and sends it only as a header', async () => {
+        const fake = fakeEnv({ hash: '#t=' + KEY, accept: [KEY] });
         const { container } = render(Shell, { props: { env: fake.env } });
         await vi.waitFor(() => expect(container.querySelector('.bay')).not.toBeNull());
         expect(fake.store.get('oxf-key')).toBe(KEY);
@@ -424,6 +431,30 @@ describe('the key and the data', () => {
         m.fake.event('floor');
         await vi.waitFor(() => expect(m.container.querySelector('.tag.fresh')).not.toBeNull(), { timeout: 3000 });
         expect(text(live)).toBe(first);
+    });
+});
+
+describe('a fragment key is only a candidate', () => {
+    const OTHER = 'ATTACKERKEY0123456789abcdefghij';
+    it('a rejected candidate does not log the person out: the stored key is used and kept', async () => {
+        const fake = fakeEnv({ hash: '#t=' + OTHER, stored: KEY, accept: [KEY] });
+        const { container } = render(Shell, { props: { env: fake.env } });
+        await vi.waitFor(() => expect(container.querySelector('.bay')).not.toBeNull(), { timeout: 4000 });
+        expect(fake.store.get('oxf-key')).toBe(KEY);
+        expect(fake.urls).toEqual(['/']);
+        expect(fake.calls.some((c) => c.headers.Authorization === 'Bearer ' + KEY)).toBe(true);
+    });
+    it('a rejected candidate with no stored key shows the no-key screen and stores nothing', async () => {
+        const fake = fakeEnv({ hash: '#t=' + OTHER, accept: [KEY] });
+        const { container } = render(Shell, { props: { env: fake.env } });
+        await vi.waitFor(() => expect(text(container)).toContain('This page needs the link'), { timeout: 4000 });
+        expect(fake.store.size).toBe(0);
+    });
+    it('an accepted candidate replaces the stored key', async () => {
+        const fake = fakeEnv({ hash: '#t=' + OTHER, stored: KEY, accept: [OTHER] });
+        const { container } = render(Shell, { props: { env: fake.env } });
+        await vi.waitFor(() => expect(container.querySelector('.bay')).not.toBeNull(), { timeout: 4000 });
+        expect(fake.store.get('oxf-key')).toBe(OTHER);
     });
 });
 

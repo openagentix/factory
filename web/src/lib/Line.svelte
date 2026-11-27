@@ -3,11 +3,12 @@
     import Bay from './Bay.svelte';
     import Icon from './Icon.svelte';
     import Pending from './Pending.svelte';
+    import { beltMoves } from './view';
 
     let { app }: { app: AppState } = $props();
     const f = $derived(app.floor!);
     // The belt moves only when something is moving on this machine, the line is not paused, and the data is fresh.
-    const halt = $derived(f.signal.inputs.moving < 1 || f.signal.inputs.paused || app.failed || f.signal.lamp === 'unknown');
+    const halt = $derived(!beltMoves(f, app.failed));
 </script>
 
 <section class="linewrap {app.failed ? 'stale' : ''}" aria-label="The line">

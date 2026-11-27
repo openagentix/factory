@@ -2,7 +2,8 @@
     import Chip from './Chip.svelte';
     import type { Goal, Piece } from './floor';
     import { reasonText, sentence } from './text';
-    import { LINE_LOOK } from './view';
+    import { COULD_NOT_READ } from './text';
+    import { LINE_LOOK, UNREAD, pick } from './view';
 
     let { g, pieces, flat = false }: { g: Goal; pieces: Piece[]; flat?: boolean } = $props();
     // A line's note is a fixed phrase for its code. It needs a ticket to name; without one there is no note.
@@ -19,7 +20,7 @@
 <p class="linesnote">The lines, in the person's own words</p>
 <ul class="lines">
     {#each g.lines ?? [] as l (l.id)}
-        {@const lk = LINE_LOOK[l.state]}
+        {@const lk = pick(LINE_LOOK, l.state) ?? UNREAD}
         <li>
             <Chip tone={lk.chip} icon={lk.icon} text={lk.word} />
             <span>

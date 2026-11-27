@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { authHeaders, loadKey, type KeyEnv } from './key';
+import { authHeaders, readKeys, rememberKey, type KeyEnv } from './key';
 
 const KEY = 'abcDEF0123456789_-abcDEF0123456789_-xyzXYZ';
+const OTHER = 'ATTACKERKEY0123456789abcdefghij';
 
 function env(hash: string, stored: string | null = null) {
     const store = new Map<string, string>();
@@ -16,35 +17,40 @@ function env(hash: string, stored: string | null = null) {
 }
 
 describe('the key', () => {
-    it('is taken from the fragment, kept in session storage, and removed from the address bar', () => {
-        const { e, store, urls } = env('#t=' + KEY);
-        expect(loadKey(e)).toBe(KEY);
+    it('a fragment key is only a candidate: it does not overwrite a stored key, and leaves the address bar at once', () => {
+        const { e, store, urls } = env('#t=' + OTHER, KEY);
+        expect(readKeys(e)).toEqual({ candidate: OTHER, stored: KEY });
         expect(store.get('oxf-key')).toBe(KEY);
         expect(urls).toEqual(['/']);
-        expect(urls.join('')).not.toContain(KEY);
+        expect(urls.join('')).not.toContain(OTHER);
     });
-    it('keeps another part of the fragment, such as the screen', () => {
-        const { e, urls } = env('#goals&t=' + KEY);
-        expect(loadKey(e)).toBe(KEY);
-        expect(urls).toEqual(['/#goals']);
+    it('is stored only when remembered after the server accepted it', () => {
+        const { e, store } = env('#t=' + KEY);
+        expect(readKeys(e)).toEqual({ candidate: KEY, stored: null });
+        expect(store.size).toBe(0);
+        rememberKey(e, KEY);
+        expect(store.get('oxf-key')).toBe(KEY);
     });
-    it('comes from session storage when the fragment has none', () => {
-        const { e, urls } = env('#goals', KEY);
-        expect(loadKey(e)).toBe(KEY);
-        expect(urls).toEqual([]);
+    it('the fragment is exactly t=<key> or a route name: t=KEY&goals is no key and is cleared', () => {
+        const a = env('#t=' + KEY + '&goals');
+        expect(readKeys(a.e)).toEqual({ candidate: null, stored: null });
+        expect(a.urls).toEqual(['/']);
+        const b = env('#goals', KEY);
+        expect(readKeys(b.e)).toEqual({ candidate: null, stored: KEY });
+        expect(b.urls).toEqual([]);
     });
-    it('is null when there is none, or when the shape is wrong', () => {
-        expect(loadKey(env('').e)).toBeNull();
-        expect(loadKey(env('#floor').e)).toBeNull();
-        const bad = env('#t=short!');
-        expect(loadKey(bad.e)).toBeNull();
-        expect(bad.store.size).toBe(0);
-        expect(bad.urls).toEqual(['/']);
+    it('a bad key in the fragment is dropped, the stored key stays, and the bar is cleared', () => {
+        const { e, store, urls } = env('#t=short', KEY);
+        expect(readKeys(e)).toEqual({ candidate: null, stored: KEY });
+        expect(store.get('oxf-key')).toBe(KEY);
+        expect(urls).toEqual(['/']);
     });
-    it('survives a storage that throws', () => {
+    it('is nothing when there is none, and survives a storage that throws', () => {
+        expect(readKeys(env('').e)).toEqual({ candidate: null, stored: null });
         const { e } = env('#t=' + KEY);
         e.sessionStorage = { getItem: () => { throw new Error('no'); }, setItem: () => { throw new Error('no'); } };
-        expect(loadKey(e)).toBe(KEY);
+        expect(readKeys(e)).toEqual({ candidate: KEY, stored: null });
+        expect(() => rememberKey(e, KEY)).not.toThrow();
     });
     it('travels only in the Authorization header', () => {
         const h = authHeaders(KEY);

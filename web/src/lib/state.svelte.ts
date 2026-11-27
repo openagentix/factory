@@ -1,16 +1,17 @@
 // The state of the page: the key, the latest snapshot, the clock, the route and the open drawer.
 import { startClient, type Client } from './client';
 import type { Floor } from './floor';
-import { loadKey, type KeyEnv } from './key';
+import { readKeys, rememberKey, type KeyEnv } from './key';
 import { lampWord } from './text';
-import { signalView } from './view';
+import { modeKind, signalView } from './view';
 
 export const ROUTES = ['floor', 'needs-you', 'goals', 'live', 'team', 'runs', 'autonomy', 'plant', 'record'] as const;
 export type Route = (typeof ROUTES)[number];
 
 export function parseRoute(hash: string): Route {
-    const first = hash.replace(/^#/, '').split('&')[0] ?? '';
-    return (ROUTES as readonly string[]).includes(first) ? (first as Route) : 'floor';
+    // The fragment is exactly a route name. Anything else is the Floor.
+    const name = hash.replace(/^#/, '');
+    return (ROUTES as readonly string[]).includes(name) ? (name as Route) : 'floor';
 }
 
 export type Env = KeyEnv & {
@@ -25,8 +26,12 @@ export type Status = 'loading' | 'nokey' | 'denied' | 'ready';
 export class AppState {
     status = $state<Status>('loading');
     floor = $state.raw<Floor | null>(null);
-    /** The last read failed. The snapshot, if any, is old. */
+    /** The last read failed, or the page could not draw what it read. The snapshot, if any, is old. */
     failed = $state(false);
+    /** A screen threw while drawing. Cleared by the next good snapshot. */
+    crashed = $state(false);
+    /** Changes after a crash, so the screen is drawn again from nothing. */
+    crashEpoch = $state(0);
     route = $state<Route>('floor');
     openGoals = $state<Record<number, boolean>>({});
     drawerId = $state<string | null>(null);
@@ -54,31 +59,63 @@ export class AppState {
     }
 
     get demo(): boolean {
-        return this.floor?.mode === 'demo';
+        return modeKind(this.floor?.mode) === 'demo';
     }
 
     start(): void {
         this.route = parseRoute(this.env.location.hash);
-        const key = loadKey(this.env);
+        const { candidate, stored } = readKeys(this.env);
+        const key = candidate ?? stored;
         if (key === null) {
             this.status = 'nokey';
             return;
         }
         this.status = 'loading';
+        this.begin(key, candidate !== null, candidate !== null ? stored : null);
+        this.timer = setInterval(() => this.tick++, 15000);
+    }
+
+    /** A candidate key is kept only after the server accepts it. If it is refused, the stored key is used again. */
+    private begin(key: string, isCandidate: boolean, fallback: string | null): void {
+        this.client?.stop();
         this.client = startClient({
             key,
             fetch: this.env.fetch,
-            onSnapshot: (f) => this.take(f),
+            onSnapshot: (f) => {
+                if (isCandidate) {
+                    isCandidate = false;
+                    rememberKey(this.env, key);
+                }
+                this.take(f);
+            },
             onFailure: (k) => {
                 if (k === 'denied') {
+                    if (isCandidate && fallback !== null) {
+                        this.begin(fallback, false, null);
+                        return;
+                    }
                     this.status = 'denied';
                     return;
                 }
-                this.failed = true;
-                if (this.floor !== null) this.status = 'ready';
+                this.fail('Could not read. The page could not reach the factory.');
             },
         });
-        this.timer = setInterval(() => this.tick++, 15000);
+    }
+
+    /** The failed state: an alert band, the unknown lamp, an "as of" mark on what is old, and one announcement. */
+    private fail(message: string): void {
+        if (!this.failed) this.announce = message;
+        this.lastSignal = '';
+        this.failed = true;
+        if (this.floor !== null) this.status = 'ready';
+    }
+
+    /** A screen threw while drawing. The page lands in the failed state, never a torn screen. */
+    crash(): void {
+        queueMicrotask(() => {
+            this.crashed = true;
+            this.fail('Could not read. This screen could not be drawn.');
+        });
     }
 
     stop(): void {
@@ -102,6 +139,10 @@ export class AppState {
         this.recvPerf = this.env.perfNow();
         this.floor = f;
         this.failed = false;
+        if (this.crashed) {
+            this.crashed = false;
+            this.crashEpoch++;
+        }
         this.status = 'ready';
         this.tick++;
         // One announcement per change of signal, never one per moving tag.

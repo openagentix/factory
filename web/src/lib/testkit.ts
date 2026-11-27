@@ -10,7 +10,10 @@ import type { Env } from './state.svelte';
 import Shell from './Shell.svelte';
 
 export const KEY = 'abcDEF0123456789_-abcDEF0123456789_-xyzXYZ';
-export const FIXTURES = { demo, unknown, notbuilt, paused } as const;
+// The all-unknown snapshot has no server time. A snapshot with no time is rejected, so the tests give it one.
+const unknownAt = { ...structuredClone(unknown), generatedAt: '2026-11-27T12:00:00Z' };
+export const FIXTURES = { demo, unknown: unknownAt, notbuilt, paused } as const;
+export const UNKNOWN_NO_TIME = unknown;
 export type Json = Record<string, unknown>;
 
 export type Fake = {
@@ -26,7 +29,7 @@ export type Fake = {
     served: () => number;
 };
 
-export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: string | null } = {}): Fake {
+export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: string | null; accept?: string[] } = {}): Fake {
     const store = new Map<string, string>();
     if (opts.stored) store.set('oxf-key', opts.stored);
     const local = new Map<string, string>();
@@ -39,7 +42,9 @@ export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: stri
     const location = { hash: opts.hash ?? '', pathname: '/', search: '' };
     const env: Env = {
         fetch: (async (url: string, init?: RequestInit) => {
-            calls.push({ url: String(url), headers: { ...(init?.headers as Record<string, string>) } });
+            const hdrs = { ...(init?.headers as Record<string, string>) };
+            calls.push({ url: String(url), headers: hdrs });
+            if (opts.accept && !opts.accept.some((a) => hdrs.Authorization === 'Bearer ' + a)) return new Response('{}', { status: 401 });
             if (String(url).endsWith('/events')) {
                 const body = new ReadableStream<Uint8Array>({
                     start(c) {

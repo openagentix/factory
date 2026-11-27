@@ -18,7 +18,7 @@
     onclick={(e) => app.openDrawer(p.id, e.currentTarget)}
 >
     <span class="id"><span>{pieceName(p)}</span><span>{right}</span></span>
-    <span class="t">{p.title.text}{p.title.truncated ? '…' : ''}</span>
+    {#if p.title.text}<span class="t">{p.title.text}{p.title.truncated ? '…' : ''}</span>{/if}
     {#if p.station < 7}
         <span class="s {look.cls}"><Icon name={look.icon} />{look.word}</span>
     {/if}

@@ -37,9 +37,14 @@ export type Part = { text: string; cls: '' | 'c-bad' | 'c-wait'; bold: boolean }
 export type SignalView = { lamp: string; word: string; parts: Part[]; tone: 'bad' | 'wait' | 'ok' | 'idle' | 'unk' };
 
 /** The words of the status header. Unknown and not-built values are left out, never shown as a number. */
+/** A green lamp needs a safe positive count of moving pieces. Anything else is not trusted as Running. */
+function beltOk(f: Floor): boolean {
+    return f.signal.lamp !== 'green' || (Number.isSafeInteger(f.signal.inputs.moving) && f.signal.inputs.moving > 0);
+}
+
 export function signalView(f: Floor, nowMs: number, stale: boolean): SignalView {
-    if (stale || f.signal.lamp === 'unknown') {
-        const bad = f.signal.inputs.unknownSources.map((k) => SOURCE_LABEL[k] ?? k);
+    if (stale || f.signal.lamp === 'unknown' || !beltOk(f)) {
+        const bad = f.signal.inputs.unknownSources.map(sourceLabel);
         const parts: Part[] = stale ? [] : bad.length ? [{ text: `The factory could not read ${bad.join(', ')}.`, cls: '', bold: false }] : [];
         return { lamp: 'unknown', word: 'could_not_read', parts, tone: 'unk' };
     }
@@ -68,7 +73,7 @@ export function signalView(f: Floor, nowMs: number, stale: boolean): SignalView 
 /** The stuck template shows minutes and the station's name, which are not whole-number slots. They are formatted here, then checked. */
 function fillUi(t: string, v: { count: number; age?: number; station?: StationNo }): string {
     if (v.age !== undefined && v.station !== undefined) {
-        return fill(t.replace('{age}', ageText(v.age)).replace('{station}', stationName(v.station)), { count: v.count });
+        return fill(t.replace('{age}', ageOrUnreadable(v.age)).replace('{station}', stationName(v.station)), { count: v.count });
     }
     return fill(t, { count: v.count });
 }
@@ -93,17 +98,19 @@ const LABELS: Record<Gauge['key'], string> = {
 };
 
 export function gaugeView(g: Gauge): GaugeView {
-    const base = { key: g.key, label: LABELS[g.key] ?? COULD_NOT_READ, series: null as number[] | null };
+    const base = { key: g.key, label: pick(LABELS, g.key) ?? COULD_NOT_READ, series: null as number[] | null };
     const honest = (text: string): GaugeView => ({ ...base, kind: 'honest', value: null, unit: '', detail: '', honest: text });
     // A value is shown only when the state is ok and the value is a whole number. Anything else is an honest state.
     if (g.state === 'not_built') return honest(NOT_BUILT);
     if (g.state === 'not_enough_yet') return honest(NOT_ENOUGH);
     if (g.state === 'read_failed' || g.value === null || !Number.isSafeInteger(g.value)) return honest(COULD_NOT_READ);
     const v = g.value;
+    const max = g.key === 'right_first_time' ? 100 : 1_000_000_000;
+    if (v < 0 || v > max) return honest(COULD_NOT_READ);
     switch (g.key) {
         case 'in_work':
             return { ...base, kind: 'value', value: String(v), unit: v === 1 ? 'piece on the line' : 'pieces on the line', honest: null,
-                detail: g.machines === undefined ? '' : `${g.machines} ${g.machines === 1 ? 'machine' : 'machines'}, one job each at a time` };
+                detail: g.machines === undefined || !Number.isSafeInteger(g.machines) || g.machines < 0 ? '' : `${g.machines} ${g.machines === 1 ? 'machine' : 'machines'}, one job each at a time` };
         case 'accepted_today':
             return { ...base, kind: 'value', value: String(v), unit: v === 1 ? 'change' : 'changes', detail: '', honest: null, series: g.series ?? null };
         case 'right_first_time':
@@ -137,7 +144,7 @@ export function sinceMs(iso: string | null): number | null {
 /** The age of a piece in its state, from the server's time plus the time since it arrived. */
 export function pieceAge(p: Piece, nowMs: number): string | null {
     const t = sinceMs(p.since);
-    return t === null ? null : ageText(nowMs - t);
+    return t === null ? null : ageOrUnreadable(nowMs - t);
 }
 
 export function oldestAt(f: Floor, n: StationNo, nowMs: number): string | null {
@@ -146,7 +153,7 @@ export function oldestAt(f: Floor, n: StationNo, nowMs: number): string | null {
         const t = sinceMs(p.since);
         if (t !== null && (best === null || t < best)) best = t;
     }
-    return best === null ? null : ageText(nowMs - best);
+    return best === null ? null : ageOrUnreadable(nowMs - best);
 }
 
 export function pieceById(f: Floor, id: string | null): Piece | null {
@@ -158,7 +165,7 @@ export function goalById(f: Floor, n: number | null): Goal | null {
 }
 
 export function bayClass(s: Station): string {
-    switch (s.state) {
+    switch (typeof s.state === 'string' ? s.state : '') {
         case 'stuck': return 's-stuck';
         case 'waiting_person': return 's-person';
         case 'working': return 's-working';
@@ -253,3 +260,36 @@ export function miniSummary(f: Floor, goal: number): string {
     }
     return parts.length ? 'Pieces of this goal by station. ' + parts.join('. ') : 'No pieces of this goal are on the line.';
 }
+
+// ---- defensive lookups: a value from the server never picks a property of the table itself ----
+
+/** A table entry for a key that came from the server. Own properties only. */
+export function pick<T>(table: Record<string, T>, key: unknown): T | undefined {
+    return typeof key === 'string' && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
+export function sourceLabel(k: unknown): string {
+    return pick(SOURCE_LABEL, k) ?? COULD_NOT_READ;
+}
+
+/** Anything but exactly demo or live is unknown. */
+export function modeKind(mode: unknown): 'demo' | 'live' | 'unknown' {
+    return mode === 'demo' || mode === 'live' ? mode : 'unknown';
+}
+
+/** An age is shown only for a usable server time. A negative or unusable age reads Could not read. */
+export function ageOrUnreadable(ms: number): string {
+    return typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 ? ageText(ms) : COULD_NOT_READ;
+}
+
+/** The belt moves only for a safe positive count of moving pieces, a known lamp, a line that is not paused, and a good state. */
+export function beltMoves(f: Floor, failed: boolean): boolean {
+    const i = f.signal?.inputs;
+    if (failed || !i) return false;
+    const lamp = f.signal.lamp;
+    if (lamp !== 'green' && lamp !== 'amber' && lamp !== 'red' && lamp !== 'off') return false;
+    return typeof i.moving === 'number' && Number.isSafeInteger(i.moving) && i.moving > 0 && i.paused === false;
+}
+
+/** What a chip says when its value is not one the page knows. */
+export const UNREAD = { chip: 'idle', icon: 'unk', word: COULD_NOT_READ } as const;

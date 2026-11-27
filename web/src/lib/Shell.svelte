@@ -7,7 +7,9 @@
     import Icon from './Icon.svelte';
     import NeedsScreen from './NeedsScreen.svelte';
     import NotBuilt from './NotBuilt.svelte';
-    import { COULD_NOT_READ } from './text';
+    import Guard from './Guard.svelte';
+    import { COULD_NOT_READ, clockText } from './text';
+    import { modeKind } from './view';
 
     let { env }: { env: Env } = $props();
     // The state is made once. The environment is fixed for the life of the page.
@@ -96,29 +98,32 @@
             <div class="screen">
                 {#if app.demo}
                     <div class="band" role="note">DEMO. A made-up project on a fake GitHub. The factory code that moves this line is real, except stations marked scripted.</div>
-                {:else if f !== null && f.mode === 'unknown'}
+                {:else if f !== null && modeKind(f.mode) !== 'live'}
                     <div class="band warn" role="note">{COULD_NOT_READ}. The factory could not tell whether this is a demo or a real project.</div>
                 {/if}
-                {#if f !== null && app.failed}
-                    <div class="band warn" role="alert">{COULD_NOT_READ}. The page could not reach the factory. It tries again by itself.</div>
+                {#if app.failed}
+                    <div class="band warn" role="alert">{COULD_NOT_READ}. The page could not {app.crashed ? 'draw this screen' : 'read a good snapshot from the factory'}. It tries again by itself.</div>
                 {/if}
 
-                {#if dataScreen && f === null}
-                    {#if app.failed}
-                        <section class="box"><div class="empty"><p>{COULD_NOT_READ}. The factory did not answer. This page tries again by itself.</p></div></section>
-                    {:else}
-                        <section class="box"><div class="empty"><p>Reading the factory.</p></div></section>
-                    {/if}
-                {:else if app.route === 'floor'}
-                    <FloorScreen {app} />
-                {:else if app.route === 'needs-you'}
-                    <NeedsScreen {app} />
-                {:else if app.route === 'goals'}
-                    <GoalsScreen {app} />
-                {:else}
-                    {@const n = NOT_BUILT_SCREENS[app.route]}
-                    {#if n}<NotBuilt title={n.title} text={n.text} status={n.status} />{/if}
-                {/if}
+                {#key app.crashEpoch}
+                    <Guard {app}>
+                        {#if dataScreen && f === null}
+                            {#if app.failed}
+                                <section class="box"><div class="empty"><p>{COULD_NOT_READ}. The factory did not answer. This page tries again by itself.</p></div></section>
+                            {:else}
+                                <section class="box"><div class="empty"><p>Reading the factory.</p></div></section>
+                            {/if}
+                        {:else if dataScreen && f !== null}
+                            <div class={app.failed ? 'stale' : ''}>
+                                {#if app.failed}<p class="asof">Last good snapshot, as of {clockText(f.generatedAt) ?? COULD_NOT_READ}. Everything below is old.</p>{/if}
+                                {#if app.route === 'floor'}<FloorScreen {app} />{:else if app.route === 'needs-you'}<NeedsScreen {app} />{:else}<GoalsScreen {app} />{/if}
+                            </div>
+                        {:else}
+                            {@const n = NOT_BUILT_SCREENS[app.route]}
+                            {#if n}<NotBuilt title={n.title} text={n.text} status={n.status} />{/if}
+                        {/if}
+                    </Guard>
+                {/key}
             </div>
         </main>
     </div>

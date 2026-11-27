@@ -3,7 +3,7 @@
     import Chip from './Chip.svelte';
     import GoalLines from './GoalLines.svelte';
     import Pending from './Pending.svelte';
-    import { COURSE_LOOK, lineCounts } from './view';
+    import { COURSE_LOOK, UNREAD, lineCounts, pick } from './view';
 
     let { app }: { app: AppState } = $props();
     const f = $derived(app.floor!);
@@ -22,7 +22,7 @@
             {#if g.course === null}
                 <Chip tone="idle" icon="unk" text="Course: not built yet" />
             {:else}
-                {@const c = COURSE_LOOK[g.course]}
+                {@const c = pick(COURSE_LOOK, g.course) ?? UNREAD}
                 <Chip tone={c.chip} icon={c.icon} text={c.word} />
             {/if}
             {#if counts === null}

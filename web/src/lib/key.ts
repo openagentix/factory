@@ -1,6 +1,7 @@
-// The key rule (record 0004): the key arrives in the address fragment as t=<key>,
-// moves to session storage, and is removed from the address bar. It is sent only
-// as a header. It never goes in a cookie, a query string or local storage.
+// The key rule (record 0004): the key arrives in the address fragment as t=<key>, is kept in session storage, and
+// is removed from the address bar. It is sent only as a header. It never goes in a cookie, a query string or local
+// storage. A key from the fragment is only a candidate: it is stored after the server accepts it, so a link from
+// someone else cannot replace a good key.
 
 const STORE_NAME = 'oxf-key';
 const SHAPE = /^[A-Za-z0-9_-]{16,128}$/;
@@ -20,37 +21,32 @@ function readStore(env: KeyEnv): string | null {
     }
 }
 
-/** Takes the key from the fragment (and removes it there), else from session storage. Null when there is none. */
-export function loadKey(env: KeyEnv): string | null {
+/**
+ * The fragment is exactly t=<key> or a route name. A fragment that starts with t= is cleared from the address bar at
+ * once, whatever it holds. Only the exact form gives a candidate. Nothing is stored here.
+ */
+export function readKeys(env: KeyEnv): { candidate: string | null; stored: string | null } {
     const frag = env.location.hash.replace(/^#/, '');
-    if (frag !== '') {
-        const parts = frag.split('&');
-        const rest: string[] = [];
-        let found: string | null = null;
-        for (const p of parts) {
-            if (p.startsWith('t=')) found = p.slice(2);
-            else rest.push(p);
-        }
-        if (found !== null || parts.some((p) => p.startsWith('t='))) {
-            // The fragment is cleared in every case, even when the key is no good.
-            const next = rest.join('&');
-            try {
-                env.history.replaceState(null, '', env.location.pathname + env.location.search + (next ? '#' + next : ''));
-            } catch {
-                /* the address bar stays as it is */
-            }
-            if (found !== null && SHAPE.test(found)) {
-                try {
-                    env.sessionStorage.setItem(STORE_NAME, found);
-                } catch {
-                    /* the key lives in memory only */
-                }
-                return found;
-            }
-            return readStore(env);
+    let candidate: string | null = null;
+    if (frag.startsWith('t=')) {
+        const k = frag.slice(2);
+        if (SHAPE.test(k)) candidate = k;
+        try {
+            env.history.replaceState(null, '', env.location.pathname + env.location.search);
+        } catch {
+            /* the address bar stays as it is */
         }
     }
-    return readStore(env);
+    return { candidate, stored: readStore(env) };
+}
+
+/** Keeps a key the server has accepted. */
+export function rememberKey(env: KeyEnv, key: string): void {
+    try {
+        env.sessionStorage.setItem(STORE_NAME, key);
+    } catch {
+        /* the key lives in memory only */
+    }
 }
 
 /** The headers of an API read. The key is only ever in Authorization. */

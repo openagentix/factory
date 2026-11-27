@@ -165,23 +165,3 @@ export type Floor = {
     calls: Call[];
     log: JournalEntry[];
 };
-
-/** The one thing a snapshot must have for the page to draw it: seven stations and five gauges. */
-export function isFloor(v: unknown): v is Floor {
-    if (typeof v !== 'object' || v === null) return false;
-    const f = v as Partial<Floor>;
-    return (
-        f.schemaVersion === 1 &&
-        typeof f.generatedAt === 'string' &&
-        Array.isArray(f.stations) &&
-        f.stations.length === 7 &&
-        Array.isArray(f.gauges) &&
-        Array.isArray(f.pieces) &&
-        Array.isArray(f.goals) &&
-        Array.isArray(f.calls) &&
-        Array.isArray(f.log) &&
-        typeof f.signal === 'object' &&
-        f.signal !== null &&
-        typeof f.mode === 'string'
-    );
-}

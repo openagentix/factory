@@ -1,7 +1,7 @@
 <script lang="ts">
     import { ICONS } from './icons';
     let { name }: { name: string } = $props();
-    const shapes = $derived(ICONS[name] ?? []);
+    const shapes = $derived(Object.hasOwn(ICONS, name) ? ICONS[name]! : []);
 </script>
 
 <svg class="i" viewBox="0 0 16 16" aria-hidden="true">

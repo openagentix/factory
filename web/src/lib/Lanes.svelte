@@ -2,7 +2,7 @@
     import type { AppState } from './state.svelte';
     import Chip from './Chip.svelte';
     import GoalLines from './GoalLines.svelte';
-    import { COURSE_LOOK, lineCounts, miniSummary, pieceLook, stationName, two } from './view';
+    import { COURSE_LOOK, UNREAD, lineCounts, miniSummary, pick, pieceLook, stationName, two } from './view';
     import { isUnreadable } from './text';
 
     let { app }: { app: AppState } = $props();
@@ -25,7 +25,7 @@
                 {#if g.course === null}
                     <Chip tone="idle" icon="unk" text="Course: not built yet" />
                 {:else}
-                    {@const c = COURSE_LOOK[g.course]}
+                    {@const c = pick(COURSE_LOOK, g.course) ?? UNREAD}
                     <Chip tone={c.chip} icon={c.icon} text={c.word} />
                 {/if}
                 {#if g.lane}<span class="muted small">{g.lane === 'quick' ? 'Quick' : 'Standard'} lane</span>{/if}

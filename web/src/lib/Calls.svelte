@@ -5,7 +5,7 @@
     import Icon from './Icon.svelte';
     import Pending from './Pending.svelte';
     import { COULD_NOT_READ, ageText, callText } from './text';
-    import { CALL_KIND_LOOK, WHO_WORD, acceptGoals, callTitle } from './view';
+    import { CALL_KIND_LOOK, UNREAD, WHO_WORD, acceptGoals, callTitle, pick } from './view';
 
     let { app, max }: { app: AppState; max?: number } = $props();
     const f = $derived(app.floor!);
@@ -27,14 +27,14 @@
     </div>
 {/if}
 {#each list as c (c.id)}
-    {@const k = CALL_KIND_LOOK[c.kind]}
+    {@const k = pick(CALL_KIND_LOOK, c.kind) ?? UNREAD}
     {@const text = callText(c)}
     {@const title = callTitle(f, c)}
     {@const w = waiting(c)}
     <div class="call" data-call={c.id}>
         <div class="meta">
             <Chip tone={k.chip} icon={k.icon} text={k.word} />
-            <span><b>{WHO_WORD[c.who]}</b> must act</span>
+            <span><b>{pick(WHO_WORD, c.who) ?? COULD_NOT_READ}</b> must act</span>
             {#if w}<span class="data">waiting {w}</span>{/if}
         </div>
         <p class="q">{text ?? COULD_NOT_READ}</p>

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/openagentix/factory/internal/floor"
+	"github.com/openagentix/factory/internal/gate"
 	"github.com/openagentix/factory/internal/githost"
 	"github.com/openagentix/factory/internal/harness"
 	"github.com/openagentix/factory/internal/staging"
@@ -31,7 +32,7 @@ func TestStoryStopsWhenTheRealWorkFails(t *testing.T) {
 	if !errors.As(err, &div) {
 		t.Fatalf("Play = %v, want a DivergedError", err)
 	}
-	if div.Want != OutcomeAdmitted || div.Got != OutcomeFailedPrefix+"bad_result" {
+	if div.Want != OutcomeAdmitted || div.Got != outcomeFailedPrefix+"bad_result" {
 		t.Errorf("want %q got %q", div.Want, div.Got)
 	}
 	// The snapshot is the honest one: the piece is stuck.
@@ -52,7 +53,7 @@ func TestStoryStopsWhenAFailingBeatSucceeds(t *testing.T) {
 	d.jobHook = func(j *job) { j.script = tickets()[1].scripts[1] } // the fixed script
 	_, _, err := d.Step(ctx)
 	var div *DivergedError
-	if !errors.As(err, &div) || div.Want != OutcomeCheckFailed || div.Got != OutcomeAdmitted {
+	if !errors.As(err, &div) || div.Want != checkFailedOutcome(gate.OutcomeRework, "syntax") || div.Got != OutcomeAdmitted {
 		t.Fatalf("Step = %v", err)
 	}
 }
@@ -181,4 +182,78 @@ func newDemoFailingPush(t *testing.T) (*Demo, *atomic.Bool) {
 	}
 	t.Cleanup(d.Close)
 	return d, fail
+}
+
+// stepTo plays the beats before the named one and returns the demo.
+func stepTo(t *testing.T, beat string) *Demo {
+	t.Helper()
+	d := newDemo(t)
+	ctx := context.Background()
+	for _, n := range d.Beats() {
+		if n == beat {
+			return d
+		}
+		if _, _, err := d.Step(ctx); err != nil {
+			t.Fatalf("beat %s: %v", n, err)
+		}
+	}
+	t.Fatalf("no beat %s", beat)
+	return nil
+}
+
+func diverged(t *testing.T, d *Demo, want, got Outcome) {
+	t.Helper()
+	_, _, err := d.Step(context.Background())
+	var div *DivergedError
+	if !errors.As(err, &div) {
+		t.Fatalf("Step = %v, want a DivergedError", err)
+	}
+	if div.Want != want || div.Got != got {
+		t.Errorf("want %q, got %q; expected want %q got %q", div.Want, div.Got, want, got)
+	}
+}
+
+// A: each beat expects the exact result it was written for. The real code is
+// made to give a different reason of the same kind, and the story stops.
+
+func TestTakenOutBeatExpectsTheExactRemovalReason(t *testing.T) {
+	d := stepTo(t, "taken_out")
+	d.jobHook = func(j *job) {
+		// The move step changes under it, so the replay conflicts instead of
+		// the acceptance line regressing.
+		j.script = harness.StubScript{
+			Files:  []harness.StubFile{{Path: "booking/move.sh", Content: "echo moved another way\n"}},
+			Result: okResult("Changed the move step.", claimOf("Changed the move step.", "booking/move.sh")),
+		}
+	}
+	diverged(t, d, "taken_out:acceptance_regressed:1", "taken_out:conflict")
+}
+
+func TestChecksFailBeatExpectsTheExactCheckAndGateReason(t *testing.T) {
+	d := stepTo(t, "checks_fail")
+	d.jobHook = func(j *job) {
+		// A good confirm step, but the rules file is gone: another check fails.
+		j.script = harness.StubScript{
+			Files:  []harness.StubFile{{Path: "booking/confirm.sh", Content: "echo confirmed\n"}},
+			Delete: []string{"booking/rules.txt"},
+			Result: okResult("Done.", claimOf("Done.", "booking/confirm.sh")),
+		}
+	}
+	diverged(t, d, "check_failed:rework:syntax", "check_failed:rework:rules")
+}
+
+func TestRiskBeatExpectsTheExactExceptionAndRiskReason(t *testing.T) {
+	d := stepTo(t, "risk")
+	// The same path is now a contract path. The real code gives another reason.
+	d.factory.Spec.RiskPaths.Contract = []string{"auth/**"}
+	d.factory.Spec.RiskPaths.Security = nil
+	diverged(t, d, "consequence:high_risk:security", "consequence:high_risk:contract")
+}
+
+func TestQuestionBeatExpectsExactlyOneQuestion(t *testing.T) {
+	d := stepTo(t, "question")
+	d.jobHook = func(j *job) {
+		j.script.Result.Questions = []string{"First?", "Second?"}
+	}
+	diverged(t, d, "question:1", "question:2")
 }

@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/acceptance"
 	"github.com/openagentix/factory/internal/api"
 	"github.com/openagentix/factory/internal/floor"
 	"github.com/openagentix/factory/internal/floor/collect"
+	"github.com/openagentix/factory/internal/gate"
 	"github.com/openagentix/factory/internal/repo"
 	"github.com/openagentix/factory/internal/runner"
 	"github.com/openagentix/factory/internal/staging"
@@ -28,30 +32,64 @@ func storyBeats() []beat {
 	return []beat{
 		{"write_checks", beatWriteChecks},
 		{"build_move", ticketBeat("move", 0, OutcomeAdmitted)},
-		{"checks_fail", ticketBeat("confirm", 0, OutcomeCheckFailed)},
+		{"checks_fail", ticketBeat("confirm", 0, checkFailedOutcome(gate.OutcomeRework, "syntax"))},
 		{"second_try", ticketBeat("confirm", 1, OutcomeAdmitted)},
-		{"question", ticketBeat("ask", 0, OutcomeQuestion)},
+		{"question", ticketBeat("ask", 0, questionOutcome(1, false))},
 		{"unconfirmed", beatUnconfirmed},
-		{"risk", ticketBeat("staff", 0, OutcomeConsequence)},
-		{"taken_out", ticketBeat("ahead", 0, OutcomeTakenOut)},
+		{"risk", ticketBeat("staff", 0, consequenceOutcome(gate.ExceptionHighRisk, floor.RiskSecurity))},
+		{"taken_out", ticketBeat("ahead", 0, takenOutOutcome(staging.RemovedAcceptance, 1))},
 		{"offer_accept", beatOfferAccept},
 	}
 }
 
-// Outcome is what the real code did with one job.
+// Outcome is what the real code did with one job, as a string of codes only:
+// a kind, then the exact reasons. It never holds text an agent wrote. The
+// names in it are check names, risk reasons and numbers that this package
+// or its dependencies define.
 type Outcome string
 
-// The outcomes a beat can expect.
+// The outcomes without a reason.
 const (
-	OutcomeAdmitted     Outcome = "admitted"     // passed every stage and is in the holding area
-	OutcomeCheckFailed  Outcome = "check_failed" // the project's checks failed on the change
-	OutcomeQuestion     Outcome = "question"     // the agent asked a person
-	OutcomeConsequence  Outcome = "consequence"  // the gate holds the change for a person
-	OutcomeTakenOut     Outcome = "taken_out"    // added, then taken out by the rebuild
-	OutcomeNotApplied   Outcome = "not_applied"  // passed the gate and is not in the holding area
-	OutcomeNoChange     Outcome = "no_change"
-	OutcomeFailedPrefix Outcome = "failed:" // followed by the end code
+	OutcomeAdmitted   Outcome = "admitted"    // passed every stage and is in the holding area
+	OutcomeNotApplied Outcome = "not_applied" // passed the gate and is not in the holding area
+	OutcomeNoChange   Outcome = "no_change"
 )
+
+const (
+	outcomeFailedPrefix Outcome = "failed:" // followed by the end code
+)
+
+// checkFailedOutcome is a change whose project checks failed: what the gate
+// did with it, and the names of the checks that failed.
+func checkFailedOutcome(gateOutcome gate.Outcome, checks ...string) Outcome {
+	names := append([]string(nil), checks...)
+	sort.Strings(names)
+	return Outcome("check_failed:" + string(gateOutcome) + ":" + strings.Join(names, ","))
+}
+
+// questionOutcome is a needs-human end with n questions.
+func questionOutcome(n int, blank bool) Outcome {
+	o := "question:" + strconv.Itoa(n)
+	if blank {
+		o += ":blank"
+	}
+	return Outcome(o)
+}
+
+// consequenceOutcome is a change the gate holds for a person.
+func consequenceOutcome(kind gate.ExceptionKind, risk floor.RiskReason) Outcome {
+	return Outcome("consequence:" + string(kind) + ":" + string(risk))
+}
+
+// takenOutOutcome is a change the holding area took out again, with the
+// reason and the criteria it concerns.
+func takenOutOutcome(reason staging.RemovalReason, criteria ...int) Outcome {
+	o := "taken_out:" + string(reason)
+	for _, c := range criteria {
+		o += ":" + strconv.Itoa(c)
+	}
+	return Outcome(o)
+}
 
 // DivergedError says the real outcome of a beat is not the one the story
 // expects.
@@ -106,14 +144,24 @@ func ticketBeat(key string, try int, want Outcome) func(context.Context, *Demo) 
 // when it passed, and says what happened.
 func (d *Demo) finish(ctx context.Context, j job, res *result) (Outcome, error) {
 	if res.outcome.Status == runner.StatusNeedsHuman {
-		return OutcomeQuestion, nil
+		n, blank := 0, false
+		if res.outcome.Result != nil {
+			for _, q := range res.outcome.Result.Questions {
+				if strings.TrimSpace(q) == "" {
+					blank = true
+				} else {
+					n++
+				}
+			}
+		}
+		return questionOutcome(n, blank), nil
 	}
 	if !res.ok {
 		switch {
 		case res.endCode == floor.CheckFailed:
-			return OutcomeCheckFailed, nil
+			return d.checkFailedOutcome(j, res), nil
 		case res.endCode != "":
-			return OutcomeFailedPrefix + Outcome(res.endCode), nil
+			return outcomeFailedPrefix + Outcome(res.endCode), nil
 		}
 		return OutcomeNoChange, nil
 	}
@@ -122,6 +170,29 @@ func (d *Demo) finish(ctx context.Context, j job, res *result) (Outcome, error) 
 		return "", err
 	}
 	return d.admit(ctx, j, res, dec)
+}
+
+// checkFailedOutcome asks the gate what it does with a change whose checks
+// failed, and says it with the names of the failed checks. The gate must give
+// the verify reason of each of them, or the outcome says it did not.
+func (d *Demo) checkFailedOutcome(j job, res *result) Outcome {
+	ref := gate.ChangeRef{Ticket: max(j.ticket, j.goal), Attempt: res.attempt, Commit: res.commit, BuilderRun: res.runID}
+	dec := gate.Decide(gate.Facts{Task: j.task, Change: ref,
+		Verify: gate.VerifyFacts{ProtectedOK: res.protect.OK, ChecksPassed: false, FailedChecks: res.failed},
+		Risk:   api.Risk{Level: api.RiskLow}, BuilderHarness: api.HarnessStub, MaxAttempts: maxAttempts})
+	o := checkFailedOutcome(dec.Outcome, res.failed...)
+	for _, c := range res.failed {
+		found := false
+		for _, r := range dec.Reasons {
+			if r == "verify: task check failed: "+c {
+				found = true
+			}
+		}
+		if !found {
+			return o + ":reason_missing"
+		}
+	}
+	return o
 }
 
 func beatWriteChecks(ctx context.Context, d *Demo) error {

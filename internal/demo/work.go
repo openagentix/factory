@@ -438,7 +438,7 @@ func (d *Demo) admitThen(ctx context.Context, j job, res *result, dec gate.Decis
 	case gate.OutcomeException:
 		gi.Status = floor.GateConsequenceOpen
 		gi.Risk = d.riskReason(res.changed)
-		return OutcomeConsequence, d.mutate(ctx, func() error {
+		return consequenceOutcome(dec.Exception, gi.Risk), d.mutate(ctx, func() error {
 			d.led.setGate(gi)
 			return nil
 		})
@@ -468,7 +468,7 @@ func (d *Demo) admitThen(ctx context.Context, j job, res *result, dec gate.Decis
 		}
 		for _, r := range st.Removed {
 			if r.EntryID == res.runID {
-				out = OutcomeTakenOut
+				out = takenOutOutcome(r.Reason, r.Criteria...)
 			}
 		}
 		return nil

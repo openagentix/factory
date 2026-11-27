@@ -21,7 +21,7 @@ func TestPackageIsPure(t *testing.T) {
 		"regexp": true, "sort": true, "strconv": true, "strings": true, "time": true, "unicode": true, "unicode/utf8": true,
 		"github.com/openagentix/factory/internal/api": true,
 	}
-	forbidden := regexp.MustCompile(`\b(exec\.|os\.|net\.|http\.|ioutil\.|syscall\.|rand\.|sync\.|signal\.)|time\.(Now|Since|Until|Sleep|After|Tick|NewTimer|NewTicker|AfterFunc|Local)\b|\bgo\s+func|\bgo\s+[a-zA-Z_.]+\(`)
+	forbidden := regexp.MustCompile(`time\.(Now|Since|Until|Sleep|After|Tick|NewTimer|NewTicker|AfterFunc|Local)\b|\bgo\s+func|\bgo\s+[a-zA-Z_.]+\(`) // the import list covers the rest
 	files, err := filepath.Glob("*.go")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no source files: %v", err)

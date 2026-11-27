@@ -138,28 +138,30 @@ func (d *Demo) runFollowup(ctx context.Context, f followup) error {
 	if d.taskHook != nil {
 		d.taskHook()
 	}
+	// Every task that builds a change says the result it expects from the real
+	// code: the change passes every stage and is in the holding area. When the
+	// real result differs, the task did not go as written, and the screen keeps
+	// showing what really happened.
+	expect := func(res *result, err error, j job) error {
+		if err != nil {
+			return err
+		}
+		got, err := d.finish(ctx, j, res)
+		if err != nil {
+			return err
+		}
+		if got != OutcomeAdmitted {
+			return &DivergedError{Want: OutcomeAdmitted, Got: got}
+		}
+		return nil
+	}
 	switch f.kind {
 	case fuResume:
 		res, err := d.runJob(ctx, f.j, f.runID, f.attempt)
-		if err != nil {
-			return err
-		}
-		_, err = d.finish(ctx, f.j, res)
-		return err
-	case fuRework:
+		return expect(res, err, f.j)
+	case fuRework, fuTicket:
 		res, err := d.work(ctx, f.j)
-		if err != nil {
-			return err
-		}
-		_, err = d.finish(ctx, f.j, res)
-		return err
-	case fuTicket:
-		res, err := d.work(ctx, f.j)
-		if err != nil {
-			return err
-		}
-		_, err = d.finish(ctx, f.j, res)
-		return err
+		return expect(res, err, f.j)
 	case fuChecks:
 		return d.writeChecks(ctx, f.j.goal)
 	case fuAdd:
@@ -177,7 +179,13 @@ func (d *Demo) addAnswered(ctx context.Context, f followup) error {
 		err = d.addHook()
 	}
 	if err == nil {
-		_, err = d.admit(ctx, f.j, f.res, f.dec)
+		var got Outcome
+		got, err = d.admit(ctx, f.j, f.res, f.dec)
+		if err == nil && got != OutcomeAdmitted {
+			// The holding area did not take the change the person said yes to. What
+			// really happened is already recorded, so nothing is marked on top of it.
+			return &DivergedError{Want: OutcomeAdmitted, Got: got}
+		}
 	}
 	if err == nil {
 		return nil

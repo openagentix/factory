@@ -367,8 +367,14 @@ func TestAnswerWithAScriptThatFailsIsStuckNeverPassed(t *testing.T) {
 	d.fuMu.Lock()
 	d.fu[0].j.script.Files = []harness.StubFile{{Path: "booking/full-day.sh", Content: "if then fi (\n"}}
 	d.fuMu.Unlock()
-	if err := d.Drain(ctx); err != nil {
-		t.Fatal(err)
+	// The follow-up names the result it expects from the real code: the second
+	// try passes. When the real result differs, the story did not go as written.
+	var div *DivergedError
+	if err := d.Drain(ctx); !errors.As(err, &div) || div.Want != OutcomeAdmitted || div.Got == OutcomeAdmitted {
+		t.Fatalf("Drain = %v", err)
+	}
+	if !d.Failed() {
+		t.Fatal("a follow-up that did not go as written is not remembered")
 	}
 	p := piece(snap(t, d), "t5")
 	if p == nil || p.State != floor.StateStuck || p.Station == 6 {

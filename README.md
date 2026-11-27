@@ -6,7 +6,7 @@ An open-source software factory. Your team plans a goal in conversation. The fac
 
 ## Who it is for
 
-Small engineering teams first, roughly two to twenty engineers on a shared codebase. Then larger organisations, on Kubernetes and on OpenAgentix. A solo engineer can use it, but it is not designed around one. It is not for people who want an application without an engineering team.
+Small engineering teams first, roughly two to twenty engineers on a shared codebase. Then larger organisations, on Kubernetes and on OpenAgentix. A solo engineer can use it, but it is not designed around one. It assumes an engineering team that owns its codebase.
 
 > **Status: early. Not usable yet.**
 >

@@ -30,13 +30,13 @@ What makes this product different:
 6. **Verification from the spec.** Acceptance checks are written from the person's own words before the code, and the builder cannot edit them.
 7. **One engine from laptop to cluster.** A laptop, a dedicated machine, Kubernetes, and OpenAgentix where limits are enforced. **(owner)**
 
-**Review services on an open pull request.** Hosted services now exist that review a pull request with several agents, fix failing checks on it, and apply approval rules from a policy file. They start when a change already exists. This project starts at the goal and gets a team to a change worth reviewing, with acceptance checks the builder cannot change, a staging branch, a trust record from outcomes, any builder, the team's own machines, and open source. The two fit together: the factory opens pull requests, and a team that uses such a service gets its review as one more opinion. The factory does not depend on one, and a review by the same vendor as the builder is not counted as an independent opinion.
+**Review services on an open pull request.** Hosted services now exist that review a pull request with several agents, fix failing checks on it, and apply approval rules from a policy file. They start when a change already exists. This project starts at the goal and gets a team to a change worth reviewing, with acceptance checks the builder cannot change, a staging branch, a trust record from outcomes, any builder, the team's own machines, and open source. The factory opens ordinary pull requests, so a team may run any such service on them. The factory does not read its result and does not depend on one.
 
-Positioning line: **the software factory that earns its autonomy.** Tagline: "Runs on your laptop. Governed on OpenAgentix." **(owner approved the positioning; tagline is a call)**
+Positioning line: **the software factory that earns its autonomy.** Tagline: "Runs on your laptop. Governed on OpenAgentix." **(owner approved the positioning; tagline is a call)** "Governed on OpenAgentix" is designed, not built.
 
 ## 2. Who it is for
 
-First: small engineering teams, roughly two to twenty engineers on a shared codebase on GitHub. **(owner)** Then larger organisations, on Kubernetes and OpenAgentix. **(owner)** A solo engineer can use it, but it is not designed around one. It is not for people who want an application without an engineering team. **(owner)**
+First: small engineering teams, roughly two to twenty engineers on a shared codebase on GitHub. **(owner)** Then larger organisations, on Kubernetes and OpenAgentix. **(owner)** A solo engineer can use it, but it is not designed around one. It assumes an engineering team that owns its codebase. **(owner)**
 
 The reason: an engineering team is ready for a long planning and brainstorming session before building. Planning has no cap, and that is where the team's attention belongs. A quick lane stays for small jobs.
 
@@ -49,7 +49,7 @@ The reason: an engineering team is ready for a long planning and brainstorming s
 
 The same task files and the same web app on every row.
 
-**On OpenAgentix the factory is native, by design, not a bolt-on.** Designed, not built. Its concepts map onto platform resources, as the platform provides them, rather than sitting beside them. The factory keeps its own API group and its own concepts (goal, spec, ticket, acceptance, gate, staging) and does not push them into the platform's group. The same task files and acceptance manifests run unchanged on a laptop and on OpenAgentix. That is the design test. What the platform enforces, a laptop only reports: budgets, isolation of a run from the person's files and from other runs, outbound rules and audit. That is the honest reason to move up. The limits named in this document, such as the same-user limit and no operating system sandbox for checks, are the ones this rung removes. The mapping is in the seams table in section 11. **(owner)**
+**On OpenAgentix the factory is native, by design, not a bolt-on.** Designed, not built. Its concepts map onto platform resources, rather than sitting beside them. These resources are planned by the platform and not all exist yet; the factory uses them as the platform provides them. The factory keeps its own API group and its own concepts (goal, spec, ticket, acceptance, gate, staging) and does not push them into the platform's group. The same task files and acceptance manifests run unchanged on a laptop and on OpenAgentix. That is the design test. What the platform enforces, a laptop only reports: budgets, isolation of a run from the person's files and from other runs, outbound rules and audit. The limits named in this document, such as the same-user limit and no operating system sandbox for checks, are the ones this rung removes. The mapping is in the seams table in section 11. **(owner)**
 
 An existing repository starts with an **onboard** run that reads the repository, finds its test and lint commands and its CI, and proposes the factory configuration with a readiness report. It takes effect after Accept, like any other change. A new product starts from any template repository that has tests and CI, then onboards. v0.1 does not scaffold projects. **(call)**
 
@@ -89,7 +89,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 
 - Open core, Apache-2.0. Embed only MIT and Apache-2.0 code. **(owner)**
 - One maintainer. Each runner is thin. OpenAgentix is a governance provider, not a separate system.
-- No work here may delay OpenAgentix 0.3. Nothing in v0.1 needs the platform.
+- No work here may delay the platform's own releases. Nothing in v0.1 needs the platform.
 - No paid model calls in tests. A stub harness exists for tests and demo mode.
 - The factory launches the official `claude` and `codex` programs in place. It never reads, copies or forwards their login tokens.
 - The factory never gives a run a git host credential. The publish step holds a propose token, and an accept token only if the person grants one. In local mode the agent runs as the same operating system user as `oxf` and can read what that user can read (section 8).
@@ -98,7 +98,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 - Docs in plain English. Public claims only for what a run has proven.
 - Name: OpenAgentix Software Factory. Site and API group: `factory.openagentix.org`. Language: Go. **(owner)** Command: `oxf` **(call)**.
 
-**Logins and plan terms.** The position is stated once, in decision record 0001, "Not settled". In short: the factory starts the unmodified, official agent program that a person is signed in to, never reads, copies, shares or pools a login, and whether a plan's terms fit a team's use is for that team to check. The setup screen says which billing each agent will use and recommends an API key. This is not legal advice.
+**Logins and plan terms.** The position is stated once, in decision record 0001, "Not settled": the factory starts the official program a person is signed in to, never reads, copies, shares or pools a login, and whether a plan fits a team's use is for that team to check with the vendor. Not legal advice.
 
 ## 5. Approaches
 
@@ -340,7 +340,7 @@ Screens in v0.1:
 | Tasks | Each task as a card: trigger, reads and writes, next step, where a person re-enters, what stops double work, method | View the file |
 | Settings | Repository, harnesses found, the cap, whether an accept token is granted, readiness report | Edit machine settings |
 
-Wherever a control is only advisory on this rung, the app marks it "enforced on OpenAgentix".
+At setup (designed, not built) the app shows, per agent program, whether runs will be billed to an API key or to the signed-in plan, and recommends a key for a public repository. Wherever a control is only advisory on this rung, the app marks it "enforced on OpenAgentix".
 
 The look is the owner's to decide. Mockups come before the web app is planned.
 
@@ -351,7 +351,7 @@ One Go binary, `oxf`.
 | Part | Job |
 |---|---|
 | `api` | Shared types, strict parsing, validation. **Built.** |
-| `store` | SQLite: run records shaped like the planned OpenAgentix `AgentRun`, staging states, outcomes, dial settings and their log |
+| `store` | SQLite: run records shaped like the planned OpenAgentix `AgentRun`, staging states, outcomes, dial settings and their log. Run records and dial settings are built |
 | `githost` | Interface, a GitHub implementation and a fake. Polls, reads, and performs the fixed publish actions with the propose or accept token |
 | `runner` | Interface. v0.1: a **local** runner (a process in a workspace directory) and a fake. Later: container, Kubernetes Job |
 | `harness` | Thin adapters that build the command line for `claude`, `codex` and the stub, and read their event streams |
@@ -365,6 +365,8 @@ One Go binary, `oxf`.
 | `wheel` | The Model Context Protocol endpoint for planning or taking the wheel in a person's own session: list, claim, ask, submit |
 | `server` | JSON API, server-sent events, the embedded web app |
 | `web/` | The Svelte app |
+
+Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance` and `gate`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
 
 Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 

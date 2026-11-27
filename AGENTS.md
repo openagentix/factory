@@ -24,6 +24,9 @@ Read the design and the decision records before you change a contract.
 - Root cause before fixes. After three failed fixes, question the design.
 - A decision record comes before code for a new public contract: a task file schema, an API group, command-line flags, event types, the evidence bundle, the worker contract. Also for a security-relevant change or a new dependency.
 - Off by default, deny by default.
+- An empty, missing or unknown value means failure or "do not combine", never success.
+- A fix is new code. Attack it like any other change before it is merged.
+- Test on Linux as well as on your own machine before you propose a change.
 - Docs use plain, simple English: short sentences, no marketing words, no em dashes.
 - Public claims only for what a run has proven. Name the limits.
 

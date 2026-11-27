@@ -689,3 +689,107 @@ func TestPieceDetail(t *testing.T) {
 		t.Fatal("Piece waits for the write lock")
 	}
 }
+
+// Attack 19: an Accept with the state from before a rebuild is stale. A new
+// change that was added meanwhile is never merged without the person seeing it.
+func TestAcceptWithTheStateFromBeforeARebuildIsStale(t *testing.T) {
+	d := beatsOnly(t, "write_checks", "build_move")
+	ctx := context.Background()
+	old := acceptReq(t, d)
+	head := mainHead(d)
+	playBeats(t, d, "checks_fail", "second_try") // t4 is added: a new state
+	if _, err := d.Accept(ctx, old); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("old state: %v", err)
+	}
+	if mainHead(d) != head || countKind(t, d, "accepted") != 0 {
+		t.Fatal("a stale press merged")
+	}
+	fresh := acceptReq(t, d)
+	if fresh.StagingSeq <= old.StagingSeq || fresh.Commit == old.Commit {
+		t.Fatalf("no new state: %+v %+v", old, fresh)
+	}
+	if _, err := d.Accept(ctx, fresh); err != nil {
+		t.Fatalf("the new state: %v", err)
+	}
+	for _, id := range []string{"t3", "t4"} {
+		if p := piece(snap(t, d), id); p == nil || p.Station != 7 {
+			t.Errorf("%s: %+v", id, p)
+		}
+	}
+}
+
+// Attack 20: a state that was recorded and not pushed is not the holding area.
+// No Accept is offered for it and a press for it is stale, with no merge.
+func TestAcceptOfAStateThatWasNotPublishedIsStale(t *testing.T) {
+	d, fail := newDemoFailingPush(t)
+	playBeats(t, d, "write_checks", "build_move")
+	ctx := context.Background()
+	old := acceptReq(t, d)
+	head := mainHead(d)
+	fail.Store(true)
+	j, err := d.ticketJob("confirm", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := d.work(ctx, j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.finish(ctx, j, res); err == nil {
+		t.Fatal("the push should have failed")
+	}
+	st, ok, _ := d.stgSt.Latest(ctx)
+	if !ok || st.Published {
+		t.Fatalf("setup: the latest state is published: %+v", st)
+	}
+	if _, err := d.Accept(ctx, old); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("old state: %v", err)
+	}
+	bad := server.HoldingRequest{StagingSeq: st.Seq, Commit: st.Commit, Version: strings.Repeat("a", 64), Steps: &memSteps{}}
+	if _, err := d.Accept(ctx, bad); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("unpublished state: %v", err)
+	}
+	if _, ok := callOf(t, d, "a-"); ok {
+		c := mustCall(t, d, "a-")
+		if len(c.Actions) != 0 {
+			t.Fatalf("an unpublished state offers %v", c.Actions)
+		}
+	}
+	if mainHead(d) != head {
+		t.Fatal("a merge happened")
+	}
+}
+
+// Attack 21: the pull request was merged meanwhile. Cancel is refused as stale,
+// and the Accept is recorded as accepted, as the factory reads it from the host.
+func TestCancelOfAnAcceptThatTheHostMergedMeanwhile(t *testing.T) {
+	var down atomic.Bool
+	d := newDemoWith(t, func(c *Config) {
+		c.wrapHost = func(p githost.Proposer) githost.Proposer { return prFailer{p, &down} }
+	})
+	playBeats(t, d, "write_checks", "build_move")
+	ctx := context.Background()
+	req := acceptReq(t, d)
+	down.Store(true)
+	d.host.FailNext("MergeStaging", false)
+	if _, err := d.Accept(ctx, req); !errors.Is(err, server.ErrHostFailed) {
+		t.Fatalf("Accept: %v", err)
+	}
+	down.Store(false)
+	c := mustCall(t, d, "a-")
+	pend, _, _ := d.stgSt.GetPending(ctx)
+	d.host.SimulateMerge(pend.PR, "repo-owner") // the merge went through after all
+	cancel := server.HoldingRequest{StagingSeq: req.StagingSeq, Commit: req.Commit, Version: c.Version, Steps: &memSteps{}}
+	if _, err := d.CancelAccept(ctx, cancel); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("Cancel after a merge: %v", err)
+	}
+	if countKind(t, d, "accept_cancelled") != 0 {
+		t.Fatal("a cancelled entry for a merged Accept")
+	}
+	if countKind(t, d, "accepted") != 1 {
+		t.Fatal("the merge was not recorded as accepted")
+	}
+	if p := piece(snap(t, d), "t3"); p == nil || p.Station != 7 {
+		t.Fatalf("t3: %+v", p)
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,6 +47,22 @@ type Config struct {
 	// PingInterval, StreamMaxAge and WriteDeadline default to 15 seconds, 30
 	// minutes and 10 seconds. Tests may make them shorter.
 	PingInterval, StreamMaxAge, WriteDeadline time.Duration
+	// HeaderTimeout is how long a client may take to send the request
+	// headers (default 5 seconds).
+	HeaderTimeout time.Duration
+	// RequestReadTimeout is how long a whole request, body included, may
+	// take to arrive (default 10 seconds). The event stream clears it for
+	// itself and uses WriteDeadline and StreamMaxAge instead.
+	RequestReadTimeout time.Duration
+	// ResponseTimeout is how long a response that is not a stream may take
+	// to be written (default 10 seconds).
+	ResponseTimeout time.Duration
+	// IdleTimeout is how long a kept-alive connection may sit idle (default
+	// 60 seconds).
+	IdleTimeout time.Duration
+	// MaxConns is the number of open connections (default 64). More are not
+	// accepted until one closes.
+	MaxConns int
 	// Now is the clock. Nil means time.Now. For tests.
 	Now func() time.Time
 }
@@ -64,8 +81,10 @@ type Server struct {
 	newTicker func(time.Duration) (<-chan time.Time, func())
 	newTimer  func(time.Duration) (<-chan time.Time, func())
 
-	mu     sync.RWMutex
-	routes []*route
+	mu      sync.RWMutex
+	routes  []*route
+	started atomic.Bool
+	lim     atomic.Pointer[limitListener]
 }
 
 // New checks the config and makes a Server with a fresh key.
@@ -84,7 +103,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Static == nil {
 		return nil, errors.New("server: no web app files")
 	}
-	if cfg.PingInterval < 0 || cfg.StreamMaxAge < 0 || cfg.WriteDeadline < 0 {
+	if cfg.PingInterval < 0 || cfg.StreamMaxAge < 0 || cfg.WriteDeadline < 0 ||
+		cfg.HeaderTimeout < 0 || cfg.RequestReadTimeout < 0 || cfg.ResponseTimeout < 0 ||
+		cfg.IdleTimeout < 0 || cfg.MaxConns < 0 {
 		return nil, errors.New("server: a duration cannot be negative")
 	}
 	if cfg.Logger == nil {
@@ -104,6 +125,21 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.WriteDeadline <= 0 {
 		cfg.WriteDeadline = 10 * time.Second
+	}
+	if cfg.HeaderTimeout == 0 {
+		cfg.HeaderTimeout = 5 * time.Second
+	}
+	if cfg.RequestReadTimeout == 0 {
+		cfg.RequestReadTimeout = 10 * time.Second
+	}
+	if cfg.ResponseTimeout == 0 {
+		cfg.ResponseTimeout = 10 * time.Second
+	}
+	if cfg.IdleTimeout == 0 {
+		cfg.IdleTimeout = 60 * time.Second
+	}
+	if cfg.MaxConns == 0 {
+		cfg.MaxConns = 64
 	}
 	key, err := newKey()
 	if err != nil {
@@ -143,6 +179,11 @@ func isAPIPath(p string) bool { return p == "/api" || strings.HasPrefix(p, "/api
 func (s *Server) serve(rw http.ResponseWriter, r *http.Request) {
 	api := isAPIPath(r.URL.Path)
 	w := newSecureWriter(rw, api)
+	// Every request has a read deadline, body included. A client that
+	// announces a body and never sends it cannot hold the connection. The
+	// event stream clears this for itself. Errors are ignored: some writers
+	// (tests) cannot set deadlines.
+	_ = http.NewResponseController(rw).SetReadDeadline(time.Now().Add(s.cfg.RequestReadTimeout))
 	defer func() {
 		if rec := recover(); rec != nil {
 			if rec == http.ErrAbortHandler {

@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The exact policy of record 0004.
@@ -38,11 +39,27 @@ func (w *secureWriter) apply() {
 	}
 }
 
+// refusals are the statuses the guards answer with. Each closes the
+// connection after the reply, and the server does not wait for the rest of a
+// body the client announced.
+var refusals = map[int]bool{
+	http.StatusUnauthorized: true, http.StatusForbidden: true, http.StatusMethodNotAllowed: true,
+	http.StatusRequestEntityTooLarge: true, http.StatusUnsupportedMediaType: true,
+	http.StatusMisdirectedRequest: true, http.StatusTooManyRequests: true,
+}
+
 func (w *secureWriter) WriteHeader(code int) {
 	if w.wrote {
 		return
 	}
 	w.apply()
+	if refusals[code] {
+		w.Header().Set("Connection", "close")
+		// Stop reading now. Without this the server would try to read the
+		// rest of an announced body, up to the read timeout, before it
+		// closed the connection.
+		_ = http.NewResponseController(w.ResponseWriter).SetReadDeadline(time.Now())
+	}
 	w.wrote = true
 	w.ResponseWriter.WriteHeader(code)
 }

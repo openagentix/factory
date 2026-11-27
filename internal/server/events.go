@@ -29,6 +29,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, _ any) {
 	defer sub.Close()
 
 	rc := http.NewResponseController(w)
+	// A stream is long. It has its own limits: the write deadline for each
+	// write and the maximum age. A read deadline left in place would end it.
+	_ = rc.SetReadDeadline(time.Time{})
 	write := func(b []byte) bool {
 		// A reader that does not read costs at most the write deadline.
 		_ = rc.SetWriteDeadline(time.Now().Add(s.cfg.WriteDeadline))

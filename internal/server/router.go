@@ -70,6 +70,10 @@ func (s *Server) Handle(rt Route) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Routes are fixed before serving starts: a late route is refused.
+	if s.started.Load() {
+		return errors.New("server: routes cannot be added after serving has started")
+	}
 	for _, e := range s.routes {
 		if e.method == rt.Method && e.pattern == rt.Path {
 			return errors.New("server: route already registered")

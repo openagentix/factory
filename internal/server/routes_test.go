@@ -17,10 +17,12 @@ type writeBody struct {
 
 // withWriteRoute registers a write route through the extension point and
 // returns a counter of how often its handler ran.
-func withWriteRoute(t *testing.T, e *testEnv) *atomic.Int32 {
+func withWriteRoute(t *testing.T, e *testEnv) *atomic.Int32 { return withWriteRouteOn(t, e.s) }
+
+func withWriteRouteOn(t *testing.T, s *Server) *atomic.Int32 {
 	t.Helper()
 	var calls atomic.Int32
-	err := e.s.Handle(Route{
+	err := s.Handle(Route{
 		Method: "POST", Path: "/api/v1/test-write",
 		NewBody: func() any { return &writeBody{} },
 		Handler: func(w http.ResponseWriter, r *http.Request, body any) {
@@ -276,3 +278,5 @@ func TestHandleRefusesBadRoutes(t *testing.T) {
 	}
 	_ = fmt.Sprint()
 }
+
+func nopAction(w http.ResponseWriter, r *http.Request, _ any) {}

@@ -15,6 +15,7 @@ import (
 // Listen binds 127.0.0.1 on the configured port. A busy port is an error.
 // No other port is ever tried.
 func (s *Server) Listen() (net.Listener, error) {
+	s.started.Store(true) // routes are fixed from here on
 	ln, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(s.cfg.Port)))
 	if err != nil {
 		return nil, fmt.Errorf("server: cannot listen on 127.0.0.1 port %d: %w", s.cfg.Port, err)
@@ -42,15 +43,21 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	}
 	srv := &http.Server{
 		Handler:           s.Handler(),
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: s.cfg.HeaderTimeout,
+		WriteTimeout:      s.cfg.ResponseTimeout, // the stream sets its own, write by write
+		IdleTimeout:       s.cfg.IdleTimeout,
 		MaxHeaderBytes:    16 << 10,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		// "OPTIONS *" must reach the guards like any request.
+		DisableGeneralOptionsHandler: true,
+		BaseContext:                  func(net.Listener) context.Context { return ctx },
 		// The library's own error lines can hold request text. Discard them.
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
+	s.started.Store(true)
+	lim := newLimitListener(ln, s.cfg.MaxConns)
+	s.lim.Store(lim)
 	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
+	go func() { errc <- srv.Serve(lim) }()
 	s.log.Info("server: listening", "port", s.cfg.Port)
 	select {
 	case err := <-errc:

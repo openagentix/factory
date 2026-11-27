@@ -159,3 +159,20 @@ func ParseDeps(body string) (Deps, bool) {
 	}
 	return d, true
 }
+
+// RunMarkerText reads a factory comment body that ends with a run marker. It
+// gives the text before that final marker line, and the run id. ok is false
+// for any other body: no marker, a claim marker, an answer marker, a marker
+// that is not on the last line. The caller must check the author. A marker
+// inside the text stays part of the text.
+func RunMarkerText(body string) (text, runID string, ok bool) {
+	kind, id, _ := parseMarker(body)
+	if kind != markerRun {
+		return "", "", false
+	}
+	trimmed := strings.TrimRight(body, " \t\r\n")
+	if i := strings.LastIndex(trimmed, "\n"); i >= 0 {
+		return strings.TrimRight(trimmed[:i], " \t\r\n"), id, true
+	}
+	return "", id, true
+}

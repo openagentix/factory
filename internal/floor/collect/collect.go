@@ -11,6 +11,7 @@ package collect
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/acceptance"
@@ -219,10 +220,17 @@ func questionsOf(ctx context.Context, h githost.Proposer, ticket, goal int, runI
 	}
 	var out []floor.QuestionIn
 	for _, c := range cs {
-		if c.RunID != runID || c.Kind != githost.KindFactory {
+		if c.RunID != runID || c.Kind != githost.KindFactory || c.Claim != nil {
 			continue
 		}
-		out = append(out, floor.QuestionIn{Ticket: ticket, Goal: goal, CommentID: c.ID, Since: opt(c.Created), Text: c.Body})
+		// Only a comment whose final marker is this run's run marker is a
+		// question. The marker line is not part of the text. A comment that is
+		// only a marker has no question in it.
+		text, id, ok := githost.RunMarkerText(c.Body)
+		if !ok || id != runID || strings.TrimSpace(text) == "" {
+			continue
+		}
+		out = append(out, floor.QuestionIn{Ticket: ticket, Goal: goal, CommentID: c.ID, Since: opt(c.Created), Text: text})
 	}
 	return out, nil
 }

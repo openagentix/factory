@@ -88,3 +88,32 @@ func TestDepsBlock(t *testing.T) {
 		t.Fatal("parsed bad json")
 	}
 }
+
+func TestRunMarkerText(t *testing.T) {
+	run, _ := RunMarker("run-1")
+	claim, _ := ClaimMarkerText("m1", "run-1")
+	tests := []struct {
+		name     string
+		body     string
+		wantText string
+		wantID   string
+		wantOK   bool
+	}{
+		{"text and marker", "Which colour?\n\n" + run, "Which colour?", "run-1", true},
+		{"trailing newline", "Which?\n" + run + "\n", "Which?", "run-1", true},
+		{"only a marker", run, "", "run-1", true},
+		{"claim is not a run marker", "claiming\n" + claim, "", "", false},
+		{"answer is not a run marker", "yes\n" + AnswerMarker(), "", "", false},
+		{"no marker", "plain", "", "", false},
+		{"marker in the middle stays text", "a " + run + " b\n\n" + run, "a " + run + " b", "run-1", true},
+		{"marker on the first line only", run + "\nmore", "", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text, id, ok := RunMarkerText(tc.body)
+			if text != tc.wantText || id != tc.wantID || ok != tc.wantOK {
+				t.Fatalf("got (%q, %q, %v), want (%q, %q, %v)", text, id, ok, tc.wantText, tc.wantID, tc.wantOK)
+			}
+		})
+	}
+}

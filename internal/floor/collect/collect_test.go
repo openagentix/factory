@@ -3,10 +3,12 @@ package collect
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/openagentix/factory/internal/floor"
+	"github.com/openagentix/factory/internal/githost"
 )
 
 type badLedger struct{}
@@ -17,7 +19,7 @@ func (badLedger) Facts(context.Context) (LedgerFacts, error) { return LedgerFact
 // the line cannot run without is read_failed, the fields stay unknown, and the
 // lamp says "could not read".
 func TestFailedReadsStayUnknown(t *testing.T) {
-	now := time.Now()
+	now := fixedTime()
 	for name, s := range map[string]Sources{
 		"nothing":      {Now: func() time.Time { return now }, Mode: floor.ModeDemo, Machine: "m1", Repository: "a/b"},
 		"ledger fails": {Now: func() time.Time { return now }, Mode: floor.ModeDemo, Machine: "m1", Repository: "a/b", Ledger: badLedger{}},
@@ -35,5 +37,53 @@ func TestFailedReadsStayUnknown(t *testing.T) {
 		if f.Signal.Lamp != floor.LampUnknown {
 			t.Errorf("%s: lamp %s", name, f.Signal.Lamp)
 		}
+	}
+}
+
+func fixedTime() time.Time { return time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC) }
+
+func hostWithTicket(t *testing.T) (*githost.Fake, int) {
+	t.Helper()
+	fx := githost.Fixture{DefaultBranch: "main", DefaultCommit: strings.Repeat("a", 40), FactoryLogin: "factory-bot", AcceptLogin: "owner",
+		Permissions: map[string]string{"owner": "admin"},
+		Issues: []githost.FixtureIssue{
+			{Title: "Goal", Body: "- a", Labels: []string{githost.LabelGoal}, Author: "owner", Association: "OWNER"},
+			{Title: "Ticket", Body: "t", Labels: []string{githost.LabelReady}, Author: "factory-bot", Association: "NONE"},
+		}}
+	return githost.NewFake(fx, fixedTime), 2
+}
+
+// A question is the agent's text. The internal marker line is not part of it,
+// and a claim, release, answer or marker-only comment is never a question.
+func TestQuestionsOfStripsTheMarkerAndKeepsOnlyQuestions(t *testing.T) {
+	ctx := context.Background()
+	h, tk := hostWithTicket(t)
+	if _, err := h.Claim(ctx, tk, "m1", "run008", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.PostAnswer(ctx, tk, "yes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.PostComment(ctx, tk, "run008", "Which colour? <!-- oxf:run id=run999 --> still the question"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.PostComment(ctx, tk, "run008", ""); err != nil { // marker only
+		t.Fatal(err)
+	}
+	if err := h.PostComment(ctx, tk, "run007", "Another run's text"); err != nil {
+		t.Fatal(err)
+	}
+	qs, err := questionsOf(ctx, h, tk, 1, "run008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qs) != 1 {
+		t.Fatalf("want one question, got %d: %+v", len(qs), qs)
+	}
+	if strings.Contains(qs[0].Text, "oxf:run id=run008") || strings.Contains(qs[0].Text, "--]") || strings.HasSuffix(qs[0].Text, "-->") {
+		t.Errorf("the marker leaked: %q", qs[0].Text)
+	}
+	if !strings.Contains(qs[0].Text, "Which colour?") || !strings.Contains(qs[0].Text, "id=run999") || !strings.Contains(qs[0].Text, "still the question") {
+		t.Errorf("the question text was changed: %q", qs[0].Text)
 	}
 }

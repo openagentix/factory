@@ -67,9 +67,6 @@ func Collect(ctx context.Context, s Sources) floor.Inputs {
 	in := &r.in
 	in.Mode, in.DemoStory, in.Repository, in.Machine = s.Mode, s.DemoStory, s.Repository, s.Machine
 	in.PollInterval = s.PollInterval
-	if s.Now != nil {
-		in.Now = s.Now()
-	}
 	var lf LedgerFacts
 	ledgerOK := false
 	if s.Ledger != nil {
@@ -96,6 +93,12 @@ func Collect(ctx context.Context, s Sources) floor.Inputs {
 		in.Gate = floor.Some(lf.Gate)
 	}
 
+	r.crossCheck(lf)
+	if s.Now != nil {
+		// The server's clock is read last, after every source. No time taken
+		// during the reads can be later than it.
+		in.Now = s.Now()
+	}
 	in.Sources = map[floor.SourceKey]floor.SourceState{
 		floor.SourceHost: floor.SourceOK, floor.SourceStore: floor.SourceOK, floor.SourceStaging: floor.SourceOK,
 		floor.SourceGate: floor.SourceOK, floor.SourceAcceptance: floor.SourceOK, floor.SourceConfig: floor.SourceOK,
@@ -146,6 +149,13 @@ func (r *reader) readHost(ctx context.Context, s Sources, lf LedgerFacts, ledger
 		r.fail(floor.SourceHost)
 		return
 	}
+	// The data of a read is as old as the moment the read began: the host may
+	// have changed at any time since. A slow read is therefore an old read.
+	// The interface gives no time of the host, so the clock stands in for it.
+	var readStart time.Time
+	if s.Now != nil {
+		readStart = s.Now()
+	}
 	goalIssues, err := s.Host.ListIssues(ctx, githost.LabelGoal)
 	var te *githost.TruncatedError
 	if err != nil && !errors.As(err, &te) {
@@ -189,10 +199,8 @@ func (r *reader) readHost(ctx context.Context, s Sources, lf LedgerFacts, ledger
 		}
 	}
 	in.Goals, in.Tickets, in.Questions = floor.Some(goals), floor.Some(tickets), floor.Some(questions)
-	if !in.Now.IsZero() {
-		// The host read happened during this collection. Its time is the
-		// collection's own clock, so it can never be later than Now.
-		in.HostTime, in.HostReadAt = floor.Some(in.Now), floor.Some(in.Now)
+	if !readStart.IsZero() {
+		in.HostTime, in.HostReadAt = floor.Some(readStart), floor.Some(readStart)
 	}
 }
 
@@ -315,4 +323,55 @@ func (r *reader) acceptanceOf(ctx context.Context, s Sources, g *floor.GoalIn, s
 	}
 	g.Lines = floor.Some(LinesFrom(m, states))
 	return nil
+}
+
+// crossCheck compares what the host lists with the runs and the holding area.
+// A ticket or goal that a run or an entry names, and that the host does not
+// list, is a disagreement. There is then no piece that could carry it, so the
+// host source is read_failed and the line shows "could not read", never a
+// smaller clean picture. A ticket accepted at or after the run or entry is
+// finished and may be gone from the host. Anything with no time, or newer
+// than the accept, is not covered.
+func (r *reader) crossCheck(lf LedgerFacts) {
+	in := &r.in
+	if !in.Goals.Known || !in.Tickets.Known || !in.Runs.Known || !in.Holding.Known || !in.Accepted.Known {
+		return // a source that failed already says so
+	}
+	listedTicket := map[int]bool{}
+	for _, t := range in.Tickets.Val {
+		listedTicket[t.Number] = true
+	}
+	listedGoal := map[int]bool{}
+	for _, g := range in.Goals.Val {
+		listedGoal[g.Number] = true
+	}
+	acceptedAt := map[int]time.Time{}
+	for _, a := range in.Accepted.Val {
+		if !a.At.Known {
+			continue // an accept with no time covers nothing
+		}
+		if a.At.Val.After(acceptedAt[a.Ticket]) {
+			acceptedAt[a.Ticket] = a.At.Val
+		}
+	}
+	covered := func(ticket int, at floor.Opt[time.Time]) bool {
+		a, ok := acceptedAt[ticket]
+		return ok && at.Known && !a.Before(at.Val)
+	}
+	for _, run := range in.Runs.Val {
+		if run.Goal > 0 && !listedGoal[run.Goal] {
+			r.fail(floor.SourceHost)
+		}
+		if run.Ticket > 0 && !listedTicket[run.Ticket] && !covered(run.Ticket, run.CreatedAt) {
+			r.fail(floor.SourceHost)
+		}
+	}
+	for _, e := range in.Holding.Val.Applied {
+		if e.Goal > 0 && !listedGoal[e.Goal] {
+			r.fail(floor.SourceHost)
+		}
+		if e.Ticket > 0 && e.Ticket != e.Goal && !listedTicket[e.Ticket] && !covered(e.Ticket, e.At) {
+			r.fail(floor.SourceHost)
+		}
+	}
 }

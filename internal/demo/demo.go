@@ -61,6 +61,10 @@ type Config struct {
 	// wrapHost lets a test in this package put a wrapper around the host that
 	// staging sees. Unexported, nil in the product.
 	wrapHost func(githost.Proposer) githost.Proposer
+	// noAcceptToken makes the holding area run in developer mode: no accept
+	// token, so an Accept opens a pull request and waits. Unexported: only tests
+	// in this package set it.
+	noAcceptToken bool
 	// Report takes the lines the demo says about work that went wrong after an
 	// action was accepted. Each starts with "DEMO ". Nil means none.
 	Report func(line string)
@@ -255,7 +259,7 @@ func (d *Demo) setup(ctx context.Context) error {
 	if d.cfg.wrapHost != nil {
 		stHost = d.cfg.wrapHost(stHost)
 	}
-	d.stg, err = staging.New(staging.Config{
+	scfg := staging.Config{
 		Repo: r, Host: stHost, Accept: d.host, Store: d.stgSt, Factory: d.factory, Tasks: tasks,
 		AllowedTasks: []string{api.TaskImplement, api.TaskFixCI, api.TaskAcceptance},
 		Checks:       taskChecks(),
@@ -267,7 +271,11 @@ func (d *Demo) setup(ctx context.Context) error {
 		},
 		DefaultBranch: "main", Author: author,
 		CheckOptions: verify.CheckOptions{Deadline: 30 * time.Second, Environ: d.env},
-	})
+	}
+	if d.cfg.noAcceptToken {
+		scfg.Accept = nil // developer mode: Accept opens a pull request and waits
+	}
+	d.stg, err = staging.New(scfg)
 	if err != nil {
 		return fmt.Errorf("demo: %w", err)
 	}

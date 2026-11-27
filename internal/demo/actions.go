@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/openagentix/factory/internal/gate"
 	"github.com/openagentix/factory/internal/githost"
 	"github.com/openagentix/factory/internal/server"
+	"github.com/openagentix/factory/internal/staging"
 )
 
 var (
@@ -583,20 +586,229 @@ func (d *Demo) checkPlan(ctx context.Context, goal int, call, version string, ma
 	return nil
 }
 
-func (d *Demo) Accept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
-	return server.ActionResult{}, server.ErrUnavailable
-}
-func (d *Demo) CancelAccept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
-	return server.ActionResult{}, server.ErrUnavailable
-}
-func (d *Demo) Undo(ctx context.Context, r server.UndoRequest) (server.ActionResult, error) {
-	return server.ActionResult{}, server.ErrUnavailable
-}
-func (d *Demo) UndoPreview(ctx context.Context, change string) (server.UndoPreviewView, error) {
-	return server.UndoPreviewView{}, server.ErrUnavailable
+// ---- The holding area: Accept, Cancel, Undo ----
+//
+// Each decides again, under the step lock and the write lock, from a snapshot
+// made now. The call or the piece must offer the action at the state the person
+// saw, and staging checks the state again under its own lock. Nothing the
+// browser sent is believed.
+
+// stagingErr turns what staging refuses into the one error the server shows.
+// A refusal of the holding area is "this changed". Anything else is a failure
+// of the git host or of the repository.
+func stagingErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, staging.ErrStale), errors.Is(err, staging.ErrFrozen), errors.Is(err, staging.ErrNotPublished),
+		errors.Is(err, staging.ErrNothingToAccept), errors.Is(err, staging.ErrMirrorBehind), errors.Is(err, staging.ErrMergedUnseen),
+		errors.Is(err, staging.ErrNotBuilt), errors.Is(err, staging.ErrUnknownEntry):
+		return server.ErrStale
+	}
+	return server.ErrHostFailed
 }
 
-// Piece gives the detail of one piece.
+func acceptCallID(seq int64) string { return "a-" + strconv.FormatInt(seq, 10) }
+
+// settleAccepted writes what is true after the host merged a state: the mirror
+// of the default branch moves to it, each change is accepted now, and the
+// journal says so, once for each goal inside. The caller holds the write lock.
+func (d *Demo) settleAccepted(ctx context.Context, st staging.State, journal func(floor.JournalKind, int, int) int64) error {
+	// The mirror first: the holding area takes no change until it is fetched.
+	if err := d.repo.SetDefaultMirror(ctx, st.Commit, st.Default); err != nil {
+		return err
+	}
+	now := d.now()
+	goals := map[int]bool{}
+	for _, a := range st.Applied {
+		goals[a.Goal] = true
+		if a.Ticket != a.Goal { // the checks of a goal are not a ticket
+			d.led.with(func(f *collect.LedgerFacts) { f.Accepted = append(f.Accepted, acceptedIn(a, now)) })
+		}
+	}
+	d.led.with(func(f *collect.LedgerFacts) { f.PendingSince = time.Time{} })
+	var order []int
+	for g := range goals {
+		order = append(order, g)
+	}
+	sort.Ints(order)
+	for _, g := range order {
+		journal("accepted", g, 0)
+	}
+	return nil
+}
+
+// Accept takes the whole holding area, as the person saw it, into the product.
+// With the accept token it merges. In developer mode it opens the pull request
+// and answers "pending": no accepted entry is written until the change is part
+// of the product.
+func (d *Demo) Accept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
+	if r.Steps == nil || r.StagingSeq < 1 {
+		return server.ActionResult{}, server.ErrStale
+	}
+	pending := false
+	var last int64
+	res, err := d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
+		f := d.project(ctx)
+		if _, err := floor.CheckCall(f, acceptCallID(r.StagingSeq), floor.ActionAccept, r.Version); err != nil {
+			return server.ErrStale
+		}
+		st, ok, err := d.stgSt.LatestPublished(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok || st.Seq != r.StagingSeq || st.Commit != r.Commit {
+			return server.ErrStale
+		}
+		ar, err := d.stg.Accept(ctx, r.StagingSeq, r.Commit)
+		if ar.Pending.PR != 0 && ar.Outcome != staging.OutcomeAccepted {
+			// The Accept was recorded. Whatever happened to the merge, the line is
+			// frozen and says since when.
+			d.led.with(func(f *collect.LedgerFacts) { f.PendingSince = ar.Pending.Started })
+		}
+		if err != nil {
+			return stagingErr(err)
+		}
+		switch ar.Outcome {
+		case staging.OutcomeAccepted:
+			if err := d.settleAccepted(ctx, st, journal); err != nil {
+				d.report("the default branch could not be updated after an Accept")
+				return err
+			}
+		case "":
+			pending = true // a developer finishes it
+		default:
+			return server.ErrStale
+		}
+		last = d.led.lastSeq()
+		return nil
+	})
+	if err != nil {
+		return server.ActionResult{}, err
+	}
+	res.JournalSeq = last
+	if pending {
+		res.Result = server.ResultPending
+	}
+	return res, nil
+}
+
+// CancelAccept ends a pending Accept of the state the person saw.
+func (d *Demo) CancelAccept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
+	if r.Steps == nil || r.StagingSeq < 1 {
+		return server.ActionResult{}, server.ErrStale
+	}
+	var last int64
+	res, err := d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
+		f := d.project(ctx)
+		if _, err := floor.CheckCall(f, acceptCallID(r.StagingSeq), floor.ActionCancel, r.Version); err != nil {
+			return server.ErrStale
+		}
+		if err := d.stg.CancelAcceptAt(ctx, r.StagingSeq, r.Commit); err != nil {
+			// The host may have merged meanwhile: staging then recorded the Accept as
+			// accepted, and the facts must say so.
+			if lastAcc, ok, lerr := d.stgSt.LastAccepted(ctx); lerr == nil && ok && lastAcc.Seq == r.StagingSeq {
+				if serr := d.settleAccepted(ctx, lastAcc, journal); serr != nil {
+					d.report("the default branch could not be updated after an Accept")
+				}
+				return server.ErrStale
+			}
+			if _, pend, perr := d.stgSt.GetPending(ctx); perr == nil && !pend {
+				return server.ErrStale // it ended by itself
+			}
+			return stagingErr(err)
+		}
+		d.led.with(func(f *collect.LedgerFacts) { f.PendingSince = time.Time{} })
+		journal("accept_cancelled", 0, 0)
+		last = d.led.lastSeq()
+		return nil
+	})
+	if err != nil {
+		return server.ActionResult{}, err
+	}
+	res.JournalSeq = last
+	return res, nil
+}
+
+// offersUndo says whether the Floor offers to take this change back, at this
+// state, in the facts as they stand now.
+func (d *Demo) offersUndo(in floor.Inputs, ref floor.UndoRef) bool {
+	return slices.Contains(floor.Undoable(in), ref)
+}
+
+// UndoPreview says what an Undo of one change would take out, as ticket numbers
+// and entry ids. It changes nothing.
+func (d *Demo) UndoPreview(ctx context.Context, change string) (server.UndoPreviewView, error) {
+	if d.closing.Load() {
+		return server.UndoPreviewView{}, server.ErrUnavailable
+	}
+	p, err := d.stg.UndoPreview(ctx, change)
+	if err != nil {
+		return server.UndoPreviewView{}, stagingErr(err)
+	}
+	s, err := d.view(ctx)
+	if err != nil {
+		return server.UndoPreviewView{}, err
+	}
+	if !d.offersUndo(s.in, floor.UndoRef{Change: p.Change, StagingSeq: p.Seq, Commit: p.Commit}) {
+		return server.UndoPreviewView{}, server.ErrStale // the line does not offer this change
+	}
+	v := server.UndoPreviewView{Change: p.Change, StagingSeq: p.Seq, Commit: p.Commit, AlsoRemoved: p.Also,
+		Tickets: []server.UndoTicket{{Change: p.Change, Ticket: p.Tickets[p.Change]}}}
+	for _, id := range p.Also {
+		v.Tickets = append(v.Tickets, server.UndoTicket{Change: id, Ticket: p.Tickets[id]})
+	}
+	return v, nil
+}
+
+// Undo takes one change out of the holding area, with what depends on it, when
+// the person's view of the state and of the list is still true.
+func (d *Demo) Undo(ctx context.Context, r server.UndoRequest) (server.ActionResult, error) {
+	if r.Steps == nil || r.StagingSeq < 1 || r.AlsoRemoved == nil {
+		return server.ActionResult{}, server.ErrStale
+	}
+	var last int64
+	res, err := d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
+		in := collect.Collect(ctx, d.sources())
+		if !d.offersUndo(in, floor.UndoRef{Change: r.Change, StagingSeq: r.StagingSeq, Commit: r.Commit}) {
+			return server.ErrStale
+		}
+		st, _, err := d.stg.UndoAt(ctx, r.StagingSeq, r.Commit, r.Change, r.AlsoRemoved)
+		if err != nil {
+			return stagingErr(err)
+		}
+		d.observe(st, job{})
+		last = d.led.lastSeq()
+		return nil
+	})
+	if err != nil {
+		return server.ActionResult{}, err
+	}
+	res.JournalSeq = last
+	return res, nil
+}
+
+type pieceReply struct {
+	SchemaVersion int        `json:"schemaVersion"`
+	Mode          floor.Mode `json:"mode"`
+	GeneratedAt   string     `json:"generatedAt"`
+	floor.PieceDetail
+}
+
+// Piece gives the detail of one piece from the newest whole snapshot. While a
+// long task holds the write lock it answers from the last one made.
 func (d *Demo) Piece(ctx context.Context, id string) ([]byte, bool, error) {
-	return nil, false, server.ErrUnavailable
+	if d.closing.Load() {
+		return nil, false, server.ErrUnavailable
+	}
+	s, err := d.view(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	det, ok := floor.Detail(s.in, id)
+	if !ok {
+		return nil, false, nil
+	}
+	b, err := json.Marshal(pieceReply{SchemaVersion: s.f.SchemaVersion, Mode: s.f.Mode, GeneratedAt: s.f.GeneratedAt, PieceDetail: det})
+	return b, err == nil, err
 }

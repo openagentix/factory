@@ -109,12 +109,15 @@ type Demo struct {
 	// jobHook may change a job before it runs. Tests only.
 	jobHook func(*job)
 
-	// What the actions need. All are read and written under mu, except the
-	// queue, which has its own lock.
+	// What the actions need. The rule for all state of the story, the actions
+	// and the follow-up loop: whoever changes it holds stepMu (one step, one
+	// action or one follow-up task at a time, so an action's check and effect
+	// are one step with respect to the story) and, to change facts, mu (so no
+	// snapshot sees half of it). Lock order: stepMu, then mu. The queue has
+	// its own lock.
 	sealed  map[int]sealedChange // the gate's sealed decision of a change held for a yes or no
 	jobs    map[string]job       // run id to the job it runs
 	latest  map[int]string       // ticket to the id of its latest run
-	goalsTk map[int]bool         // goals whose tickets were made on the host
 	// noAnswer holds the runs whose fixed "no answer" line is posted and whose
 	// label is not yet back.
 	noAnswer map[string]bool
@@ -154,7 +157,7 @@ func New(ctx context.Context, cfg Config) (*Demo, error) {
 		return nil, errors.New("demo: the data directory must exist with mode 0700")
 	}
 	d := &Demo{cfg: cfg, led: newLedger(), factory: factoryFile(), attempt: map[int]int{}, tk: map[string]int{}, reported: map[int]bool{},
-		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, goalsTk: map[int]bool{goalMove: true}, noAnswer: map[string]bool{}, approving: map[int]string{}, wake: make(chan struct{}, 1)}
+		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, noAnswer: map[string]bool{}, approving: map[int]string{}, wake: make(chan struct{}, 1)}
 	d.env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C"}
 	if err := d.setup(ctx); err != nil {
 		d.Close()

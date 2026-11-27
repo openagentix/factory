@@ -8,7 +8,7 @@
 
 Free tools already turn an issue into a pull request. Practitioners report where teams hurt now: review capacity is the limit, agents edit tests to pass them, pull request text often does not match the change, cost per outcome is not visible, and there is no basis for trusting an agent. These are other people's reports, not findings from our runs, so this record quotes no numbers.
 
-The product is for a person who states a business goal and will not read code. They plan with the factory for as long as they need. After the plan is approved, the factory builds and judges the work alone, shows outcomes in plain words, and says plainly what it could not confirm. The product line: **"Spend your time deciding what to build. None watching it get built."** Positioning: **the software factory that earns its autonomy.** Trust comes from what happened after a person accepted the work.
+The product is for small engineering teams first, roughly two to twenty engineers on a shared codebase, then for larger organisations. A solo engineer can use it, but it is not designed around one. It assumes an engineering team that owns its codebase. Engineers do not have time to read every change an agent makes, so the factory judges the work. The team plans with the factory for as long as it needs, with no cap, and that is where its attention belongs. After the plan is approved, the factory builds and judges the work alone, shows outcomes in plain words, and says plainly what it could not confirm. The product line: **"Spend your time deciding what to build. None watching it get built."** Positioning: **the software factory that earns its autonomy.** Trust comes from what happened after a person accepted the work.
 
 ## Vocabulary
 
@@ -35,7 +35,7 @@ After the plan is approved, at the default dial level, nothing else reaches the 
 
 **Try it** starts the project's start command the same way the checks are run (see the verify stage). The person is told that it runs code the factory wrote and no person has read.
 
-**Outcome view**, the default: goals, the acceptance list with its three states, plain questions, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit. **Engineering view**, one action away: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. A developer can take the wheel on a ticket or set the dial to guided, while the factory builds the rest.
+**Outcome view**, what the whole team watches: goals, the acceptance list with its three states, plain questions waiting for a person, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. **Engineering view**: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. The outcome view opens first for everyone, and a person can set the engineering view as their own start page. An engineer who wants control takes it on purpose: opens the engineering view, sets a task's dial to guided, or takes the wheel on a ticket. The factory builds the rest.
 
 ## Lanes and planning
 
@@ -105,6 +105,12 @@ The **unattended contract** is a fixed text placed before any method in every ru
 
 **Claims across machines.** A run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The earliest marker wins and the other run ends with no change. A claim expires after a set time, so a crashed machine does not hold a ticket for ever. The time is a setting with no default yet.
 
+**Team work** is part of the core. Designed, not built, beyond the claims above:
+
+- Each teammate runs `oxf` on their own machine, with their own agent login and their own git host account. Nobody shares a login. The git host is the one place work is coordinated.
+- A list of trusted logins in `factory.yaml` says whose machines act for the factory. A claim, an answer or an approval from any other login is ignored.
+- A `review` is preferred on a different teammate's machine and harness than the one that built the subject.
+
 **Triggers** act only on events from a user with write access, or from the factory itself. Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer or approval given in the web app is posted with an answer marker and counts as the person's. Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
 
 ## The factory's own repository
@@ -112,7 +118,7 @@ The **unattended contract** is a fixed text placed before any method in every ru
 Git obeys settings stored in a repository: programs to run, addresses to rewrite, other places to read objects from. Packages of the first build were broken this way more than once, by a second agent told to attack them. One attack sent the propose token to another server. The pull requests of 2026-11-26 hold the record. So:
 
 - **The factory never runs a network git command, and never reads configuration, in a directory an agent or a check has worked in.** It keeps its own bare repository per project, which it creates itself, in its own data directory. Every judgement starts there.
-- **The agent's workspace is a plain directory with no `.git`.** The orchestrator writes the files out from its own repository before the run and imports them back after it. This step is designed and not built yet. It belongs to the runner. An agent that wants git commands has none. The harness's own file tools do not need them.
+- **The agent's workspace is a plain directory with no `.git`.** The orchestrator writes the files out from its own repository before the run and imports them back after it. `internal/repo` has the export and import. Using them to run a work stage belongs to the runner, which is not built. An agent that wants git commands has none. The harness's own file tools do not need them.
 - **A guard runs first in every function of the verify stage that uses git.** It fails closed unless every configuration key and every entry in the repository's layout is on a fixed list. It accepts known-good things. It does not hunt for known-bad ones. Creating the repository is the one git command that runs before it, on an empty directory.
 - **A push runs from a fresh temporary repository**, into which one commit is fetched from a directory the caller names. That fetch has hardened settings and no guard of its own, so the caller must name the factory's own repository. The remote address is built by the factory. The token is given only to that exact host over https, and only to the one step that pushes.
 - **Checks run on a copy written from git objects**, with no `.git`, an allowlisted environment and an empty home directory.
@@ -128,6 +134,14 @@ Every package of the first build passed its own tests. Most then failed a review
 - A fix is first a failing test that reproduces the finding.
 - When the same family of finding returns, the approach changes from refusing bad inputs to accepting only known-good ones.
 - Two rework rounds, then stop and decide. What remains is written on the change as a known limit and filed as a ticket.
+
+## Rules the first build established
+
+- **An empty, missing or unknown value always means failure, or "do not combine". It never means success.** A blank review value was read as a pass.
+- **A fix is new code. It is attacked like any other change before it is merged.** A cleanup added as a fix deleted another run's objects.
+- **Every change is tested on Linux as well as on a developer's machine before it is proposed.** Tests that passed on macOS failed in CI on Linux.
+
+The evidence is in this repository's pull requests of 2026-11-26 and 2026-11-27.
 
 ## Credentials
 
@@ -200,7 +214,7 @@ The same for every runner and every harness. Paths are shown as in a container. 
 
 `/factory/out/events.jsonl`: one JSON object per line for the live view, of kind `message`, `tool`, `status` or `denied`. Never a secret. Also: the changed files in `/workspace`, which the orchestrator commits, and the raw harness log on standard output and error.
 
-**Harness adapters** are thin Go code that build the command line for one program (`claude -p --output-format stream-json`, `codex exec --json`) and read its event stream. These flags were used in the trial runs with Claude Code 2.1.326 and Codex CLI 0.170.0 on 2026-11-26. No adapter code exists yet. **A stub harness** makes fixed edits from a script, for tests and demo mode. No paid model calls in tests.
+**Harness adapters** are thin Go code that build the command line for one program (`claude -p --output-format stream-json`, `codex exec --json`) and read its event stream. These flags were used in the trial runs with Claude Code 2.1.326 and Codex CLI 0.170.0 on 2026-11-26. The adapters are built in `internal/harness`, with a stub, and are not yet wired to the rest of the factory. **A stub harness** makes fixed edits from a script, for tests and demo mode. No paid model calls in tests.
 
 ## Acceptance checks
 
@@ -292,6 +306,8 @@ One level per unattended task sets where the factory stops for a person after th
 
 ## Trust and the attention record
 
+**Observe before enforce** (designed, not built). Any rule that can stop or pass a change, such as a dial level, a risk rule or a class switch for automatic Accept, can run first in an `observe` mode. The factory records what it would have decided and changes nothing. A team reads that record before it turns the rule on.
+
 Trust comes from outcomes after Accept, never from the act of accepting, and never from opening a card. An outcome is recorded per change, by its commit, inside a window:
 
 - **Bad**: the change is reverted, a later fix names it, or the default branch turns red on the Accept merge commit and stays red when run again. A red build counts against every change in that Accept.
@@ -303,6 +319,8 @@ A documents-only change has nothing to exercise. For that kind alone, good means
 A **class of change** is the task, the risk level, and the most serious kind of path touched, in this order: security, contract, dependencies, code, tests, documents. The orchestrator assigns it from the change. A class is **eligible** for automatic Accept when it is low risk and, inside the window, has at least a set number of good outcomes, no bad outcome, and every review from a different harness than the builder. The count and the window are settings with no default. The factory proposes an eligible class and a person switches it on. Every switch is logged. A bad outcome switches the class off, and it needs a fresh full count. In the first release eligibility is computed and shown only.
 
 The **attention record**, per task: touches per accepted goal, questions asked, rulings made, rulings overturned. A ruling is overturned when a person marks it so in the engineering view. Many overturned rulings say turn the dial down. Planning time is not counted against the factory.
+
+**Who still has to act.** Every exception, and every change waiting at a gate, states in plain words in the outcome view who must act and what is needed. Designed, not built.
 
 ## Trajectory
 
@@ -356,6 +374,8 @@ The **evidence bundle** is built by the orchestrator in the verify stage. The re
 
 ## Interfaces that vary by where it runs
 
+**How to undo, and spending limits** (designed, not built). Every action the publish step takes is recorded with how to take it back, and Undo in the outcome view uses that record. For metered use there is also a spending limit per task kind, beside the per-run limit: reported on a laptop, enforced on OpenAgentix.
+
 ```go
 type Runner interface { Start(ctx context.Context, spec WorkSpec) (Handle, error) } // the work stage
 type Handle interface { Logs(ctx context.Context) (io.ReadCloser, error); Wait(ctx context.Context) (int, error); Cancel(ctx context.Context) error }
@@ -374,9 +394,12 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 | Kubernetes, later | A Job | Metered model access |
 | OpenAgentix, later | A Job, or platform runs when `AgentRun` and `Workspace` exist | A gateway key per run, an enforced budget, an audit record |
 
+**On OpenAgentix** (designed, not built; the platform pieces are planned and not all exist, and the factory uses them as the platform provides them): the factory's concepts map onto platform resources. A run is the platform's planned run resource and the workspace is its planned workspace. The propose and accept credentials are platform credential grants. The dial's ceiling comes from platform policy and can only be lowered there. A person's Accept on a high-risk change is a platform approval request. Model access goes through the platform gateway, with a key and an enforced budget per run, and outbound rules are the platform's. The evidence bundle becomes the platform's signed provenance record, and the web app mounts in the platform console. The factory keeps its own API group and concepts. The same task files and acceptance manifests run unchanged on a laptop and on OpenAgentix. What is enforced there and only reported on a laptop: budgets, isolation of a run from the person's files and from other runs, outbound rules and audit. The limits named in this record, the same-user limit and no operating system sandbox for checks, are the ones this rung removes.
+
 **Local runner rules**, and others that vary by place:
 
-- It starts the official `claude` or `codex` program in place. It never reads, copies or forwards a login token. It is designed to need no API key; whether subscription terms allow this is not checked (see Not settled).
+- **Setup** (designed, not built). For each agent program, the factory shows whether runs will be billed to an API key or to the signed-in plan, and recommends a key for a public repository.
+- It starts the official `claude` or `codex` program in place. It never reads, copies or forwards a login token. Login and billing position: see Not settled.
 - It removes git host credentials from the process environment: no token variables, no credential helper, no agent socket. This does not stop the agent reading the home directory (see Credentials, local mode limit).
 - It uses the strictest sandbox setting of the harness that still lets the task run. A deadline always applies, and the process group is killed at it. Runs are designed to be safe to repeat. No trial has cut a run off part way to show it.
 - A cost limit applies only to metered usage. The orchestrator reads usage from the event stream and cancels the run past the limit. This lags, so the web app says "best effort".
@@ -439,7 +462,7 @@ Go, one binary, with the web app embedded through `go:embed`. SQLite through a p
 
 ## Name
 
-OpenAgentix Software Factory, decided by the owner. The site and the API group are `factory.openagentix.org`, a domain the owner holds. The command `oxf` is a working name. Tagline: "Runs on your laptop. Governed on OpenAgentix." The group is the product's own, separate from the platform group `openagentix.io`, as OpenAgentix ADR 0012 requires. The risk of one brand is that the name suggests the platform is required; the tagline and a quick start with no platform must answer that. No trademark search was done. The name and group live in one Go constant and one web constant.
+OpenAgentix Software Factory, decided by the owner. The site and the API group are `factory.openagentix.org`, a domain the owner holds. The command `oxf` is a working name. Tagline: "Runs on your laptop. Governed on OpenAgentix." The second half is designed, not built. The group is the product's own, separate from the platform group `openagentix.io`, as OpenAgentix ADR 0012 requires. The risk of one brand is that the name suggests the platform is required; the tagline and a quick start with no platform must answer that. No trademark search was done. The name and group live in one Go constant and one web constant.
 
 ## What runs have shown
 
@@ -454,7 +477,7 @@ Left to the first real runs, and not designed further here:
 - Whether to shut a person's global agent instructions and tools out of a run. A trial showed they leak in, cost tokens and change behaviour.
 - How well "exercised" can be computed.
 - How staging rebuilds behave on a large repository, in time and in checks run, and how the staging claim passes between machines.
-- Whether subscription terms allow unattended runs started by another program. If they do not, unattended runs need an API key, and take the wheel remains for subscription users.
+- **Logins and plan terms.** The factory starts the unmodified, official agent program that a person is signed in to on their own machine. It never reads, copies, shares or pools a login. Each teammate uses their own. Whether a plan allows the amount and kind of unattended use a team intends, and whether a personal login may be used for a public or open-source repository, is for that team to check with the vendor of each program. Vendors publish guidance on automation. It differs between programs and changes over time. The maintainers read the published terms and guidance of both programs on 2026-11-27. That was a reading, not legal advice, and nothing in this project is an assurance about any plan. Anyone running the factory on a public or open-source repository should use an API key unless they have confirmed their plan allows otherwise. Any hosted or shared service must use API keys or each person's own sign-in. At setup the factory tells the person which billing each agent will use (see Local runner rules, Setup). If a plan does not fit, unattended runs need an API key, and take the wheel remains.
 - A workflow plugin was loaded for one run by path and its skill was called by name, in one trial with Claude Code. Driving a whole planning or build method this way, and doing it with Codex or with Open GSD, is not tried.
 - How the factory should choose a lane.
 
@@ -477,4 +500,4 @@ Left to the first real runs, and not designed further here:
 
 The sections on the factory's own repository and on how changes are reviewed were added on 2026-11-26 from what the first build showed.
 
-This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for a person who will not read a change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.
+This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for an engineer who should not have to read every change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.

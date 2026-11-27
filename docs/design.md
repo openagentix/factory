@@ -8,21 +8,21 @@ Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/00
 
 ## 1. Intent
 
-A solo founder or a small team states a business goal. The factory turns it into a spec, the spec into tickets, the tickets into verified changes, and later into deployed, observed software whose problems come back as tickets. A person steps in only where needed, and less over time as the factory earns trust. **(owner)**
+A small engineering team states a business goal. The factory turns it into a spec, the spec into tickets, the tickets into verified changes, and later into deployed, observed software whose problems come back as tickets. A person steps in only where needed, and less over time as the factory earns trust. **(owner)**
 
-**The factory does not own the agents. It owns the work.** People keep the Claude Code and Codex they already have, with the logins they already pay for, on their own machine. The factory orchestrates: it holds the pipeline, hands out work, checks results, records evidence and shows it all. **(owner)**
+**The factory does not own the agents. It owns the work.** People keep the Claude Code and Codex they already have, signed in on their own machine. The factory orchestrates: it holds the pipeline, hands out work, checks results, records evidence and shows it all. **(owner)**
 
 **The product line: "Spend your time deciding what to build. None watching it get built."** **(owner)** Planning is a live conversation with no limit on rounds or questions, in the person's own Claude Code or Codex session or in the web app. Once the plan is approved, the factory works alone with a reliable way to judge the result. People who use coding agents today spend the day answering "yes" to prompts while the work is built. That is the problem this product removes.
 
-**Designed for the person who will not review.** Twice on the first day, the owner merged a change unread, and was right to: a founder cannot judge code and should not have to. So the factory does the judging with acceptance checks and an independent review, combines passing work on a staging branch, and shows the person outcomes in plain words: what works, what does not, what could not be confirmed. The person decides three things: what they want, whether this is what they meant, and whether to accept it. Detail in decision record 0001, "Three moments and two views".
+**Designed for the engineer who will not review everything.** Engineers do not have the time to read every change an agent makes, and a gate that is passed unread adds nothing. Twice on the first day, the owner merged a change unread. So the factory does the judging with acceptance checks and an independent review, combines passing work on a staging branch, and shows the team outcomes in plain words: what works, what does not, what could not be confirmed. The team decides three things: what it wants, whether this is what it meant, and whether to accept it. Detail in decision record 0001, "Three moments and two views".
 
 **Trajectory matters most.** **(owner)** Work on a good course tends to stay good. Work on a bad course is hard to steer back. So planning and verification get the most care, and the factory watches the course of each goal and stops early.
 
-Why now: tools that turn one ticket into one pull request are free. Practitioners report that the pain has moved to what surrounds that step: reviewers are overloaded, agents edit tests to pass them, cost per outcome is unknown, and there is no basis for deciding how far to trust an agent. These are reports, not our findings. Hosted app builders go from idea to a deployed app, but they are closed, they hold the code and the hosting, and they verify little.
+Why now: tools that turn one ticket into one pull request are free. Practitioners report that the pain has moved to what surrounds that step: reviewers are overloaded, agents edit tests to pass them, cost per outcome is unknown, and there is no basis for deciding how far to trust an agent. These are reports, not our findings.
 
 What makes this product different:
 
-1. **Your agents, your logins, your repository, your machines.** Open source, Apache-2.0. Designed to need no API key, if subscription terms allow unattended runs started by another program, which is not checked (section 4).
+1. **Your agents, your logins, your repository, your machines.** Open source, Apache-2.0. Each teammate uses their own sign-in, and the factory never pools logins. See section 4 for the position on plan terms and API keys.
 2. **Gates, not prompts, after planning.** No run after the plan stops to ask for a yes. The machine gate judges each change. A person is interrupted only by an exception.
 3. **An autonomy dial per task.** It sets where the factory stops for a person. Visible, and moved by a person.
 4. **Evidence for every change.** The factory, not the agent, records what changed, what was checked and what it used.
@@ -30,20 +30,26 @@ What makes this product different:
 6. **Verification from the spec.** Acceptance checks are written from the person's own words before the code, and the builder cannot edit them.
 7. **One engine from laptop to cluster.** A laptop, a dedicated machine, Kubernetes, and OpenAgentix where limits are enforced. **(owner)**
 
-Positioning line: **the software factory that earns its autonomy.** Tagline: "Runs on your laptop. Governed on OpenAgentix." **(owner approved the positioning; tagline is a call)**
+**Review services on an open pull request.** Hosted services now exist that review a pull request with several agents, fix failing checks on it, and apply approval rules from a policy file. They start when a change already exists. This project starts at the goal and gets a team to a change worth reviewing, with acceptance checks the builder cannot change, a staging branch, a trust record from outcomes, any builder, the team's own machines, and open source. The factory opens ordinary pull requests, so a team may run any such service on them. The factory does not read its result and does not depend on one.
+
+Positioning line: **the software factory that earns its autonomy.** Tagline: "Runs on your laptop. Governed on OpenAgentix." **(owner approved the positioning; tagline is a call)** "Governed on OpenAgentix" is designed, not built.
 
 ## 2. Who it is for
 
-First: a small team with an existing codebase on GitHub, and solo founders. **(owner)** Then larger teams and enterprises, on Kubernetes and OpenAgentix. **(owner)**
+First: small engineering teams, roughly two to twenty engineers on a shared codebase on GitHub. **(owner)** Then larger organisations, on Kubernetes and OpenAgentix. **(owner)** A solo engineer can use it, but it is not designed around one. It assumes an engineering team that owns its codebase. **(owner)**
+
+The reason: an engineering team is ready for a long planning and brainstorming session before building. Planning has no cap, and that is where the team's attention belongs. A quick lane stays for small jobs.
 
 | Where it runs | Who | Model access | Isolation |
 |---|---|---|---|
-| A laptop | One person, trying it or working with it | Existing Claude and Codex logins | A workspace directory and the harness's own sandbox |
-| A dedicated machine, such as a Mac mini | A founder or a small team that wants it always on | The same | The same |
+| A laptop | One teammate, trying it or working with it | Existing Claude and Codex logins | A workspace directory and the harness's own sandbox |
+| A dedicated machine, such as a Mac mini | A small team that wants it always on | The same | The same |
 | Kubernetes | Larger teams | Metered: API key or gateway | A container per run |
 | OpenAgentix | Enterprises | Gateway key per run | Enforced budget, outbound rules, audit |
 
 The same task files and the same web app on every row.
+
+**On OpenAgentix the factory is native, by design, not a bolt-on.** Designed, not built. Its concepts map onto platform resources, rather than sitting beside them. These resources are planned by the platform and not all exist yet; the factory uses them as the platform provides them. The factory keeps its own API group and its own concepts (goal, spec, ticket, acceptance, gate, staging) and does not push them into the platform's group. The same task files and acceptance manifests run unchanged on a laptop and on OpenAgentix. That is the design test. What the platform enforces, a laptop only reports: budgets, isolation of a run from the person's files and from other runs, outbound rules and audit. The limits named in this document, such as the same-user limit and no operating system sandbox for checks, are the ones this rung removes. The mapping is in the seams table in section 11. **(owner)**
 
 An existing repository starts with an **onboard** run that reads the repository, finds its test and lint commands and its CI, and proposes the factory configuration with a readiness report. It takes effect after Accept, like any other change. A new product starts from any template repository that has tests and CI, then onboards. v0.1 does not scaffold projects. **(call)**
 
@@ -75,6 +81,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 - A worker can change the checks that judge it.
 - Trying it needs an API key, a cluster, a database server or a public endpoint.
 - It copies or moves a person's login tokens anywhere.
+- A change can reach the default branch with no person and no outcome record behind the rule that allowed it.
 - The web app is a wall of charts instead of a place to act.
 - A person has to sit and approve steps for the work to move after the plan is approved.
 
@@ -82,7 +89,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 
 - Open core, Apache-2.0. Embed only MIT and Apache-2.0 code. **(owner)**
 - One maintainer. Each runner is thin. OpenAgentix is a governance provider, not a separate system.
-- No work here may delay OpenAgentix 0.3. Nothing in v0.1 needs the platform.
+- No work here may delay the platform's own releases. Nothing in v0.1 needs the platform.
 - No paid model calls in tests. A stub harness exists for tests and demo mode.
 - The factory launches the official `claude` and `codex` programs in place. It never reads, copies or forwards their login tokens.
 - The factory never gives a run a git host credential. The publish step holds a propose token, and an accept token only if the person grants one. In local mode the agent runs as the same operating system user as `oxf` and can read what that user can read (section 8).
@@ -91,7 +98,7 @@ An existing repository starts with an **onboard** run that reads the repository,
 - Docs in plain English. Public claims only for what a run has proven.
 - Name: OpenAgentix Software Factory. Site and API group: `factory.openagentix.org`. Language: Go. **(owner)** Command: `oxf` **(call)**.
 
-**To check before any public claim:** whether the terms of Claude and Codex subscriptions allow unattended runs started by another program. Not checked. If they do not, unattended runs on a subscription are dropped, taking the wheel remains for subscription users, and unattended runs need an API key.
+**Logins and plan terms.** The position is stated once, in decision record 0001, "Not settled": the factory starts the official program a person is signed in to, never reads, copies, shares or pools a login, and whether a plan fits a team's use is for that team to check with the vendor. Not legal advice.
 
 ## 5. Approaches
 
@@ -173,6 +180,13 @@ Changing how a method behaves in this way is accepted for unattended runs. **(ow
 
 **Several machines.** State is in GitHub, so each teammate can run `oxf` on their own machine. A run claims its ticket with a label and a marker comment, reads back, and the earliest claim wins. A claim expires after a set time, so a crashed machine does not hold it for ever. One machine at a time holds the staging claim for a repository, by the same rule, and only it combines, rebuilds and accepts. No shared server is needed. **(call)**
 
+**Team work is part of the core, not a later extra.** **(owner)** Designed, not built, beyond the claims above:
+
+- Each teammate runs `oxf` on their own machine, with their own agent login and their own git host account. Nobody shares a login.
+- The git host is the one place work is coordinated.
+- A list of trusted logins in the factory file says whose machines act for the factory. A claim or a marker from any other login is ignored.
+- Review of a change is preferred on a different teammate's machine and harness than the one that built it.
+
 ### Lanes: the process fits the size of the job
 
 v0.1 has two lanes. **Quick**: a short planning conversation gives the goal and one to three acceptance lines; when the person confirms them, the factory writes a short spec and one ticket itself and builds alone. **Standard**: planning goes through a spec and then tickets, and the person approves both. Planning shrinks with the size of the job. Checking never does. A goal that goes off course is planned again with the person, and a quick goal is proposed for the standard lane. It never moves down without the person saying so. **(owner: a heavy method is too slow for a quick job, and a light one is not enough for a large build)**
@@ -183,7 +197,7 @@ A **deep** lane, for a new product or a large rework, is direction only and not 
 
 How the agent works is a **method**, and the factory does not own it. People who use superpowers or Open GSD keep doing so: the factory is designed to run the plugin they have installed, by name. This has not been tried. It ships and copies none of their text. With no plugin installed, or a named plugin missing, short built-in prompts are used, and the run records both what was asked and what ran. A plugin's own verification is information only. The factory's acceptance checks and gate decide. **(owner)**
 
-Planning is where a person's attention goes, for as long as they need. After the plan is approved the factory works with the lights off. **(owner)**
+Planning is where a team's attention goes, for as long as it needs, in conversation and with no cap. After the plan is approved the factory works with the lights off. **(owner)**
 
 ## 7. The pipeline
 
@@ -267,7 +281,7 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 
 Stack: the OpenAgentix console stack, so it can later mount in the console. Svelte 5 with runes, SvelteKit as a single-page app, Tailwind 4 with theme tokens, no component kit, strict content security policy, embedded in the binary. Live updates by server-sent events.
 
-Principle: **outcomes first, detail on demand.** The default is the **outcome view**. It never uses the words pull request, merge, diff, review, branch or commit. The **engineering view** shows everything, for developers who want to steer. **(owner)**
+Principle: **outcomes first, detail on demand.** The **outcome view** is what the whole team watches: goals, acceptance lists with three states, questions waiting for a person, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. The **engineering view** shows runs, evidence, decision cards and pull requests. **Simple by default, full control one deliberate step away.** The outcome view opens first for everyone. A developer who wants control takes it on purpose: opens the engineering view, sets a task's dial to guided so they approve each step, or takes the wheel on a ticket. A person can set the engineering view as their own start page. **(owner)**
 
 ```
  Let customers reschedule bookings              ON COURSE
@@ -326,7 +340,7 @@ Screens in v0.1:
 | Tasks | Each task as a card: trigger, reads and writes, next step, where a person re-enters, what stops double work, method | View the file |
 | Settings | Repository, harnesses found, the cap, whether an accept token is granted, readiness report | Edit machine settings |
 
-Wherever a control is only advisory on this rung, the app marks it "enforced on OpenAgentix".
+At setup (designed, not built) the app shows, per agent program, whether runs will be billed to an API key or to the signed-in plan, and recommends a key for a public repository. Wherever a control is only advisory on this rung, the app marks it "enforced on OpenAgentix".
 
 The look is the owner's to decide. Mockups come before the web app is planned.
 
@@ -337,7 +351,7 @@ One Go binary, `oxf`.
 | Part | Job |
 |---|---|
 | `api` | Shared types, strict parsing, validation. **Built.** |
-| `store` | SQLite: run records shaped like the planned OpenAgentix `AgentRun`, staging states, outcomes, dial settings and their log |
+| `store` | SQLite: run records shaped like the planned OpenAgentix `AgentRun`, staging states, outcomes, dial settings and their log. Run records and dial settings are built |
 | `githost` | Interface, a GitHub implementation and a fake. Polls, reads, and performs the fixed publish actions with the propose or accept token |
 | `runner` | Interface. v0.1: a **local** runner (a process in a workspace directory) and a fake. Later: container, Kubernetes Job |
 | `harness` | Thin adapters that build the command line for `claude`, `codex` and the stub, and read their event streams |
@@ -352,6 +366,8 @@ One Go binary, `oxf`.
 | `server` | JSON API, server-sent events, the embedded web app |
 | `web/` | The Svelte app |
 
+Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance` and `gate`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
+
 Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 
 | Seam | v0.1 | Later |
@@ -364,21 +380,23 @@ Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 | Triggers | Polling, local clock | `Trigger`, `Schedule` |
 | Evidence | JSON | Signed provenance |
 | Web app | Own binary | Console plugin |
+| Workspace | A plain directory | Platform `Workspace` |
+| Accept on a high-risk change | The login token | Platform approval request |
+| Model access and outbound network | The person's login, network open | Platform gateway with a key and an enforced budget per run, platform outbound rules |
 
 ## 12. Releases
 
-Release content and the build order live in one place: [ROADMAP.md](../ROADMAP.md). In short, v0.1 is the quick and standard lanes on one machine, built in this order: the quick lane unattended, the web app, the standard lane, take the wheel. The deep lane, container and Kubernetes runners, deploying and automatic Accept come later.
+Release content and the build order live in one place: [ROADMAP.md](../ROADMAP.md). In short, v0.1 is the quick and standard lanes on one machine, built in this order: the quick lane unattended on one machine, team basics (the trusted list and claims across teammates' machines), the web app, the standard lane, take the wheel. The deep lane, container and Kubernetes runners, deploying and automatic Accept come later.
 
 ## 13. Limits and risks, stated plainly
 
-- Whether subscription terms allow unattended runs is not checked. See section 4.
+- Whether a plan's terms allow the unattended use a team intends is for that team to check. See section 4.
 - Local mode has no container. The agent runs as the same user as `oxf` and can read that user's files. See section 8.
 - Try it runs code no person has read on the person's machine, in the checks' sandbox.
 - Loading an installed plugin for one run and calling its skill by name worked once in a trial. Driving a whole method that way is not tried.
-- Subscription rate limits cap how much the factory can do. For a small team that also acts as a brake.
+- Plan limits assume ordinary individual use, and cap how much the factory can do. For a small team that also acts as a brake.
 - Building features with agents is the least proven use in the research. Maintenance work is where factories succeed today. Expect rework. The trust ledger exists to show it.
 - No research in hand covers teams of two to twenty. That audience is a bet.
-- Hosted app builders already serve founders who want a prototype. We serve people who want to own and trust the result.
 - Unattended starts of Claude Code and Codex were tried by hand, four runs on tiny tasks. See `docs/trials/2026-11-26-unattended-runs.md`. That shows the mechanism works. It says nothing about how often a real job succeeds.
 - An agent can make a wrong ruling. Rulings are shown, and verify and review are outside the agent, but a bad choice that passes the gate reaches staging.
 - The whole weight is on the factory's own checking. "Working" is only as strong as the acceptance check behind it. Where the factory could not confirm something it says so and never ticks the line.

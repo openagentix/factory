@@ -61,5 +61,5 @@ Seen:
 - Four runs, one machine, tiny tasks. Nothing here says how often a run succeeds on real work.
 - The policy was not attacked. The trial shows that a denial is recorded, not that the policy is safe.
 - No run tested Open GSD, a planning step, a long task, or a run cut off part way.
-- Whether subscription terms allow unattended runs started by another program is still not checked. The trial shows only that it works.
+- Whether subscription terms allow unattended runs started by another program was not read when this record was written. The trial shows only that it works. See decision record 0001, "Not settled".
 - Codex was not tried with a different sandbox setting, or with a workflow plugin.

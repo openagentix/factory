@@ -6,8 +6,23 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ## [Unreleased]
 
+### Changed
+
+- The audience is now small engineering teams first, then larger organisations. Solo founders who are not engineers are not the audience.
+- Team work is part of the core design, and the v0.1 build order has a team basics step.
+- The outcome view opens first for everyone. The engineering view is one deliberate step away.
+- The wording on agent logins and plan terms is now one position, in record 0001, "Not settled".
+- Design for OpenAgentix: the factory maps onto planned platform resources. Designed, not built.
+
 ### Added
 
+- Design, not built: a list of trusted logins, claims across teammates' machines, and review on a different machine.
+- Three rules the first build established, in record 0001 and `AGENTS.md`.
+- The position on outside review services: the factory opens ordinary pull requests and does not depend on a review service.
+- Design, not built: observe mode for rules, who-must-act notes, recorded undo for publish actions, and a spending limit per task kind.
+- `internal/repo`: the factory's own bare git repository, with export and import of files through a plain directory, and a guard that refuses a repository holding any unknown configuration or layout entry.
+- `internal/acceptance`: runs the acceptance checks of a goal and turns the results into three states: working, not working yet and could not confirm.
+- `internal/gate`: the machine gate as pure decisions over values, where a blank or unknown value always means no.
 - `internal/store`: run records and dial settings behind an interface, with a pure Go SQLite implementation. A finished run cannot be changed.
 - `internal/harness`: adapters that start Claude Code and Codex unattended under a permission policy and read their events, a prompt renderer with the unattended contract, and a stub agent for tests.
 - `internal/githost`: the fixed list of git host actions, with two tokens kept apart, a GitHub client and an in-memory fake.

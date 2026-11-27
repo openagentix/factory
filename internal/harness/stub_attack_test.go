@@ -193,6 +193,15 @@ func TestStubReportsEnvironmentAndInputWrites(t *testing.T) {
 	if !strings.Contains(joined, "STUB_PROBE=seen") {
 		t.Errorf("the environment was not reported: %q", joined)
 	}
+	if !strings.Contains(joined, "write-in: task.json: ") || !strings.Contains(joined, "write-in: new file: ") {
+		t.Errorf("the input writes were not reported: %q", joined)
+	}
+	if os.Geteuid() == 0 {
+		// Root ignores file mode bits, so the writes are allowed. The
+		// refusal is a property of the mode bits, which root does not obey.
+		t.Log("running as root: the refused-write assertions are skipped, because root ignores file modes")
+		return
+	}
 	if !strings.Contains(joined, "write-in: task.json: refused") || !strings.Contains(joined, "write-in: new file: refused") {
 		t.Errorf("input writes: %q", joined)
 	}

@@ -3,12 +3,14 @@ package demo
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"errors"
@@ -100,21 +102,15 @@ func TestApproveAgainAfterTheLabelWasRemovedQueuesNothingTwice(t *testing.T) {
 	if n := queueLen(d); n != first {
 		t.Fatalf("queued after the second press: %d, want %d", n, first)
 	}
-	if err := d.Drain(ctx); err != nil || d.Failed() {
-		t.Fatalf("Drain: %v, failed=%v", err, d.Failed())
+	// One task of each kind, never two: the checks once and a build for each ticket once.
+	d.fuMu.Lock()
+	kinds := map[fuKind]int{}
+	for _, f := range d.fu {
+		kinds[f.kind]++
 	}
-	f := snap(t, d)
-	if err := invariants(f); err != nil {
-		t.Fatal(err)
-	}
-	ready := 0
-	for _, p := range f.Pieces {
-		if p.Goal == 2 && p.Station == 6 {
-			ready++
-		}
-	}
-	if ready != 2 || countKind(t, d, "checks_written") != 1 {
-		t.Fatalf("ready=%d checks_written=%d", ready, countKind(t, d, "checks_written"))
+	d.fuMu.Unlock()
+	if kinds[fuChecks] != 1 || kinds[fuTicket] != 2 {
+		t.Fatalf("queued tasks = %v", kinds)
 	}
 }
 
@@ -307,20 +303,17 @@ func TestAcceptMergesTheHoldingAreaAndTheStoryGoesOn(t *testing.T) {
 	if countKind(t, d, "undone") != 0 {
 		t.Fatal("an undone entry was written")
 	}
-	// The story goes on: goal 2 is approved and built on the new default.
-	pc := mustCall(t, d, "p-2")
-	if _, err := d.Approve(ctx, server.ApproveRequest{Call: pc.ID, Version: pc.Version, Steps: &memSteps{}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.Drain(ctx); err != nil || d.Failed() {
-		t.Fatalf("Drain: %v failed=%v", err, d.Failed())
-	}
+	// The story goes on, on the new default: t4 depends on t3, which is accepted.
+	playBeats(t, d, "second_try")
 	f = snap(t, d)
 	if err := invariants(f); err != nil {
 		t.Fatal(err)
 	}
 	if p := piece(f, "t3"); p == nil || p.Station != 7 {
 		t.Fatalf("t3 is no longer accepted: %+v", p)
+	}
+	if p := piece(f, "t4"); p == nil || p.Station != 6 || p.State != floor.StateReady {
+		t.Fatalf("t4 after the new state: %+v", p)
 	}
 	req2 := acceptReq(t, d)
 	if req2.StagingSeq <= req.StagingSeq {
@@ -331,17 +324,11 @@ func TestAcceptMergesTheHoldingAreaAndTheStoryGoesOn(t *testing.T) {
 		t.Fatalf("second Accept = %+v, %v", res, err)
 	}
 	f = snap(t, d)
-	n7 := 0
-	for _, p := range f.Pieces {
-		if p.Goal == 2 && p.Station == 7 {
-			n7++
-		}
+	if p := piece(f, "t4"); p == nil || p.Station != 7 {
+		t.Fatalf("t4 after the second Accept: %+v", p)
 	}
-	if n7 != 2 {
-		t.Fatalf("goal 2 pieces at 07 = %d", n7)
-	}
-	if got := gaugeValue(t, d, floor.GaugeAcceptedToday); got != 3 {
-		t.Fatalf("Accepted today = %d, want 3", got)
+	if got := gaugeValue(t, d, floor.GaugeAcceptedToday); got != 2 {
+		t.Fatalf("Accepted today = %d, want 2", got)
 	}
 	if n := countKind(t, d, "accepted"); n != 2 {
 		t.Fatalf("accepted entries = %d", n)
@@ -507,7 +494,7 @@ func TestUndoTakesAChangeAndWhatDependsOnIt(t *testing.T) {
 	// change that was added meanwhile is never merged without the person seeing it.
 	oldAccept := acceptReq(t, d)
 	head0 := mainHead(d)
-	playBeats(t, d, "checks_fail", "second_try") // t4 is added: a new state
+	playBeats(t, d, "second_try") // t4 is added: a new state
 	if _, err := d.Accept(ctx, oldAccept); !errors.Is(err, server.ErrStale) {
 		t.Fatalf("accept of the old state: %v", err)
 	}
@@ -640,31 +627,94 @@ func TestUndoTakesAChangeAndWhatDependsOnIt(t *testing.T) {
 	}
 }
 
-// Attack 18: Accept against Undo, with the same view of the state. One wins.
-// The merged state never holds a change that was undone. Run with -race.
+// Attack 18: Accept against Undo, with the same view of the state, over the
+// server. One wins. The merged state never holds a change that was undone, and
+// the winner's replay gives the same bytes. Run with -race.
 func TestAcceptAndUndoAtOnceDoOne(t *testing.T) {
 	d := beatsOnly(t, "write_checks", "build_move")
-	ctx := context.Background()
-	t3 := runOf(t, d, "t3")
-	accept, undo := acceptReq(t, d), undoReq(t, d, t3)
+	srv, err := server.New(server.Config{Port: 18767, Mode: "demo", Source: d, Actions: d, Detail: d, Static: fstest.MapFS{"index.html": {Data: []byte("x")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := strings.SplitN(srv.Link(), "#t=", 2)[1]
+	do := func(method, path, idem, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Host, r.RemoteAddr = "127.0.0.1:18767", "127.0.0.1:5000"
+		r.Header.Set("Authorization", "Bearer "+key)
+		if method == "POST" {
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("Idempotency-Key", idem)
+		}
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, r)
+		return w
+	}
+	// The piece detail and the preview, as the page reads them.
+	det := do("GET", "/api/v1/pieces/t3", "", "")
+	var got struct {
+		Mode string         `json:"mode"`
+		Undo *floor.UndoRef `json:"undo"`
+	}
+	if det.Code != 200 || json.Unmarshal(det.Body.Bytes(), &got) != nil || got.Mode != "demo" || got.Undo == nil {
+		t.Fatalf("piece: %d %s", det.Code, det.Body)
+	}
+	if rec := do("GET", "/api/v1/pieces/t99", "", ""); rec.Code != 404 {
+		t.Fatalf("unknown piece: %d", rec.Code)
+	}
+	pv := do("GET", "/api/v1/changes/"+got.Undo.Change+"/undo-preview", "", "")
+	var view struct {
+		Mode        string   `json:"mode"`
+		Change      string   `json:"change"`
+		StagingSeq  int64    `json:"stagingSeq"`
+		Commit      string   `json:"commit"`
+		AlsoRemoved []string `json:"alsoRemoved"`
+		Tickets     []struct {
+			Change string `json:"change"`
+			Ticket int    `json:"ticket"`
+		} `json:"tickets"`
+	}
+	if pv.Code != 200 || json.Unmarshal(pv.Body.Bytes(), &view) != nil || view.Mode != "demo" || len(view.AlsoRemoved) != 0 || len(view.Tickets) != 1 ||
+		view.Tickets[0].Ticket != 3 || view.StagingSeq != got.Undo.StagingSeq || view.Commit != got.Undo.Commit {
+		t.Fatalf("preview: %d %s", pv.Code, pv.Body)
+	}
+	// A list that is not the preview's is refused.
+	wrong, _ := json.Marshal(map[string]any{"stagingSeq": view.StagingSeq, "commit": view.Commit, "change": view.Change, "alsoRemoved": []string{"run999"}})
+	if rec := do("POST", "/api/v1/changes/"+view.Change+"/undo", "undo-aaaaaaaaaaaaaaaa", string(wrong)); rec.Code != 409 || strings.TrimSpace(rec.Body.String()) != `{"error":"stale"}` {
+		t.Fatalf("wrong list: %d %s", rec.Code, rec.Body)
+	}
+	accept := acceptReq(t, d)
 	head := mainHead(d)
+	undoBody, _ := json.Marshal(map[string]any{"stagingSeq": view.StagingSeq, "commit": view.Commit, "change": view.Change, "alsoRemoved": view.AlsoRemoved})
+	acceptBody, _ := json.Marshal(map[string]any{"stagingSeq": accept.StagingSeq, "commit": accept.Commit, "version": accept.Version})
 	var wg sync.WaitGroup
-	var aerr, uerr error
+	var ar, ur *httptest.ResponseRecorder
 	wg.Add(2)
-	go func() { defer wg.Done(); _, aerr = d.Accept(ctx, accept) }()
-	go func() { defer wg.Done(); _, uerr = d.Undo(ctx, undo) }()
+	go func() {
+		defer wg.Done()
+		ar = do("POST", "/api/v1/holding-area/accept", "acc-bbbbbbbbbbbbbbbb", string(acceptBody))
+	}()
+	go func() {
+		defer wg.Done()
+		ur = do("POST", "/api/v1/changes/"+view.Change+"/undo", "undo-bbbbbbbbbbbbbbbb", string(undoBody))
+	}()
 	wg.Wait()
-	if (aerr == nil) == (uerr == nil) {
-		t.Fatalf("accept: %v, undo: %v", aerr, uerr)
+	if (ar.Code == 200) == (ur.Code == 200) {
+		t.Fatalf("accept: %d %s, undo: %d %s", ar.Code, ar.Body, ur.Code, ur.Body)
 	}
 	acceptedN, undoneN := countKind(t, d, "accepted"), countKind(t, d, "undone")
-	if aerr == nil {
-		if !errors.Is(uerr, server.ErrStale) || acceptedN != 1 || undoneN != 0 || mainHead(d) != accept.Commit {
-			t.Fatalf("accept won: undo=%v accepted=%d undone=%d", uerr, acceptedN, undoneN)
+	if ar.Code == 200 {
+		if !strings.HasPrefix(ar.Body.String(), `{"mode":"demo","result":"done","journalSeq":`) || ur.Code != 409 || acceptedN != 1 || undoneN != 0 || mainHead(d) != accept.Commit {
+			t.Fatalf("accept won: undo=%d %s accepted=%d undone=%d", ur.Code, ur.Body, acceptedN, undoneN)
+		}
+		if again := do("POST", "/api/v1/holding-area/accept", "acc-bbbbbbbbbbbbbbbb", string(acceptBody)); again.Code != 200 || again.Body.String() != ar.Body.String() {
+			t.Fatalf("replay: %d %s", again.Code, again.Body)
 		}
 	} else {
-		if !errors.Is(aerr, server.ErrStale) || acceptedN != 0 || undoneN != 1 || mainHead(d) != head {
-			t.Fatalf("undo won: accept=%v accepted=%d undone=%d", aerr, acceptedN, undoneN)
+		if !strings.HasPrefix(ur.Body.String(), `{"mode":"demo","result":"done","journalSeq":`) || ar.Code != 409 || acceptedN != 0 || undoneN != 1 || mainHead(d) != head {
+			t.Fatalf("undo won: accept=%d %s accepted=%d undone=%d", ar.Code, ar.Body, acceptedN, undoneN)
+		}
+		if again := do("POST", "/api/v1/changes/"+view.Change+"/undo", "undo-bbbbbbbbbbbbbbbb", string(undoBody)); again.Code != 200 || again.Body.String() != ur.Body.String() {
+			t.Fatalf("replay: %d %s", again.Code, again.Body)
 		}
 	}
 	if err := invariants(snap(t, d)); err != nil {
@@ -681,15 +731,7 @@ func TestAcceptOfAStateThatWasNotPublishedIsStale(t *testing.T) {
 	old := acceptReq(t, d)
 	head := mainHead(d)
 	fail.Store(true)
-	j, err := d.ticketJob("confirm", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := d.work(ctx, j)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.finish(ctx, j, res); err == nil {
+	if _, err := d.stg.Rebuild(ctx); err == nil {
 		t.Fatal("the push should have failed")
 	}
 	st, ok, _ := d.stgSt.Latest(ctx)

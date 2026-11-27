@@ -1,0 +1,842 @@
+{
+  "schemaVersion": 1,
+  "journalSeq": 11,
+  "generatedAt": "2026-11-27T12:00:00Z",
+  "hostTime": "2026-11-27T11:59:40Z",
+  "mode": "demo",
+  "demo": {
+    "story": "booking_tour",
+    "note": "made_up_project_fake_host"
+  },
+  "repository": "demo/booking",
+  "machine": {
+    "id": "laptop-a"
+  },
+  "sources": {
+    "acceptance": "ok",
+    "config": "ok",
+    "gate": "ok",
+    "host": "ok",
+    "staging": "ok",
+    "store": "ok",
+    "team": "ok",
+    "trajectory": "not_built"
+  },
+  "signal": {
+    "lamp": "red",
+    "word": "stuck",
+    "inputs": {
+      "moving": 2,
+      "movingElsewhere": 1,
+      "stuck": 1,
+      "waitingForPerson": 3,
+      "inHoldingArea": 3,
+      "oldestStuck": {
+        "piece": "t57",
+        "station": 4,
+        "since": "2026-11-27T11:20:00Z"
+      },
+      "paused": false,
+      "projectChecksFailing": false,
+      "unknownSources": []
+    }
+  },
+  "holdingArea": {
+    "stagingSeq": 7,
+    "commit": "ab12cd34",
+    "published": true,
+    "frozen": false,
+    "pendingAccept": null
+  },
+  "gauges": [
+    {
+      "key": "in_work",
+      "state": "ok",
+      "value": 13,
+      "samples": null,
+      "window": "now",
+      "machines": 2
+    },
+    {
+      "key": "accepted_today",
+      "state": "ok",
+      "value": 4,
+      "samples": null,
+      "window": "today",
+      "series": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        4
+      ]
+    },
+    {
+      "key": "right_first_time",
+      "state": "not_enough_yet",
+      "value": null,
+      "samples": 0,
+      "window": "30d"
+    },
+    {
+      "key": "goal_to_holding",
+      "state": "not_enough_yet",
+      "value": null,
+      "samples": 0,
+      "window": "30d"
+    },
+    {
+      "key": "attention",
+      "state": "not_built",
+      "value": null,
+      "samples": null,
+      "window": "7d"
+    }
+  ],
+  "stations": [
+    {
+      "no": 1,
+      "key": "plan",
+      "who": "person",
+      "source": "real",
+      "state": "waiting_person",
+      "count": 1,
+      "oldestStuck": null
+    },
+    {
+      "no": 2,
+      "key": "write_checks",
+      "who": "agent",
+      "source": "partly_real",
+      "state": "waiting_machine",
+      "count": 3,
+      "oldestStuck": null
+    },
+    {
+      "no": 3,
+      "key": "build",
+      "who": "agent",
+      "source": "real",
+      "state": "waiting_person",
+      "count": 3,
+      "oldestStuck": null
+    },
+    {
+      "no": 4,
+      "key": "check",
+      "who": "factory",
+      "source": "real",
+      "state": "stuck",
+      "count": 1,
+      "oldestStuck": "t57"
+    },
+    {
+      "no": 5,
+      "key": "second_opinion",
+      "who": "agent",
+      "source": "scripted",
+      "state": "waiting_person",
+      "count": 2,
+      "oldestStuck": null
+    },
+    {
+      "no": 6,
+      "key": "holding_area",
+      "who": "factory",
+      "source": "real",
+      "state": "ready",
+      "count": 3,
+      "oldestStuck": null
+    },
+    {
+      "no": 7,
+      "key": "accepted",
+      "who": "person",
+      "source": "real",
+      "state": "ready",
+      "count": 4,
+      "oldestStuck": null
+    }
+  ],
+  "pieces": [
+    {
+      "id": "p44",
+      "kind": "plan",
+      "goal": 44,
+      "ticket": null,
+      "title": {
+        "text": "Watch the factory on one screen",
+        "truncated": false
+      },
+      "station": 1,
+      "state": "waiting_person",
+      "reason": {
+        "code": "plan_waits"
+      },
+      "since": "2026-11-27T10:25:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": "p-44"
+    },
+    {
+      "id": "t61",
+      "kind": "ticket",
+      "goal": 43,
+      "ticket": 61,
+      "title": {
+        "text": "Read the lines strictly",
+        "truncated": false
+      },
+      "station": 2,
+      "state": "waiting_machine",
+      "reason": {
+        "code": "waiting_checks"
+      },
+      "since": "2026-11-27T10:00:00Z",
+      "blockedBy": "k43",
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    },
+    {
+      "id": "t62",
+      "kind": "ticket",
+      "goal": 43,
+      "ticket": 62,
+      "title": {
+        "text": "Repeat the lines back",
+        "truncated": false
+      },
+      "station": 2,
+      "state": "waiting_machine",
+      "reason": {
+        "code": "waiting_checks"
+      },
+      "since": "2026-11-27T10:00:00Z",
+      "blockedBy": "k43",
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    },
+    {
+      "id": "k43",
+      "kind": "checks",
+      "goal": 43,
+      "ticket": null,
+      "title": {
+        "text": "A person approves a goal by listing its lines",
+        "truncated": false
+      },
+      "station": 2,
+      "state": "waiting_machine",
+      "reason": {
+        "code": "queued"
+      },
+      "since": null,
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    },
+    {
+      "id": "t58",
+      "kind": "ticket",
+      "goal": 42,
+      "ticket": 58,
+      "title": {
+        "text": "Free a ticket when a machine goes away",
+        "truncated": false
+      },
+      "station": 3,
+      "state": "waiting_person",
+      "reason": {
+        "code": "question_open"
+      },
+      "since": "2026-11-27T11:08:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": "q-58-9001"
+    },
+    {
+      "id": "t60",
+      "kind": "ticket",
+      "goal": 42,
+      "ticket": 60,
+      "title": {
+        "text": "Two machines claim in the same second",
+        "truncated": false
+      },
+      "station": 3,
+      "state": "working",
+      "reason": null,
+      "since": "2026-11-27T11:35:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": {
+        "id": "laptop-b",
+        "mine": false
+      },
+      "claim": {
+        "since": "2026-11-27T11:35:00Z",
+        "expires": "2026-11-27T13:35:00Z"
+      },
+      "run": null,
+      "call": null
+    },
+    {
+      "id": "t52",
+      "kind": "ticket",
+      "goal": 41,
+      "ticket": 52,
+      "title": {
+        "text": "Rebuild the holding area after a crash",
+        "truncated": false
+      },
+      "station": 3,
+      "state": "working",
+      "reason": null,
+      "since": "2026-11-27T11:54:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": {
+        "id": "laptop-a",
+        "mine": true
+      },
+      "claim": null,
+      "run": "r_52w",
+      "call": null
+    },
+    {
+      "id": "t57",
+      "kind": "ticket",
+      "goal": 42,
+      "ticket": 57,
+      "title": {
+        "text": "Lowest claim wins",
+        "truncated": false
+      },
+      "station": 4,
+      "state": "stuck",
+      "reason": {
+        "code": "check_failed",
+        "attempt": 2,
+        "maxAttempts": 3
+      },
+      "since": "2026-11-27T11:20:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": "r_57b",
+      "call": null
+    },
+    {
+      "id": "t55",
+      "kind": "ticket",
+      "goal": 42,
+      "ticket": 55,
+      "title": {
+        "text": "Only trusted people can start work",
+        "truncated": false
+      },
+      "station": 5,
+      "state": "waiting_person",
+      "reason": {
+        "code": "consequence_open"
+      },
+      "since": "2026-11-27T11:42:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": "r_55a",
+      "call": "c-55-r_55a"
+    },
+    {
+      "id": "t56",
+      "kind": "ticket",
+      "goal": 42,
+      "ticket": 56,
+      "title": {
+        "text": "Say which machine holds a ticket",
+        "truncated": false
+      },
+      "station": 5,
+      "state": "working",
+      "reason": null,
+      "since": "2026-11-27T11:56:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": {
+        "id": "laptop-a",
+        "mine": true
+      },
+      "claim": null,
+      "run": "r_56a",
+      "call": null
+    },
+    {
+      "id": "t46",
+      "kind": "ticket",
+      "goal": 41,
+      "ticket": 46,
+      "title": {
+        "text": "Refuse a change that fails a check",
+        "truncated": false
+      },
+      "station": 6,
+      "state": "ready",
+      "reason": null,
+      "since": "2026-11-27T10:32:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": "r_46a",
+      "call": null
+    },
+    {
+      "id": "t47",
+      "kind": "ticket",
+      "goal": 41,
+      "ticket": 47,
+      "title": {
+        "text": "Combine changes in order",
+        "truncated": false
+      },
+      "station": 6,
+      "state": "ready",
+      "reason": null,
+      "since": "2026-11-27T10:56:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": "r_47a",
+      "call": null
+    },
+    {
+      "id": "t49",
+      "kind": "ticket",
+      "goal": 41,
+      "ticket": 49,
+      "title": {
+        "text": "Take out a change that breaks a line",
+        "truncated": false
+      },
+      "station": 6,
+      "state": "ready",
+      "reason": null,
+      "since": "2026-11-27T11:29:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": "r_49a",
+      "call": null
+    },
+    {
+      "id": "t39",
+      "kind": "ticket",
+      "goal": 40,
+      "ticket": 39,
+      "title": {
+        "text": "",
+        "truncated": false
+      },
+      "station": 7,
+      "state": "ready",
+      "reason": null,
+      "since": "2026-11-27T10:00:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    },
+    {
+      "id": "t41",
+      "kind": "ticket",
+      "goal": 40,
+      "ticket": 41,
+      "title": {
+        "text": "",
+        "truncated": false
+      },
+      "station": 7,
+      "state": "ready",
+      "reason": null,
+      "since": "2026-11-27T10:00:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    },
+    {
+      "id": "t42",
+      "kind": "ticket",
+      "goal": 40,
+      "ticket": 42,
+      "title": {
+        "text": "",
+        "truncated": false
+      },
+      "station": 7,
+      "state": "ready",
+      "reason": null,
+      "since": "2026-11-27T10:00:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    },
+    {
+      "id": "t44",
+      "kind": "ticket",
+      "goal": 40,
+      "ticket": 44,
+      "title": {
+        "text": "",
+        "truncated": false
+      },
+      "station": 7,
+      "state": "ready",
+      "reason": null,
+      "since": "2026-11-27T10:00:00Z",
+      "blockedBy": null,
+      "rootBlocker": null,
+      "machine": null,
+      "claim": null,
+      "run": null,
+      "call": null
+    }
+  ],
+  "goals": [
+    {
+      "goal": 41,
+      "title": {
+        "text": "Combine passing changes in a holding area",
+        "truncated": false
+      },
+      "lane": "standard",
+      "course": null,
+      "lines": [
+        {
+          "id": 1,
+          "text": {
+            "text": "A change that passes every check goes into the holding area.",
+            "truncated": false
+          },
+          "state": "working",
+          "note": null
+        },
+        {
+          "id": 2,
+          "text": {
+            "text": "A change that fails a check never goes in.",
+            "truncated": false
+          },
+          "state": "working",
+          "note": null
+        },
+        {
+          "id": 3,
+          "text": {
+            "text": "Two changes that touch the same place are combined in order.",
+            "truncated": false
+          },
+          "state": "working",
+          "note": null
+        },
+        {
+          "id": 4,
+          "text": {
+            "text": "The holding area can be rebuilt after a crash.",
+            "truncated": false
+          },
+          "state": "could_not_confirm",
+          "note": {
+            "code": "unknown",
+            "ticket": 52
+          }
+        }
+      ],
+      "linesAsOf": {
+        "stagingSeq": 7
+      }
+    },
+    {
+      "goal": 42,
+      "title": {
+        "text": "Two teammates' machines share one queue",
+        "truncated": false
+      },
+      "lane": "standard",
+      "course": null,
+      "lines": [
+        {
+          "id": 1,
+          "text": {
+            "text": "Each machine takes a different ticket.",
+            "truncated": false
+          },
+          "state": "working",
+          "note": null
+        },
+        {
+          "id": 2,
+          "text": {
+            "text": "The first machine to claim a ticket keeps it.",
+            "truncated": false
+          },
+          "state": "not_working",
+          "note": {
+            "code": "check_failed",
+            "ticket": 57
+          }
+        },
+        {
+          "id": 3,
+          "text": {
+            "text": "A machine that goes away frees its ticket.",
+            "truncated": false
+          },
+          "state": "not_working",
+          "note": {
+            "code": "question_open",
+            "ticket": 58
+          }
+        },
+        {
+          "id": 4,
+          "text": {
+            "text": "It still works when two clocks differ.",
+            "truncated": false
+          },
+          "state": "could_not_confirm",
+          "note": null
+        }
+      ],
+      "linesAsOf": {
+        "stagingSeq": 7
+      }
+    },
+    {
+      "goal": 43,
+      "title": {
+        "text": "A person approves a goal by listing its lines",
+        "truncated": false
+      },
+      "lane": "quick",
+      "course": null,
+      "lines": [
+        {
+          "id": 1,
+          "text": {
+            "text": "A goal with one to three plain lines can be approved.",
+            "truncated": false
+          },
+          "state": "not_working",
+          "note": {
+            "code": "queued",
+            "ticket": 61
+          }
+        },
+        {
+          "id": 2,
+          "text": {
+            "text": "The factory repeats the lines back, word for word.",
+            "truncated": false
+          },
+          "state": "not_working",
+          "note": {
+            "code": "queued",
+            "ticket": 62
+          }
+        }
+      ],
+      "linesAsOf": {
+        "stagingSeq": 7
+      }
+    },
+    {
+      "goal": 44,
+      "title": {
+        "text": "Watch the factory on one screen",
+        "truncated": false
+      },
+      "lane": "quick",
+      "course": null,
+      "lines": [
+        {
+          "id": 1,
+          "text": {
+            "text": "The line shows where every piece of work is.",
+            "truncated": false
+          },
+          "state": "not_working",
+          "note": null
+        },
+        {
+          "id": 2,
+          "text": {
+            "text": "A stuck piece says why, and since when.",
+            "truncated": false
+          },
+          "state": "not_working",
+          "note": null
+        },
+        {
+          "id": 3,
+          "text": {
+            "text": "What needs a person is listed in plain words.",
+            "truncated": false
+          },
+          "state": "not_working",
+          "note": null
+        }
+      ],
+      "linesAsOf": {
+        "stagingSeq": 7
+      }
+    }
+  ],
+  "calls": [
+    {
+      "id": "p-44",
+      "kind": "plan",
+      "who": "anyone_trusted",
+      "since": "2026-11-27T10:25:00Z",
+      "goal": 44,
+      "ticket": null,
+      "question": null,
+      "facts": {
+        "goal": 44
+      },
+      "actions": [
+        "approve"
+      ],
+      "version": "33b6b405c7dccaa84942b7e02268c00cb8e81cf48fe5938a8e52aa16c1d1fa8a"
+    },
+    {
+      "id": "a-7",
+      "kind": "accept",
+      "who": "this_machine",
+      "since": "2026-11-27T10:32:00Z",
+      "goal": null,
+      "ticket": null,
+      "question": null,
+      "facts": {
+        "count": 3
+      },
+      "actions": [
+        "accept"
+      ],
+      "version": "2ccf0bc8f4dbc25d52a299056aabfb544724f388f469e2547a856c80fca81977"
+    },
+    {
+      "id": "q-58-9001",
+      "kind": "question",
+      "who": "anyone_trusted",
+      "since": "2026-11-27T11:08:00Z",
+      "goal": 42,
+      "ticket": 58,
+      "question": {
+        "text": "A machine holds a ticket and then goes away. After how long may another machine take it: 2 hours, or sooner?",
+        "truncated": false
+      },
+      "facts": {
+        "goal": 42,
+        "ticket": 58
+      },
+      "actions": [
+        "answer"
+      ],
+      "version": "c46d2a83f34a70f55e6707afd82a1efce84ef6f9514de3897be40d1666d6424f"
+    },
+    {
+      "id": "c-55-r_55a",
+      "kind": "consequence",
+      "who": "anyone_trusted",
+      "since": "2026-11-27T11:42:00Z",
+      "goal": 42,
+      "ticket": 55,
+      "question": null,
+      "facts": {
+        "attempt": 1,
+        "goal": 42,
+        "machine": "laptop-a",
+        "risk": "security",
+        "ticket": 55
+      },
+      "actions": [
+        "yes",
+        "no"
+      ],
+      "version": "9a17720fd87a652efc1551afc12139700c93968e9a3ac2635b27d09841d96513"
+    }
+  ],
+  "log": [
+    {
+      "journalSeq": 11,
+      "time": "2026-11-27T11:29:00Z",
+      "kind": "entered_holding_area",
+      "ticket": 49
+    },
+    {
+      "journalSeq": 10,
+      "time": "2026-11-27T11:20:00Z",
+      "kind": "check_failed",
+      "ticket": 57
+    },
+    {
+      "journalSeq": 9,
+      "time": "2026-11-27T11:08:00Z",
+      "kind": "question_asked",
+      "ticket": 58
+    },
+    {
+      "journalSeq": 8,
+      "time": "2026-11-27T10:50:00Z",
+      "kind": "taken_out",
+      "ticket": 51
+    },
+    {
+      "journalSeq": 7,
+      "time": "2026-11-27T10:20:00Z",
+      "kind": "could_not_confirm",
+      "goal": 41
+    },
+    {
+      "journalSeq": 6,
+      "time": "2026-11-27T09:00:00Z",
+      "kind": "accepted",
+      "goal": 40
+    },
+    {
+      "journalSeq": 5,
+      "time": "2026-11-27T08:00:00Z",
+      "kind": "plan_approved",
+      "goal": 43
+    }
+  ]
+}

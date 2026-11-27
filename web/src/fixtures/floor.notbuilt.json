@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "journalSeq": 0,
+  "generatedAt": "2026-11-27T12:00:00Z",
+  "hostTime": null,
+  "mode": "live",
+  "demo": null,
+  "repository": "acme/booking",
+  "machine": {
+    "id": "alice-laptop"
+  },
+  "sources": {
+    "acceptance": "not_built",
+    "config": "not_built",
+    "gate": "not_built",
+    "host": "not_built",
+    "staging": "not_built",
+    "store": "not_built",
+    "team": "not_built",
+    "trajectory": "not_built"
+  },
+  "signal": {
+    "lamp": "unknown",
+    "word": "could_not_read",
+    "inputs": {
+      "moving": 0,
+      "movingElsewhere": null,
+      "stuck": 0,
+      "waitingForPerson": 0,
+      "inHoldingArea": null,
+      "oldestStuck": null,
+      "paused": false,
+      "projectChecksFailing": false,
+      "unknownSources": [
+        "config",
+        "host",
+        "store"
+      ]
+    }
+  },
+  "holdingArea": null,
+  "gauges": [
+    {
+      "key": "in_work",
+      "state": "not_built",
+      "value": null,
+      "samples": null,
+      "window": "now"
+    },
+    {
+      "key": "accepted_today",
+      "state": "not_built",
+      "value": null,
+      "samples": null,
+      "window": "today"
+    },
+    {
+      "key": "right_first_time",
+      "state": "not_built",
+      "value": null,
+      "samples": null,
+      "window": "30d"
+    },
+    {
+      "key": "goal_to_holding",
+      "state": "not_built",
+      "value": null,
+      "samples": null,
+      "window": "30d"
+    },
+    {
+      "key": "attention",
+      "state": "not_built",
+      "value": null,
+      "samples": null,
+      "window": "7d"
+    }
+  ],
+  "stations": [
+    {
+      "no": 1,
+      "key": "plan",
+      "who": "person",
+      "source": "not_built",
+      "state": "not_built",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 2,
+      "key": "write_checks",
+      "who": "agent",
+      "source": "not_built",
+      "state": "not_built",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 3,
+      "key": "build",
+      "who": "agent",
+      "source": "not_built",
+      "state": "not_built",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 4,
+      "key": "check",
+      "who": "factory",
+      "source": "not_built",
+      "state": "not_built",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 5,
+      "key": "second_opinion",
+      "who": "agent",
+      "source": "not_built",
+      "state": "not_built",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 6,
+      "key": "holding_area",
+      "who": "factory",
+      "source": "not_built",
+      "state": "not_built",
+      "count": null,
+      "oldestStuck": null
+    },
+    {
+      "no": 7,
+      "key": "accepted",
+      "who": "person",
+      "source": "not_built",
+      "state": "not_built",
+      "count": null,
+      "oldestStuck": null
+    }
+  ],
+  "pieces": [],
+  "goals": [],
+  "calls": [],
+  "log": []
+}

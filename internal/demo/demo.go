@@ -117,9 +117,12 @@ type Demo struct {
 	// noAnswer holds the runs whose fixed "no answer" line is posted and whose
 	// label is not yet back.
 	noAnswer map[string]bool
-	fuMu     sync.Mutex
-	fu       []followup
-	wake     chan struct{}
+	// approving holds, by goal, the version of an Approve that put the label on
+	// and did not finish.
+	approving map[int]string
+	fuMu      sync.Mutex
+	fu        []followup
+	wake      chan struct{}
 	// addHook may fail the step that adds an answered change to the holding
 	// area. Tests only.
 	addHook func() error
@@ -147,7 +150,7 @@ func New(ctx context.Context, cfg Config) (*Demo, error) {
 		return nil, errors.New("demo: the data directory must exist with mode 0700")
 	}
 	d := &Demo{cfg: cfg, led: newLedger(), factory: factoryFile(), attempt: map[int]int{}, tk: map[string]int{}, reported: map[int]bool{},
-		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, goalsTk: map[int]bool{goalMove: true}, noAnswer: map[string]bool{}, wake: make(chan struct{}, 1)}
+		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, goalsTk: map[int]bool{goalMove: true}, noAnswer: map[string]bool{}, approving: map[int]string{}, wake: make(chan struct{}, 1)}
 	d.env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C"}
 	if err := d.setup(ctx); err != nil {
 		d.Close()

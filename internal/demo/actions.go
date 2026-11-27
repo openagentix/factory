@@ -376,37 +376,65 @@ func (d *Demo) Approve(ctx context.Context, r server.ApproveRequest) (server.Act
 		return server.ActionResult{}, server.ErrStale
 	}
 	return d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
-		f := d.project(ctx)
-		if _, err := floor.CheckCall(f, r.Call, floor.ActionApprove, r.Version); err != nil {
-			return server.ErrStale
+		// A press that put the label on and then failed has no plan call to
+		// check any more, because the goal is approved. Its own press, at the
+		// version the call had, finishes the rest.
+		resuming := d.approving[goal] != "" && d.approving[goal] == r.Version
+		if !resuming {
+			f := d.project(ctx)
+			if _, err := floor.CheckCall(f, r.Call, floor.ActionApprove, r.Version); err != nil {
+				return server.ErrStale
+			}
 		}
 		specs := ticketsOf(goal)
 		if len(specs) == 0 {
 			return server.ErrStale // the demo has nothing to build for this goal
 		}
-		// Make the tickets first, so a failure leaves the plan still waiting.
+		// Each sub-step is recorded only after the host shows it, and a retry
+		// does exactly what is missing: the tickets first (so a failure leaves
+		// the plan still waiting), then the approval, then a read back of all of it.
 		for i, s := range specs {
-			if _, made := d.tk[s.key]; made {
-				continue
+			if _, ready := d.tk[s.key]; ready {
+				continue // made, labelled and read back before
 			}
-			issues, err := d.host.CreateSubIssues(ctx, goal, []api.IssueProposal{{Title: s.title, Body: s.body, Criteria: s.served}})
-			if err != nil || len(issues) != 1 {
-				return server.ErrHostFailed
+			n, err := d.ticketOnHost(ctx, goal, s)
+			if err != nil {
+				return err
 			}
-			d.tk[s.key] = issues[0].Number
 			for _, l := range []string{githost.LabelPlanned, githost.LabelReady} {
-				if err := d.host.AddLabel(ctx, issues[0].Number, l); err != nil {
+				iss, err := d.host.GetIssue(ctx, n)
+				if err != nil {
+					return server.ErrHostFailed
+				}
+				if iss.HasLabel(l) {
+					continue
+				}
+				if err := d.host.AddLabel(ctx, n, l); err != nil {
 					return server.ErrHostFailed
 				}
 			}
-			r.Steps.Mark("ticket-"+strconv.Itoa(i), strconv.Itoa(issues[0].Number))
+			if err := d.ticketStands(ctx, goal, s, n); err != nil {
+				return err
+			}
+			d.tk[s.key] = n // the ticket is whole on the host
+			r.Steps.Mark("ticket-"+strconv.Itoa(i), strconv.Itoa(n))
 		}
+		d.approving[goal] = r.Version
+		// A failed call may have written before it failed: the host decides.
 		if err := d.host.AddLabel(ctx, goal, githost.LabelApproved); err != nil {
-			return server.ErrHostFailed
+			if g, gerr := d.host.GetIssue(ctx, goal); gerr != nil || !g.HasLabel(githost.LabelApproved) {
+				return server.ErrHostFailed
+			}
 		}
+		// Read all of it back. "Done" is answered only when the host shows it.
 		iss, err := d.host.GetIssue(ctx, goal)
 		if err != nil || !iss.HasLabel(githost.LabelApproved) {
-			return server.ErrHostFailed // the approval is read back, never assumed
+			return server.ErrHostFailed
+		}
+		for _, s := range specs {
+			if err := d.ticketStands(ctx, goal, s, d.tk[s.key]); err != nil {
+				return err
+			}
 		}
 		now := d.now()
 		d.led.with(func(lf *collect.LedgerFacts) {
@@ -421,6 +449,52 @@ func (d *Demo) Approve(ctx context.Context, r server.ApproveRequest) (server.Act
 			d.enqueue(followup{kind: fuTicket, j: j})
 		}
 		journal("plan_approved", goal, 0)
+		delete(d.approving, goal)
 		return nil
 	})
+}
+
+// ticketOnHost returns the number of the ticket of a goal that has this title,
+// making it when the host has none. A ticket that a failed call did make is
+// found again, never made twice.
+func (d *Demo) ticketOnHost(ctx context.Context, goal int, s ticketSpec) (int, error) {
+	if n, ok := d.findChild(ctx, goal, s.title); ok {
+		return n, nil
+	}
+	issues, err := d.host.CreateSubIssues(ctx, goal, []api.IssueProposal{{Title: s.title, Body: s.body, Criteria: s.served}})
+	if err != nil {
+		// The call may have written before it failed. Look once more.
+		if n, ok := d.findChild(ctx, goal, s.title); ok {
+			return n, nil
+		}
+		return 0, server.ErrHostFailed
+	}
+	if len(issues) != 1 {
+		return 0, server.ErrHostFailed
+	}
+	return issues[0].Number, nil
+}
+
+// findChild reads the host for a sub-issue of the goal with the title.
+func (d *Demo) findChild(ctx context.Context, goal int, title string) (int, bool) {
+	for n := 1; ; n++ {
+		iss, err := d.host.GetIssue(ctx, n)
+		if err != nil {
+			return 0, false // past the last issue
+		}
+		if d.host.Parent(n) == goal && iss.Title == title {
+			return n, true
+		}
+	}
+}
+
+// ticketStands says whether the host shows a ticket whole: under its goal,
+// with both labels.
+func (d *Demo) ticketStands(ctx context.Context, goal int, s ticketSpec, n int) error {
+	iss, err := d.host.GetIssue(ctx, n)
+	if err != nil || d.host.Parent(n) != goal || iss.Title != s.title ||
+		!iss.HasLabel(githost.LabelPlanned) || !iss.HasLabel(githost.LabelReady) {
+		return server.ErrHostFailed
+	}
+	return nil
 }

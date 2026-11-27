@@ -871,3 +871,138 @@ func TestApproveWhileAStoryStepRunsIsRaceFree(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// F2: each sub-step of Approve fails in turn, before and after its write. A
+// retry, with the same key or a new one, finishes exactly what is missing.
+func TestApproveFinishesExactlyWhatIsMissing(t *testing.T) {
+	type fail struct {
+		op    string
+		skip  int
+		after bool
+	}
+	var cases []fail
+	for _, after := range []bool{false, true} {
+		for k := 0; k < 2; k++ {
+			cases = append(cases, fail{"CreateSubIssues", k, after})
+		}
+		for k := 0; k < 5; k++ { // planned and ready of two tickets, then the goal
+			cases = append(cases, fail{"AddLabel", k, after})
+		}
+	}
+	for i, c := range cases {
+		for _, sameKey := range []bool{true, false} {
+			name := fmt.Sprintf("%s skip %d after %v same key %v", c.op, c.skip, c.after, sameKey)
+			t.Run(name, func(t *testing.T) {
+				d := newDemo(t)
+				ctx := context.Background()
+				call := mustCall(t, d, "p-2")
+				steps := &memSteps{}
+				req := server.ApproveRequest{Call: call.ID, Version: call.Version, Steps: steps}
+				d.host.FailAfter(c.op, c.skip, c.after)
+				seq0 := snap(t, d).JournalSeq
+				_, err := d.Approve(ctx, req)
+				healed := err == nil && c.after && (c.op == "CreateSubIssues" || c.op == "AddLabel" && c.skip == 4) // the host holds it, only the reply was lost
+				if !healed && !errors.Is(err, server.ErrHostFailed) {
+					t.Fatalf("first press: %v", err)
+				}
+				if !healed {
+					// Nothing is done as far as the person is concerned.
+					if snap(t, d).JournalSeq != seq0 || countKind(t, d, "plan_approved") != 1 {
+						t.Fatal("a failed write wrote a journal entry")
+					}
+					d.fuMu.Lock()
+					queued := len(d.fu)
+					d.fuMu.Unlock()
+					if queued != 0 {
+						t.Fatalf("%d tasks were queued for a write that failed", queued)
+					}
+					if err := invariants(snap(t, d)); err != nil {
+						t.Fatalf("after the failure: %v", err)
+					}
+					if !sameKey {
+						req.Steps = &memSteps{}
+					}
+					if _, err := d.Approve(ctx, req); err != nil {
+						t.Fatalf("retry: %v", err)
+					}
+				}
+				// The host shows all of it: two tickets, once each, with both labels, and the approval.
+				titles := map[string]int{}
+				for n := 1; n < 40; n++ {
+					if d.host.Parent(n) != 2 {
+						continue
+					}
+					iss, _ := d.host.GetIssue(ctx, n)
+					titles[iss.Title]++
+					if !iss.HasLabel(githost.LabelPlanned) || !iss.HasLabel(githost.LabelReady) {
+						t.Errorf("ticket %d has labels %v", n, iss.Labels)
+					}
+				}
+				if len(titles) != 2 {
+					t.Fatalf("tickets of goal 2: %v", titles)
+				}
+				for title, n := range titles {
+					if n != 1 {
+						t.Errorf("%q made %d times", title, n)
+					}
+				}
+				if !hasLabel(t, d, 2, githost.LabelApproved) {
+					t.Fatal("goal 2 is not approved")
+				}
+				if countKind(t, d, "plan_approved") != 2 {
+					t.Fatalf("plan_approved entries = %d", countKind(t, d, "plan_approved"))
+				}
+				if !(c.skip == 0 && sameKey) {
+					return // the building of goal 2 is slow: it is checked once per kind of failure
+				}
+				if err := d.Drain(ctx); err != nil {
+					t.Fatal(err)
+				}
+				f := snap(t, d)
+				if err := invariants(f); err != nil {
+					t.Fatal(err)
+				}
+				ready := 0
+				for _, p := range f.Pieces {
+					if p.Goal == 2 && p.Station == 6 && p.State == floor.StateReady {
+						ready++
+					}
+				}
+				if ready != 2 {
+					t.Fatalf("pieces of goal 2 in the holding area = %d", ready)
+				}
+			})
+		}
+		_ = i
+	}
+}
+
+// A press that put the label on and then did not finish has no plan call left
+// to check. Its own press, at the version it had, finishes the job.
+func TestApproveResumesAfterTheLabelIsOn(t *testing.T) {
+	d := newDemo(t)
+	ctx := context.Background()
+	c := mustCall(t, d, "p-2")
+	d.approving[2] = c.Version // as an Approve that failed after the label leaves it
+	for _, l := range []string{githost.LabelApproved} {
+		if err := d.host.AddLabel(ctx, 2, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := callOf(t, d, "p-2"); ok {
+		t.Fatal("the plan call is still there")
+	}
+	other := server.ApproveRequest{Call: c.ID, Version: strings.Repeat("0", 64), Steps: &memSteps{}}
+	if _, err := d.Approve(ctx, other); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("another version: %v", err)
+	}
+	if _, err := d.Approve(ctx, server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}}); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if countKind(t, d, "plan_approved") != 2 {
+		t.Fatal("no journal entry")
+	}
+	if _, err := d.Approve(ctx, server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}}); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("done twice: %v", err)
+	}
+}

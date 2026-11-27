@@ -312,7 +312,21 @@ func (s *Server) write(w http.ResponseWriter, r *http.Request, key, target strin
 	}
 	ctx, cancel := context.WithTimeout(s.actCtx, actionTimeout) // not the request's: it outlives the request
 	done := make(chan writeOutcome, 1)
+	// The stopping check and the count of the write are one step, so no write
+	// can be counted after drain began to wait.
+	s.actMu.Lock()
+	if s.stopping.Load() {
+		s.actMu.Unlock()
+		cancel()
+		s.idem.finish(rec, http.StatusServiceUnavailable, nil, false, false) // refused: forgotten
+		WriteError(w, http.StatusServiceUnavailable, CodeUnavailable)
+		return
+	}
+	if s.stopCheckHook != nil {
+		s.stopCheckHook()
+	}
 	s.actWG.Add(1)
+	s.actMu.Unlock()
 	go func() {
 		defer s.actWG.Done()
 		defer cancel()
@@ -368,12 +382,17 @@ func (s *Server) runWrite(ctx context.Context, rec *idemRec, fn func(context.Con
 func (s *Server) waitActions() { s.actWG.Wait() }
 
 // beginStop is called when a stop is requested: no new write starts.
-func (s *Server) beginStop() { s.stopping.Store(true) }
+func (s *Server) beginStop() {
+	s.actMu.Lock()
+	s.stopping.Store(true)
+	s.actMu.Unlock()
+}
 
 // drain waits for the writes in flight up to the limit. When the limit is
 // reached the context of every write ends, so the work stops and its reply is a
 // failure, and drain says false. It never reports a write as done.
 func (s *Server) drain(limit time.Duration) bool {
+	s.beginStop() // idempotent: the wait never starts while a write may still be counted
 	done := make(chan struct{})
 	go func() { s.actWG.Wait(); close(done) }()
 	t := time.NewTimer(limit)

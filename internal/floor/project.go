@@ -1,8 +1,10 @@
 package floor
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -26,18 +28,26 @@ type ctx struct {
 	levels  map[string]int
 	checks  bool // the project's own checks are failing
 
-	goals     map[int]GoalIn
-	goalList  []GoalIn
-	tickets   []TicketIn
-	ticketDup map[int]bool
-	runs      map[int][]RunIn // by ticket, oldest first
-	goalRuns  map[int][]RunIn // acceptance runs by goal, oldest first
-	claims    map[int][]ClaimIn
-	gate      map[int][]GateIn
-	questions map[int][]QuestionIn
-	applied   map[int]bool
-	removed   map[int][]RemovedIn
-	accepted  map[int][]AcceptedIn
+	goals          map[int]GoalIn
+	goalList       []GoalIn
+	tickets        []TicketIn
+	ticketDup      map[int]bool
+	runs           map[int][]RunIn // by ticket, in attempt order
+	goalRuns       map[int][]RunIn // acceptance runs by goal, in attempt order
+	runsBad        map[int]bool    // tickets whose runs contradict each other
+	goalRunsBad    map[int]bool
+	reviewActive   map[int][]RunIn // second-opinion runs that are running
+	phrases        map[PhraseKey]string
+	openTicket     map[int]bool
+	cycle          map[int]bool // tickets on a dependency cycle
+	appliedEntries map[int][]EntryIn
+	acceptedBad    bool // an accepted change with no ticket number
+	claims         map[int][]ClaimIn
+	gate           map[int][]GateIn
+	questions      map[int][]QuestionIn
+	applied        map[int]bool
+	removed        map[int][]RemovedIn
+	accepted       map[int][]AcceptedIn
 
 	holding   HoldingIn
 	hostNow   time.Time
@@ -57,8 +67,8 @@ func Project(in Inputs) Floor {
 		f.GeneratedAt = fmtTime(in.Now)
 	}
 	f.Mode = in.Mode
-	if !f.Mode.Valid() {
-		f.Mode = ModeDemo // RULING: an unknown mode shows the DEMO band, which claims nothing about a real project
+	if f.Mode != ModeDemo && f.Mode != ModeLive {
+		f.Mode = ModeUnknown // fix round 1: never claim demo or live without knowing
 	}
 	if f.Mode == ModeDemo {
 		story := ""
@@ -134,7 +144,7 @@ func newCtx(in Inputs) *ctx {
 	c.ticketDup = map[int]bool{}
 	seen := map[int]bool{}
 	for _, t := range sortCanon(in.Tickets.Val) {
-		if t.Number <= 0 || !t.Open {
+		if t.Number <= 0 {
 			continue
 		}
 		if seen[t.Number] {
@@ -147,28 +157,25 @@ func newCtx(in Inputs) *ctx {
 	sort.SliceStable(c.tickets, func(i, j int) bool { return c.tickets[i].Number < c.tickets[j].Number })
 
 	c.runs, c.goalRuns = map[int][]RunIn{}, map[int][]RunIn{}
+	c.runsBad, c.goalRunsBad, c.reviewActive = map[int]bool{}, map[int]bool{}, map[int][]RunIn{}
+	rawRuns, rawGoalRuns := map[int][]RunIn{}, map[int][]RunIn{}
 	for _, r := range sortCanon(in.Runs.Val) {
-		if r.Task == "acceptance" && r.Ticket == 0 {
-			c.goalRuns[r.Goal] = append(c.goalRuns[r.Goal], r)
-		} else if r.Ticket > 0 {
-			c.runs[r.Ticket] = append(c.runs[r.Ticket], r)
+		switch {
+		case r.Task == "acceptance" && r.Ticket == 0:
+			rawGoalRuns[r.Goal] = append(rawGoalRuns[r.Goal], r)
+		case r.Task == "review" && r.Ticket > 0:
+			if isActive(r.Phase) {
+				c.reviewActive[r.Ticket] = append(c.reviewActive[r.Ticket], r)
+			}
+		case r.Ticket > 0:
+			rawRuns[r.Ticket] = append(rawRuns[r.Ticket], r)
 		}
 	}
-	byAge := func(rs []RunIn) {
-		sort.SliceStable(rs, func(i, j int) bool {
-			a, aok := known(rs[i].CreatedAt)
-			b, bok := known(rs[j].CreatedAt)
-			if aok != bok {
-				return !aok // a run with no creation time is oldest, so it never hides a dated one
-			}
-			return a.Before(b)
-		})
+	for n, rs := range rawRuns {
+		c.runs[n], c.runsBad[n] = orderRuns(rs)
 	}
-	for _, rs := range c.runs {
-		byAge(rs)
-	}
-	for _, rs := range c.goalRuns {
-		byAge(rs)
+	for g, rs := range rawGoalRuns {
+		c.goalRuns[g], c.goalRunsBad[g] = orderRuns(rs)
 	}
 	c.claims, c.gate, c.questions = map[int][]ClaimIn{}, map[int][]GateIn{}, map[int][]QuestionIn{}
 	if c.ok(SourceTeam) {
@@ -190,6 +197,10 @@ func newCtx(in Inputs) *ctx {
 	if c.ok(SourceStaging) {
 		c.holding = in.Holding.Val
 		c.holding.Applied = sortCanon(c.holding.Applied)
+		c.appliedEntries = map[int][]EntryIn{}
+		for _, e := range c.holding.Applied {
+			c.appliedEntries[e.Ticket] = append(c.appliedEntries[e.Ticket], e)
+		}
 		if c.holding.Exists {
 			for _, e := range c.holding.Applied {
 				c.applied[e.Ticket] = true
@@ -198,10 +209,41 @@ func newCtx(in Inputs) *ctx {
 				c.removed[r.Ticket] = append(c.removed[r.Ticket], r)
 			}
 		}
-		for _, a := range sortCanon(in.Accepted.Val) {
+		prev := ""
+		for i, a := range sortCanon(in.Accepted.Val) {
+			key := fmt.Sprintf("%+v", a)
+			if i > 0 && key == prev {
+				continue // the same change listed twice is one change
+			}
+			prev = key
+			if a.Ticket <= 0 {
+				c.acceptedBad = true
+				continue
+			}
 			c.accepted[a.Ticket] = append(c.accepted[a.Ticket], a)
 		}
 	}
+	c.phrases = Phrases()
+	c.openTicket = map[int]bool{}
+	adj := map[int][]int{}
+	var nodes []int
+	for _, t := range c.tickets {
+		if t.Open && !c.ticketDup[t.Number] {
+			c.openTicket[t.Number] = true
+		}
+	}
+	for _, t := range c.tickets {
+		if !c.openTicket[t.Number] {
+			continue
+		}
+		nodes = append(nodes, t.Number)
+		for _, d := range t.DependsOn {
+			if d != t.Number && c.openTicket[d] && !c.depDone(d) {
+				adj[t.Number] = append(adj[t.Number], d)
+			}
+		}
+	}
+	c.cycle = cycleNodes(nodes, adj)
 	return c
 }
 
@@ -251,7 +293,7 @@ func (c *ctx) fieldsKnown(k SourceKey) bool {
 	case SourceStore:
 		return in.Runs.Known && in.Paused.Known && in.Levels.Known && in.FirstAttempts.Known && in.Journal.Known
 	case SourceConfig:
-		return in.MaxAttempts.Known && in.MaxAttempts.Val > 0 && ValidMachineID(in.Machine) && in.Mode.Valid()
+		return in.MaxAttempts.Known && in.MaxAttempts.Val > 0 && ValidMachineID(in.Machine) && (in.Mode == ModeDemo || in.Mode == ModeLive)
 	case SourceTeam:
 		return in.Claims.Known
 	case SourceGate:
@@ -552,6 +594,9 @@ func (c *ctx) buildLog() ([]JournalEntry, int64) {
 		if len(e.Facts) == 0 {
 			e.Facts = nil
 		}
+		if !c.journalFillable(e) {
+			continue // fix round 1: an entry whose phrase would have an open slot is not shown
+		}
 		out = append(out, e)
 	}
 	return out, seq
@@ -566,4 +611,17 @@ func factMap(fs []NamedFact) map[string]Fact {
 		}
 	}
 	return m
+}
+
+// journalFillable says whether every slot of the entry's phrase has a number.
+func (c *ctx) journalFillable(e JournalEntry) bool {
+	ph := c.phrases[PhraseKey("journal."+string(e.Kind))]
+	has := func(slot string, field int) bool {
+		if !strings.Contains(ph, "{"+slot+"}") || field > 0 {
+			return true
+		}
+		_, ok := e.Facts[slot].Number()
+		return ok
+	}
+	return has("goal", e.Goal) && has("ticket", e.Ticket) && has("from", 0) && has("to", 0)
 }

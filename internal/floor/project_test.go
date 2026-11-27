@@ -85,11 +85,11 @@ func TestFreshTicketIsWaitingForAMachineNeverReady(t *testing.T) {
 	}
 }
 
-func TestATicketThatIsNotReadyAndHasNoRunIsCouldNotRead(t *testing.T) {
+func TestATicketThatIsNotReadyAndHasNoRunIsPlanned(t *testing.T) {
 	tk := ticket(57)
 	tk.Ready = false
 	f := Project(withTickets(healthy(), tk))
-	expect(t, f, "t57", 3, StateStuck, ReadFailed) // RULING: no rule matches
+	expect(t, f, "t57", 3, StateWaitingMachine, Planned) // fix round 1, ruling (c)
 }
 
 func TestWorkingRunMovesTheLineOnThisMachine(t *testing.T) {
@@ -170,7 +170,7 @@ func TestReadyOnlyAtTheHoldingAreaAndAccepted(t *testing.T) {
 	in.Holding = Some(holdingWith(true, 57))
 	in.Accepted = Some([]AcceptedIn{{Ticket: 58, Goal: 40, At: Some(at(-3 * time.Hour))}})
 	in = withRuns(in, func() RunIn { r := run(57, 1, api.PhaseSucceeded); return r }())
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GatePassed}})
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}})
 	f := Project(in)
 	expect(t, f, "t57", 6, StateReady, "")
 	expect(t, f, "t58", 7, StateReady, "")
@@ -195,7 +195,7 @@ func TestChangeAppliedOnUnpublishedStateWaitsToCombineAtStationFive(t *testing.T
 	in := withTickets(healthy(), ticket(57))
 	in.Holding = Some(holdingWith(false, 57))
 	in = withRuns(in, run(57, 1, api.PhaseSucceeded))
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GatePassed}})
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}})
 	expect(t, Project(in), "t57", 5, StateWaitingMachine, WaitingCombine)
 }
 
@@ -271,7 +271,9 @@ func TestHeldReasonsFollowTheTable(t *testing.T) {
 	for c, want := range cases {
 		r := run(57, 1, api.PhaseHeld)
 		r.HeldReason = c
-		f := Project(withRuns(withTickets(healthy(), ticket(57)), r))
+		tk := ticket(57)
+		tk.CutOffs = 3 // too_many_cut_offs needs its count (fix round 1)
+		f := Project(withRuns(withTickets(healthy(), tk), r))
 		expect(t, f, "t57", 3, want, c)
 	}
 	// A held run with no reason, or with a code that is not a held reason, is stuck: could not say why.
@@ -320,7 +322,7 @@ func TestCase6AcceptanceTaskThatUsedAllItsAttemptsBlocksItsTickets(t *testing.T)
 	r.Task, r.Ticket, r.EndReason = "acceptance", 0, CheckFailed
 	f := Project(withRuns(in, r))
 	expect(t, f, "k40", 2, StateStuck, AttemptsUsedUp)
-	p := expect(t, f, "t57", 2, StateStuck, AttemptsUsedUp)
+	p := expect(t, f, "t57", 2, StateStuck, WaitingChecks) // keeps its own code, takes the blocker's state
 	if p.BlockedBy == nil || *p.BlockedBy != "k40" {
 		t.Errorf("blockedBy: %v", p.BlockedBy)
 	}
@@ -334,7 +336,7 @@ func TestCase3AChangeTakenOutOfTheHoldingAreaIsStuckUntilItRunsAgain(t *testing.
 	in.Holding = Some(HoldingIn{Exists: true, StagingSeq: 8, Commit: strings.Repeat("b", 40), Published: true, Mine: true,
 		Removed: []RemovedIn{{Ticket: 57, At: Some(at(-5 * time.Minute))}}})
 	in = withRuns(in, run(57, 1, api.PhaseSucceeded))
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GatePassed}})
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}})
 	expect(t, Project(in), "t57", 3, StateStuck, TakenOut)
 	// A newer run, queued after the removal, takes over.
 	r2 := run(57, 2, api.PhaseQueued)
@@ -372,7 +374,7 @@ func TestCase4GoalWhoseApprovalWasRemoved(t *testing.T) {
 	g = goal(40)
 	g.Open = false
 	in.Goals = Some([]GoalIn{g})
-	expect(t, Project(in), "t57", 3, StateWaitingPerson, GoalNotApproved)
+	expect(t, Project(in), "t57", 3, StateStuck, InvalidFacts) // fix round 1: no person can approve it from the screen
 	// An approval that could not be read is not approval.
 	g = goal(40)
 	g.Approved = Opt[bool]{}
@@ -418,12 +420,12 @@ func TestADeadTeammateClaimIsWaitingForAMachine(t *testing.T) {
 	}
 }
 
-func TestClaimByAnotherMachineAndALocalRunForOneTicketIsClaimLost(t *testing.T) {
+func TestClaimByAnotherMachineAndALocalRunForOneTicketIsInvalidFacts(t *testing.T) {
 	in := withTickets(healthy(), ticket(57))
 	in.Claims = Some([]ClaimIn{claim(57, "bob-laptop", -20*time.Minute, 100*time.Minute)})
 	f := Project(withRuns(in, run(57, 1, api.PhaseWorking)))
-	expect(t, f, "t57", 3, StateWaitingMachine, ClaimLost)
-	if f.Signal.Inputs.Moving != 0 || f.Signal.Lamp == LampGreen {
+	expect(t, f, "t57", 3, StateStuck, InvalidFacts) // fix round 1, ruling (d)
+	if f.Signal.Inputs.Moving != 0 || f.Signal.Lamp != LampRed {
 		t.Errorf("moving %d lamp %s", f.Signal.Inputs.Moving, f.Signal.Lamp)
 	}
 }
@@ -446,16 +448,16 @@ func TestCase7HighRiskChangeWaitsForAYes(t *testing.T) {
 
 func TestGateWaitingForReviewIsAtStationFive(t *testing.T) {
 	in := withRuns(withTickets(healthy(), ticket(57)), run(57, 1, api.PhaseSucceeded))
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GateWaitingReview}})
-	expect(t, Project(in), "t57", 5, StateWaitingMachine, Queued)
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GateVerifyFailed}})
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GateWaitingReview}})
+	expect(t, Project(in), "t57", 5, StateWaitingMachine, WaitingReview)
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GateVerifyFailed}})
 	expect(t, Project(in), "t57", 4, StateStuck, CheckFailed)
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GateException, Code: NoReview}})
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GateException, Code: NoReview}})
 	expect(t, Project(in), "t57", 5, StateStuck, NoReview)
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GateException, Code: Queued}}) // not a stuck code
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GateException, Code: Queued}}) // not a stuck code
 	expect(t, Project(in), "t57", 5, StateStuck, Unknown)
-	in.Gate = Some([]GateIn{}) // succeeded run, the gate has no fact
-	expect(t, Project(in), "t57", 5, StateStuck, Unknown)
+	in.Gate = Some([]GateIn{}) // succeeded run, the gate has no fact yet (fix round 1, ruling (e))
+	expect(t, Project(in), "t57", 5, StateWaitingMachine, WaitingReview)
 }
 
 func TestCase8ProjectsOwnChecksFailing(t *testing.T) {
@@ -463,7 +465,7 @@ func TestCase8ProjectsOwnChecksFailing(t *testing.T) {
 	in.ProjectChecksFailing = Some(true)
 	in.Holding = Some(holdingWith(true, 59))
 	in = withRuns(in, run(57, 1, api.PhaseWorking), func() RunIn { r := run(59, 1, api.PhaseSucceeded); return r }())
-	in.Gate = Some([]GateIn{{Ticket: 59, Status: GatePassed}})
+	in.Gate = Some([]GateIn{{Ticket: 59, Run: "r_B59", Attempt: 1, Status: GatePassed}})
 	f := Project(in)
 	expect(t, f, "t57", 3, StateWorking, "") // working keeps the first place in the precedence
 	expect(t, f, "t58", 3, StateWaitingPerson, ProjectChecksFailing)
@@ -487,7 +489,7 @@ func TestCase9PendingAcceptInDeveloperMode(t *testing.T) {
 	h.Frozen, h.PendingAccept, h.PendingMode, h.PullRequest, h.PendingSince = true, true, PendingDeveloper, 12, Some(at(-3*time.Minute))
 	in.Holding = Some(h)
 	in = withRuns(in, run(57, 1, api.PhaseSucceeded), run(58, 1, api.PhaseSucceeded))
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GatePassed}, {Ticket: 58, Status: GatePassed}})
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}, {Ticket: 58, Run: "r_B58", Attempt: 1, Status: GatePassed}})
 	f := Project(in)
 	expect(t, f, "t57", 6, StateWaitingPerson, AcceptPending)
 	expect(t, f, "t58", 6, StateWaitingPerson, AcceptPending)
@@ -512,7 +514,7 @@ func TestAcceptCallWhenTheHoldingAreaIsPublishedAndNotPending(t *testing.T) {
 	in := withTickets(healthy(), ticket(57))
 	in.Holding = Some(holdingWith(true, 57))
 	in = withRuns(in, run(57, 1, api.PhaseSucceeded))
-	in.Gate = Some([]GateIn{{Ticket: 57, Status: GatePassed}})
+	in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}})
 	f := Project(in)
 	c := callOfKind(f, CallAccept)
 	if c == nil || len(c.Actions) != 1 || c.Actions[0] != ActionAccept || c.Who != WhoThisMachine {
@@ -559,7 +561,7 @@ func TestCase10StaleHostReadFailsTheHostSource(t *testing.T) {
 
 // ---- waiting on another piece ----
 
-func TestBlockedByInheritsStuckAndWaitingForAPerson(t *testing.T) {
+func TestBlockedByInheritsTheStateAndKeepsItsOwnCode(t *testing.T) {
 	t2 := ticket(2)
 	t2.DependsOn = []int{1}
 	in := withTickets(healthy(), ticket(1), t2)
@@ -570,40 +572,35 @@ func TestBlockedByInheritsStuckAndWaitingForAPerson(t *testing.T) {
 	}
 	// Blocker working: still waits for a machine.
 	expect(t, Project(withRuns(in, run(1, 1, api.PhaseWorking))), "t2", 3, StateWaitingMachine, WaitingDependency)
-	// Blocker stuck: this one is stuck, with the blocker's code.
+	// Blocker stuck: this one is stuck, with its own code.
 	r := run(1, 1, api.PhaseFailed)
 	r.EndReason = Deadline
-	f = Project(withRuns(in, r))
-	p = expect(t, f, "t2", 3, StateStuck, Deadline)
-	if p.BlockedBy == nil || *p.BlockedBy != "t1" {
+	p = expect(t, Project(withRuns(in, r)), "t2", 3, StateStuck, WaitingDependency)
+	if *p.BlockedBy != "t1" {
 		t.Errorf("blockedBy %v", p.BlockedBy)
 	}
 	// Blocker waits for a person.
 	in1 := in
 	in1.Levels = Some(map[string]int{"implement": 0})
-	expect(t, Project(in1), "t2", 3, StateWaitingPerson, LevelOff)
+	expect(t, Project(in1), "t2", 3, StateWaitingPerson, WaitingDependency)
 	// A dependency that is done does not block.
-	in.Accepted = Some([]AcceptedIn{{Ticket: 1, Goal: 40, At: Some(at(-time.Hour))}})
+	in.Accepted = Some([]AcceptedIn{{Ticket: 1, Goal: 40, At: Some(at(-30 * time.Hour))}})
 	in.Tickets = Some([]TicketIn{t2})
 	expect(t, Project(in), "t2", 3, StateWaitingMachine, Queued)
-	// A dependency nobody knows is not done.
+	// A dependency nobody lists is invalid facts (fix round 1).
 	t3 := ticket(3)
 	t3.DependsOn = []int{99}
-	f = Project(withTickets(healthy(), t3))
-	p = expect(t, f, "t3", 3, StateWaitingMachine, WaitingDependency)
-	if p.BlockedBy != nil {
-		t.Errorf("blockedBy %v", p.BlockedBy)
-	}
+	expect(t, Project(withTickets(healthy(), t3)), "t3", 3, StateStuck, InvalidFacts)
 }
 
-func TestDependencyCyclesTerminateAndWait(t *testing.T) {
+func TestDependencyCyclesTerminateAndAreInvalid(t *testing.T) {
 	a, b := ticket(1), ticket(2)
 	a.DependsOn, b.DependsOn = []int{2}, []int{1}
 	self := ticket(3)
 	self.DependsOn = []int{3}
 	f := Project(withTickets(healthy(), a, b, self))
 	for _, id := range []string{"t1", "t2", "t3"} {
-		expect(t, f, id, 3, StateWaitingMachine, WaitingDependency)
+		expect(t, f, id, 3, StateStuck, InvalidFacts)
 	}
 }
 
@@ -718,7 +715,7 @@ func TestASourceThatIsOkWithAnUnknownFieldIsReadFailed(t *testing.T) {
 func TestInvalidModeMachineAndRepositoryFailClosed(t *testing.T) {
 	in := healthy()
 	in.Mode = ""
-	if f := Project(in); !f.Mode.Valid() || f.Mode != ModeDemo || f.Demo == nil || f.Demo.Note != "made_up_project_fake_host" {
+	if f := Project(in); f.Mode != ModeUnknown || f.Demo != nil {
 		t.Errorf("mode %q demo %+v", f.Mode, f.Demo)
 	}
 	in = healthy()

@@ -266,7 +266,7 @@ func TestAcceptVersionFollowsTheStagingStateAndItsContents(t *testing.T) {
 		mut(&h)
 		in.Holding = Some(h)
 		in = withRuns(in, run(57, 1, api.PhaseSucceeded))
-		in.Gate = Some([]GateIn{{Ticket: 57, Status: GatePassed}})
+		in.Gate = Some([]GateIn{{Ticket: 57, Run: "r_B57", Attempt: 1, Status: GatePassed}})
 		return versionOf(Project(in), CallAccept)
 	}
 	v0 := mk(func(*HoldingIn) {})

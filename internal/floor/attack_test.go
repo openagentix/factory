@@ -89,9 +89,9 @@ func rich() Inputs {
 		run(6, 1, api.PhaseSucceeded), run(7, 1, api.PhaseSucceeded), r12, ra})
 	in.Questions = Some([]QuestionIn{{Ticket: 4, Goal: 40, CommentID: 77, Since: Some(at(-time.Hour)), Text: "Keep it?"}})
 	in.Claims = Some([]ClaimIn{claim(8, "bob-laptop", -time.Hour, time.Hour), claim(8, "dave-pc", -2*time.Hour, 2*time.Hour), claim(9, "carol-pc", -4*time.Hour, -time.Hour)})
-	in.Gate = Some([]GateIn{{Ticket: 5, Status: GatePassed}, {Ticket: 6, Status: GatePassed},
+	in.Gate = Some([]GateIn{{Ticket: 5, Run: "r_B5", Attempt: 1, Status: GatePassed}, {Ticket: 6, Run: "r_B6", Attempt: 1, Status: GatePassed},
 		{Ticket: 7, Status: GateConsequenceOpen, Risk: RiskContract, Run: "r_B7", Attempt: 1, Commit: strings.Repeat("e", 40), Machine: me, Since: Some(at(-time.Minute))},
-		{Ticket: 12, Status: GatePassed}})
+		{Ticket: 12, Run: "r_B12", Attempt: 1, Status: GatePassed}})
 	h := holdingWith(true, 5)
 	h.Applied = append(h.Applied, EntryIn{Ticket: 5, Goal: 40, At: Some(at(-2 * time.Hour))})
 	h.Removed = []RemovedIn{{Ticket: 12, At: Some(at(-time.Minute))}}
@@ -577,7 +577,8 @@ func checkInvariants(t *testing.T, i int, in Inputs, f Floor) {
 				fail("%s piece %s has reason %+v", p.State, p.ID, p.Reason)
 			}
 		default:
-			if p.Reason == nil || !p.Reason.Code.Valid() || p.Reason.Code.State() != p.State {
+			// Only waiting_dependency and waiting_checks may take the state of their blocker.
+			if p.Reason == nil || !p.Reason.Code.Valid() || (p.Reason.Code.State() != p.State && !(p.Reason.Code.TakesBlockerState() && p.BlockedBy != nil)) {
 				fail("piece %s state %s reason %+v", p.ID, p.State, p.Reason)
 			}
 		}

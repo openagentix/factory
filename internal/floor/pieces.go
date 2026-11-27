@@ -1,7 +1,9 @@
 package floor
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -128,13 +130,42 @@ func (c *ctx) claimFor(ticket int) (claimKind, ClaimIn) {
 	return kind, best
 }
 
-func (c *ctx) acceptedToday(n int) (*string, bool) {
+// lastAccept returns the latest usable accept time of a ticket: known and not
+// in the future.
+func (c *ctx) lastAccept(n int) (time.Time, bool) {
+	var best time.Time
+	found := false
 	for _, a := range c.accepted[n] {
-		if t, ok := known(a.At); ok && !t.After(c.now) && !t.Before(c.dayStart) {
-			return ptr(fmtTime(t)), true
+		if t, ok := known(a.At); ok && !t.After(c.now) && (!found || t.After(best)) {
+			best, found = t, true
 		}
 	}
-	return nil, false
+	return best, found
+}
+
+// acceptCovers says whether the latest accept holds the latest content of the
+// ticket. It does when the ticket has no run, or the accept is not before the
+// last phase change of the latest run, and the ticket is not applied on the
+// holding area with an entry that is later than the accept or has no time.
+// (Fix round 1: this keeps work that was accepted and then changed from
+// showing at 07.)
+func (c *ctx) acceptCovers(n int, latest *RunIn) (time.Time, bool) {
+	at, ok := c.lastAccept(n)
+	if !ok {
+		return at, false
+	}
+	if latest != nil {
+		ps, pok := known(latest.PhaseSince)
+		if !pok || at.Before(ps) {
+			return at, false
+		}
+	}
+	for _, e := range c.appliedEntries[n] {
+		if et, eok := known(e.At); !eok || et.After(at) {
+			return at, false
+		}
+	}
+	return at, true
 }
 
 func (c *ctx) goalApproved(g GoalIn, found bool) bool {
@@ -142,6 +173,9 @@ func (c *ctx) goalApproved(g GoalIn, found bool) bool {
 }
 
 func (c *ctx) manifestOf(g GoalIn, found bool) manifestState {
+	if c.src[SourceAcceptance] == SourceNotBuilt {
+		return manifestOn // fix round 1: no step that is not built holds a ticket
+	}
 	if !found || !c.ok(SourceAcceptance) || !g.ManifestOnStaging.Known {
 		return manifestUnknown
 	}
@@ -178,7 +212,7 @@ func (c *ctx) levelCode(task string) ReasonCode {
 // levelApplies lists the waiting codes that are about a task about to start.
 func levelApplies(c ReasonCode) bool {
 	switch c {
-	case Queued, Cap, Throttle, KeyBusy, StagingFrozen, MachineBusy, CutOff, ClaimExpired:
+	case Queued, Cap, Throttle, KeyBusy, StagingFrozen, MachineBusy, CutOff, ClaimExpired, WaitingReview:
 		return true
 	}
 	return false
@@ -217,18 +251,158 @@ func (c *ctx) failedCode(r RunIn, cutOffs, claimLosts int) ReasonCode {
 	return Unknown
 }
 
+// orderRuns puts the runs of one ticket (or one goal's acceptance task) in
+// attempt order. The latest run is the one with the highest attempt number.
+// It reports a contradiction when two different runs share an attempt number,
+// or when attempt order and creation order disagree where both are known.
+// A run listed twice is one run. (Fix round 1: the latest run no longer comes
+// from the creation time, which a hostile record could set.)
+func orderRuns(rs []RunIn) ([]RunIn, bool) {
+	rs = sortCanon(rs)
+	sort.SliceStable(rs, func(i, j int) bool { return rs[i].Attempt < rs[j].Attempt })
+	out := make([]RunIn, 0, len(rs))
+	bad := false
+	var maxCreated time.Time
+	haveMax := false
+	for _, r := range rs {
+		if n := len(out); n > 0 && out[n-1].Attempt == r.Attempt {
+			if fmtKey(out[n-1]) != fmtKey(r) {
+				bad = true
+			}
+			continue
+		}
+		if t, ok := known(r.CreatedAt); ok {
+			if haveMax && t.Before(maxCreated) {
+				bad = true
+			}
+			if !haveMax || t.After(maxCreated) {
+				maxCreated, haveMax = t, true
+			}
+		}
+		out = append(out, r)
+	}
+	return out, bad
+}
+
+func fmtKey(r RunIn) string { return fmt.Sprintf("%+v", r) }
+
+// cycleNodes returns the nodes that lie on a dependency cycle. It is iterative,
+// so a long chain cannot overflow the stack, and linear in the edges.
+func cycleNodes(nodes []int, adj map[int][]int) map[int]bool {
+	index, low := map[int]int{}, map[int]int{}
+	on := map[int]bool{}
+	var stack []int
+	out := map[int]bool{}
+	next := 0
+	type frame struct{ v, i int }
+	for _, root := range nodes {
+		if _, seen := index[root]; seen {
+			continue
+		}
+		index[root], low[root] = next, next
+		next++
+		stack = append(stack, root)
+		on[root] = true
+		work := []frame{{root, 0}}
+		for len(work) > 0 {
+			fr := &work[len(work)-1]
+			v := fr.v
+			if fr.i < len(adj[v]) {
+				w := adj[v][fr.i]
+				fr.i++
+				if _, seen := index[w]; !seen {
+					index[w], low[w] = next, next
+					next++
+					stack = append(stack, w)
+					on[w] = true
+					work = append(work, frame{w, 0})
+				} else if on[w] && index[w] < low[v] {
+					low[v] = index[w]
+				}
+				continue
+			}
+			if low[v] == index[v] {
+				var comp []int
+				for {
+					w := stack[len(stack)-1]
+					stack = stack[:len(stack)-1]
+					on[w] = false
+					comp = append(comp, w)
+					if w == v {
+						break
+					}
+				}
+				if len(comp) > 1 {
+					for _, w := range comp {
+						out[w] = true
+					}
+				}
+			}
+			work = work[:len(work)-1]
+			if len(work) > 0 {
+				if p := work[len(work)-1].v; low[v] < low[p] {
+					low[p] = low[v]
+				}
+			}
+		}
+	}
+	return out
+}
+
+// timedOut says whether an active run has run longer than its deadline plus
+// ten minutes, or longer than 24 hours when its deadline is not known.
+func (c *ctx) timedOut(r RunIn) bool {
+	start, ok := known(r.PhaseSince)
+	if !ok {
+		return false
+	}
+	if s, sok := known(r.StartedAt); sok && s.Before(start) {
+		start = s
+	}
+	limit := 24 * time.Hour
+	if r.Deadline > 0 {
+		limit = r.Deadline + 10*time.Minute
+	}
+	return c.now.Sub(start) > limit
+}
+
 func (c *ctx) buildPieces() []Piece {
 	var ds []*draft
 	haveTickets := map[int]bool{}
+	seen := map[int]bool{}
 	for _, tk := range c.tickets {
-		_, today := c.acceptedToday(tk.Number)
-		if (!tk.Open && !today) || (len(c.accepted[tk.Number]) > 0 && !today) {
-			continue // finished before today
+		seen[tk.Number] = true
+		at, covered := c.acceptCovers(tk.Number, c.latestOf(tk.Number))
+		today := covered && !at.Before(c.dayStart)
+		if !tk.Open && !today {
+			continue // closed, and not accepted today: finished
+		}
+		if tk.Open && covered && !today {
+			continue // fix round 1: accepted before today, with nothing newer: finished
 		}
 		if tk.Open {
 			haveTickets[tk.Goal] = true
 		}
 		ds = append(ds, c.classifyTicket(tk))
+	}
+	// A ticket accepted today that the host no longer lists still has its 07
+	// piece, so the station and the gauge agree.
+	var orphans []int
+	for n := range c.accepted {
+		if !seen[n] && n > 0 {
+			orphans = append(orphans, n)
+		}
+	}
+	sort.Ints(orphans)
+	for _, n := range orphans {
+		if at, ok := c.lastAccept(n); ok && !at.Before(c.dayStart) && !c.failAll {
+			goal := 0
+			if len(c.accepted[n]) > 0 {
+				goal = c.accepted[n][0].Goal
+			}
+			ds = append(ds, &draft{p: Piece{ID: "t" + itoa(n), Kind: KindTicket, Goal: goal, Ticket: ptr(n), Station: 7,
+				State: StateReady, Since: ptr(fmtTime(at))}})
+		}
 	}
 	for _, g := range c.goalList {
 		if p := c.classifyChecks(g); p != nil {
@@ -262,18 +436,53 @@ func (c *ctx) buildPieces() []Piece {
 	return pieces
 }
 
+func (c *ctx) latestOf(n int) *RunIn {
+	if rs := c.runs[n]; len(rs) > 0 {
+		return &rs[len(rs)-1]
+	}
+	return nil
+}
+
 func (c *ctx) classifyTicket(tk TicketIn) *draft {
+	d := c.classify(tk)
+	c.fill(d, tk)
+	return d
+}
+
+// fill checks that every slot of the phrase of the piece's reason can be
+// filled from the piece itself. If one cannot, the piece says so with
+// invalid_facts, whose phrase has only the piece. (Fix round 1.)
+func (c *ctx) fill(d *draft, tk TicketIn) {
+	r := d.p.Reason
+	if r == nil {
+		return
+	}
+	switch r.Code {
+	case TooManyCutOffs:
+		r.Count = tk.CutOffs
+	case TooManyClaimLost:
+		r.Count = tk.ClaimLosts
+	}
+	ph := c.phrases[PhraseKey("reason."+string(r.Code))]
+	missing := (strings.Contains(ph, "{attempt}") && r.Attempt < 1) ||
+		(strings.Contains(ph, "{maxAttempts}") && r.MaxAttempts < 1) ||
+		(strings.Contains(ph, "{count}") && r.Count < 1) ||
+		(strings.Contains(ph, "{machine}") && d.p.Machine == nil)
+	if missing {
+		c.mark(d, d.p.Station, InvalidFacts)
+		d.p.Machine, d.p.Claim, d.p.Since, d.callID = nil, nil, nil, ""
+	}
+}
+
+func (c *ctx) classify(tk TicketIn) *draft {
 	n := tk.Number
 	d := &draft{p: Piece{ID: "t" + itoa(n), Kind: KindTicket, Goal: tk.Goal, Ticket: ptr(n), Title: NewUntrusted(tk.Title, 120), Station: 3}}
 	g, haveGoal := c.goals[tk.Goal]
 	man := c.manifestOf(g, haveGoal)
 	runs := c.runs[n]
-	var latest *RunIn
-	if len(runs) > 0 {
-		latest = &runs[len(runs)-1]
-		if runIDPattern.MatchString(latest.ID) {
-			d.p.Run = ptr(latest.ID)
-		}
+	latest := c.latestOf(n)
+	if latest != nil && runIDPattern.MatchString(latest.ID) {
+		d.p.Run = ptr(latest.ID)
 	}
 	if t, ok := known(tk.CreatedAt); ok && !t.After(c.now) {
 		d.p.Since = ptr(fmtTime(t))
@@ -293,7 +502,7 @@ func (c *ctx) classifyTicket(tk TicketIn) *draft {
 		return stuck(3, ReadFailed)
 	}
 	ck, cl := c.claimFor(n)
-	if ck == claimBad {
+	if ck == claimBad || c.runsBad[n] {
 		return stuck(3, InvalidFacts)
 	}
 	var active []RunIn
@@ -302,25 +511,48 @@ func (c *ctx) classifyTicket(tk TicketIn) *draft {
 			active = append(active, r)
 		}
 	}
-	if len(active) > 1 {
-		return stuck(3, InvalidFacts)
+	if len(active) > 1 || (len(active) == 1 && (latest == nil || active[0].Attempt != latest.Attempt)) {
+		return stuck(3, InvalidFacts) // two active runs, or one that is not the latest attempt
 	}
 	if len(active) == 1 {
 		r := active[0]
+		st := stationOfRun(r)
 		if c.runBad(r) {
-			return stuck(stationOfRun(r), InvalidFacts)
+			return stuck(st, InvalidFacts)
 		}
 		if ck == claimLive {
-			c.mark(d, 3, ClaimLost) // RULING: two machines on one ticket. This one stands down and does not count as moving.
+			return stuck(st, InvalidFacts) // fix round 1: a run here and a live claim there contradict each other
+		}
+		if _, ok := known(r.PhaseSince); !ok {
+			return stuck(st, InvalidFacts) // fix round 1: working with no time cannot be judged
+		}
+		if c.timedOut(r) {
+			c.mark(d, st, NoProcess) // fix round 1: far past its deadline, so it is not moving
 			d.p.Since = c.fmtPast(r.PhaseSince)
+			c.tryNumbers(d, &r)
 			return d
 		}
-		d.p.State, d.p.Station = StateWorking, stationOfRun(r)
+		d.p.State, d.p.Station = StateWorking, st
 		d.p.Since = c.fmtPast(r.PhaseSince)
 		d.p.Machine = &PieceMachine{ID: c.machine, Mine: true}
 		return d
 	}
-	if ck == claimLive {
+	// A second opinion that is being written is work on this machine too.
+	if rv := c.reviewActive[n]; len(rv) > 0 && latest != nil && latest.Phase == api.PhaseSucceeded {
+		if len(rv) > 1 || c.runBad(rv[0]) || ck == claimLive {
+			return stuck(5, InvalidFacts)
+		}
+		if _, ok := known(rv[0].PhaseSince); !ok || c.timedOut(rv[0]) {
+			return stuck(5, InvalidFacts)
+		}
+		d.p.State, d.p.Station = StateWorking, 5
+		d.p.Since = c.fmtPast(rv[0].PhaseSince)
+		d.p.Machine = &PieceMachine{ID: c.machine, Mine: true}
+		return d
+	}
+	// A claim by another machine shows only when this machine has no facts of
+	// its own: no run, not applied, not taken out. (Fix round 1.)
+	if ck == claimLive && latest == nil && !c.applied[n] && len(c.removed[n]) == 0 {
 		d.p.State, d.p.Station = StateWorking, 3
 		d.p.Machine = &PieceMachine{ID: cl.Machine, Mine: false}
 		d.p.Claim = &PieceClaim{Since: fmtTime(cl.Since.Val), Expires: fmtTime(cl.Expires.Val)}
@@ -338,10 +570,15 @@ func (c *ctx) classifyTicket(tk TicketIn) *draft {
 		return stuck(4, ReadFailed)
 	}
 
-	// Accepted today, with no newer work, is at 07.
-	if at, ok := c.acceptedToday(n); ok && (latest == nil || latest.Phase == api.PhaseSucceeded) {
-		d.p.State, d.p.Station, d.p.Since, d.p.Reason = StateReady, 7, at, nil
+	// Accepted today, with nothing newer, is at 07.
+	if at, ok := c.acceptCovers(n, latest); ok && !at.Before(c.dayStart) {
+		d.p.State, d.p.Station, d.p.Since, d.p.Reason = StateReady, 7, ptr(fmtTime(at)), nil
 		return d
+	}
+	// No person can approve a ticket from the screen when its goal is missing,
+	// listed twice or closed. (Fix round 1.)
+	if !haveGoal || !g.Open {
+		return stuck(3, InvalidFacts)
 	}
 
 	code, st := Queued, StationNo(3)
@@ -362,7 +599,7 @@ func (c *ctx) classifyTicket(tk TicketIn) *draft {
 			break
 		}
 		if !tk.Ready {
-			code = ReadFailed // RULING: a ticket that is not ready and has no run matches no rule
+			code = Planned // fix round 1: not ready yet is a plan, not a read failure
 		}
 	default:
 		since = c.fmtPast(latest.PhaseSince)
@@ -407,9 +644,8 @@ func (c *ctx) classifyTicket(tk TicketIn) *draft {
 	state := d.p.State
 	if state == StateWaitingMachine && code != WaitingCombine && !c.goalApproved(g, haveGoal) {
 		c.person(d, GoalNotApproved)
-		if haveGoal && g.Open && g.Approved.Known {
-			d.callID = "p-" + itoa(g.Number)
-		}
+		// The goal exists and is open here, and waits for approval: it has a plan call.
+		d.callID = "p-" + itoa(g.Number)
 		return d
 	}
 	if state == StateWaitingMachine || state == StateWaitingPerson && code == NeedsHuman {
@@ -424,23 +660,25 @@ func (c *ctx) classifyTicket(tk TicketIn) *draft {
 			return d
 		}
 	}
-	if code == Queued && (latest == nil || latest.Phase == api.PhaseQueued) {
+	if (code == Queued || code == Planned) && (latest == nil || latest.Phase == api.PhaseQueued) {
+		deps := c.unmetDeps(tk)
 		switch {
-		case man != manifestOn:
-			c.mark(d, 2, WaitingChecks) // RULING: unknown manifest, not built or failed, waits like a missing one
-			if man == manifestOff {
-				d.checksOf = g.Number
+		case man == manifestOff:
+			c.mark(d, 2, WaitingChecks)
+			d.checksOf = g.Number
+		case man == manifestUnknown:
+			return stuck(3, ReadFailed) // RULING: a manifest nobody could read
+		case len(deps) > 0:
+			if c.depProblem(tk) {
+				return stuck(st, InvalidFacts) // a cycle, itself, a ticket that is not listed or closed unaccepted
 			}
-		case ck == claimDead:
+			c.mark(d, st, WaitingDependency)
+			d.deps = deps
+		case ck == claimDead && code == Queued:
 			c.mark(d, st, ClaimExpired)
 			d.p.Machine = &PieceMachine{ID: cl.Machine, Mine: false}
 			d.p.Claim = &PieceClaim{Since: fmtTime(cl.Since.Val), Expires: fmtTime(cl.Expires.Val)}
 			d.p.Since = ptr(fmtTime(cl.Expires.Val))
-		default:
-			if deps := c.unmetDeps(tk); len(deps) > 0 {
-				c.mark(d, st, WaitingDependency)
-				d.deps = deps
-			}
 		}
 		code = d.p.Reason.Code
 	}
@@ -468,6 +706,23 @@ func (c *ctx) classifyTicket(tk TicketIn) *draft {
 		}
 	}
 	return d
+}
+
+// depProblem says whether a ticket depends on itself, on a ticket on a cycle,
+// on a ticket that is not listed, or on a closed ticket that was never accepted.
+func (c *ctx) depProblem(tk TicketIn) bool {
+	if c.cycle[tk.Number] {
+		return true
+	}
+	for _, d := range tk.DependsOn {
+		if d == tk.Number || d <= 0 {
+			return true
+		}
+		if !c.depDone(d) && !c.openTicket[d] {
+			return true
+		}
+	}
+	return false
 }
 
 // person turns a piece into one that waits for a person. Its time is not known.
@@ -517,7 +772,7 @@ func (c *ctx) unmetDeps(tk TicketIn) []int {
 	var out []int
 	seen := map[int]bool{}
 	for _, d := range tk.DependsOn {
-		if d > 0 && !seen[d] && !c.depDone(d) {
+		if !seen[d] && !c.depDone(d) {
 			seen[d] = true
 			out = append(out, d)
 		}
@@ -527,7 +782,8 @@ func (c *ctx) unmetDeps(tk TicketIn) []int {
 }
 
 // afterSucceeded decides a ticket whose latest run succeeded, from the gate
-// and the holding area. A code of "" means ready.
+// and the holding area. A code of "" means ready. A gate fact counts only when
+// its run and attempt are those of the latest run (fix round 1).
 func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationNo, since *string, gate *GateIn, try *RunIn) {
 	since = c.fmtPast(r.PhaseSince)
 	if !r.HasChange.Known {
@@ -536,35 +792,43 @@ func (c *ctx) afterSucceeded(tk TicketIn, r RunIn) (code ReasonCode, st StationN
 	if !r.HasChange.Val {
 		return c.reworkOrUsed(NoChange, r), 3, since, nil, &r
 	}
-	gs := c.gate[tk.Number]
-	if len(gs) > 1 {
-		return InvalidFacts, 5, since, nil, nil
+	if c.src[SourceGate] == SourceNotBuilt {
+		return NotBuilt, 5, since, nil, nil // not stuck: the step is simply not there yet
 	}
-	if len(gs) == 0 {
-		return Unknown, 5, since, nil, nil // RULING: a change with no gate fact is not trusted
+	var match []GateIn
+	for _, g := range c.gate[tk.Number] {
+		if g.Run == r.ID && g.Attempt == r.Attempt {
+			match = append(match, g)
+		}
 	}
-	g := gs[0]
+	if len(match) > 1 || (len(match) == 0 && len(c.gate[tk.Number]) > 0) {
+		return InvalidFacts, 5, since, nil, nil // a fact for another run, or two for this one
+	}
+	if len(match) == 0 {
+		return WaitingReview, 5, since, nil, nil // the second opinion has not come yet
+	}
+	g := match[0]
 	gsince := c.fmtPast(g.Since)
 	switch g.Status {
 	case GateVerifyFailed:
 		return c.reworkOrUsed(CheckFailed, r), 4, gsince, nil, &r
 	case GateException:
 		if g.Code.Valid() && g.Code.State() == StateStuck {
-			return g.Code, stationOfCode(g.Code), gsince, nil, nil
+			if isRework(g.Code) || g.Code == AttemptsUsedUp {
+				try = &r
+			}
+			return g.Code, stationOfCode(g.Code), gsince, nil, try
 		}
 		return Unknown, 5, gsince, nil, nil
 	case GateConsequenceOpen:
 		return ConsequenceOpen, 5, gsince, &g, nil
 	case GateWaitingReview:
-		return Queued, 5, gsince, nil, nil
+		return WaitingReview, 5, gsince, nil, nil
 	case GatePassed:
 		if c.applied[tk.Number] {
 			var at *string
-			for _, e := range c.holding.Applied {
-				if e.Ticket == tk.Number {
-					at = c.fmtPast(e.At)
-					break
-				}
+			if es := c.appliedEntries[tk.Number]; len(es) > 0 {
+				at = c.fmtPast(es[0].At)
 			}
 			if c.holding.Published {
 				return "", 6, at, nil, nil
@@ -612,13 +876,24 @@ func (c *ctx) classifyChecks(g GoalIn) *draft {
 			active = append(active, r)
 		}
 	}
-	if len(active) > 1 || (len(active) == 1 && c.runBad(active[0])) || (latest != nil && c.runBad(*latest)) {
+	if c.goalRunsBad[g.Number] || len(active) > 1 || (len(active) == 1 && (c.runBad(active[0]) || active[0].Attempt != latest.Attempt)) ||
+		(latest != nil && c.runBad(*latest)) {
 		c.mark(d, 2, InvalidFacts)
 		return d
 	}
 	if len(active) == 1 {
+		r := active[0]
+		if _, ok := known(r.PhaseSince); !ok {
+			c.mark(d, 2, InvalidFacts)
+			return d
+		}
+		if c.timedOut(r) {
+			c.mark(d, 2, NoProcess)
+			c.tryNumbers(d, &r)
+			return d
+		}
 		d.p.State = StateWorking
-		d.p.Since = c.fmtPast(active[0].PhaseSince)
+		d.p.Since = c.fmtPast(r.PhaseSince)
 		d.p.Machine = &PieceMachine{ID: c.machine, Mine: true}
 		return d
 	}
@@ -644,6 +919,7 @@ func (c *ctx) classifyChecks(g GoalIn) *draft {
 		if latest != nil && isRework(latest.EndReason) || code == AttemptsUsedUp {
 			c.tryNumbers(d, latest)
 		}
+		c.fill(d, TicketIn{})
 		return d
 	}
 	if d.p.State == StateWaitingMachine && levelApplies(code) {
@@ -671,11 +947,12 @@ func (c *ctx) classifyPlan(g GoalIn, hasTickets bool) *draft {
 	return d
 }
 
-// resolve gives a piece that waits on another piece the state of the other
-// one, when that one is stuck or waits for a person. It repeats until nothing
-// changes, at most once per piece, so a cycle ends.
+// resolve gives a piece that waits on another piece the state of that piece,
+// when it is stuck or waits for a person. The piece keeps its own reason code
+// and its blockedBy. Each piece is settled once, so any graph, a chain of
+// thousands in any order, takes linear time, and a cycle ends.
 func (c *ctx) resolve(ds []*draft) {
-	idx := map[string]*draft{}
+	idx := make(map[string]*draft, len(ds))
 	for _, d := range ds {
 		idx[d.p.ID] = d
 	}
@@ -688,13 +965,14 @@ func (c *ctx) resolve(ds []*draft) {
 		}
 		return 0
 	}
-	for pass := 0; pass <= len(ds); pass++ {
-		changed := false
-		for _, d := range ds {
-			if d.p.State != StateWaitingMachine || d.p.Reason == nil ||
-				(d.p.Reason.Code != WaitingDependency && d.p.Reason.Code != WaitingChecks) {
-				continue
-			}
+	done, visiting := map[*draft]bool{}, map[*draft]bool{}
+	var settle func(d *draft)
+	settle = func(d *draft) {
+		if done[d] || visiting[d] {
+			return
+		}
+		visiting[d] = true
+		if d.p.State == StateWaitingMachine && d.p.Reason != nil && d.p.Reason.Code.TakesBlockerState() {
 			var ids []string
 			if d.p.Reason.Code == WaitingChecks && d.checksOf > 0 {
 				ids = append(ids, "k"+itoa(d.checksOf))
@@ -709,24 +987,26 @@ func (c *ctx) resolve(ds []*draft) {
 				if b == nil || b == d {
 					continue
 				}
+				settle(b)
 				if pick == nil || rank(b.p.State) > rank(pick.p.State) {
 					pick = b
 				}
 			}
-			if pick == nil {
-				d.p.BlockedBy = nil
-				continue
-			}
-			d.p.BlockedBy = ptr(pick.p.ID)
-			if rank(pick.p.State) > 0 && pick.p.Reason != nil {
-				r := *pick.p.Reason
-				d.p.State, d.p.Reason, d.p.Since = pick.p.State, &r, pick.p.Since
-				d.callID = pick.callID
-				changed = true
+			switch {
+			case pick == nil:
+				// Waiting on nothing that exists: the phrase would have an open slot.
+				c.mark(d, d.p.Station, InvalidFacts)
+				d.p.Since = nil
+			default:
+				d.p.BlockedBy = ptr(pick.p.ID)
+				if rank(pick.p.State) > 0 {
+					d.p.State, d.p.Since = pick.p.State, pick.p.Since
+				}
 			}
 		}
-		if !changed {
-			break
-		}
+		visiting[d], done[d] = false, true
+	}
+	for _, d := range ds {
+		settle(d)
 	}
 }

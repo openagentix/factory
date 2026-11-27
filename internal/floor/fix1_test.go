@@ -64,7 +64,7 @@ func TestA_AcceptedThenNewContent(t *testing.T) {
 func TestA_RunOrderContradiction(t *testing.T) {
 	a := run(17, 3, api.PhaseFailed)
 	a.ID, a.EndReason = "r_a", CheckFailed
-	a.CreatedAt, a.PhaseSince = Some(at(-3*time.Hour)), Some(at(-170*time.Minute))
+	a.CreatedAt, a.StartedAt, a.PhaseSince = Some(at(-3*time.Hour)), Some(at(-175*time.Minute)), Some(at(-170*time.Minute))
 	b := run(17, 1, api.PhaseQueued)
 	b.ID, b.CreatedAt = "r_b", Some(at(-time.Hour))
 	mk := func(rs ...RunIn) Floor { return Project(withRuns(withTickets(healthy(), ticket(17)), rs...)) }

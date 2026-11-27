@@ -193,7 +193,10 @@ func (c *ctx) buildCalls(pieces []Piece) {
 		}
 		sort.Ints(tl)
 		call := Call{ID: "a-" + itoa(int(h.StagingSeq)), Kind: CallAccept, Actions: []ActionName{}, Facts: c.facts("count", len(tl))}
-		extra := []string{itoa(int(h.StagingSeq)), h.Commit, fmt.Sprint(h.PendingAccept), string(h.PendingMode), itoa(h.PullRequest)}
+		// The version covers what the action depends on: the state, frozen,
+		// published and pending, and who holds staging. (Fix round 1.)
+		extra := []string{itoa(int(h.StagingSeq)), h.Commit, fmt.Sprint(h.PendingAccept), string(h.PendingMode), itoa(h.PullRequest),
+			fmt.Sprint(h.Frozen), fmt.Sprint(h.Published), fmt.Sprint(h.Mine)}
 		for _, t := range tl {
 			extra = append(extra, itoa(t))
 		}
@@ -207,8 +210,8 @@ func (c *ctx) buildCalls(pieces []Piece) {
 			}
 		default:
 			call.Who = WhoThisMachine
-			if h.Mine {
-				call.Actions = []ActionName{ActionAccept}
+			if h.Mine && !h.Frozen && h.Published {
+				call.Actions = []ActionName{ActionAccept} // never on a frozen state
 			}
 		}
 		if h.PendingAccept {

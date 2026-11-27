@@ -69,7 +69,7 @@ func TestNoMutableGlobals(t *testing.T) {
 		}
 		src, _ := os.ReadFile(name)
 		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-			if !strings.HasPrefix(m[2], "regexp.MustCompile(") {
+			if !strings.HasPrefix(m[2], "regexp.MustCompile(") && !strings.HasPrefix(m[2], "strings.NewReplacer(") { // a Replacer never changes
 				t.Errorf("%s: package variable %s is not a compiled pattern", name, m[1])
 			}
 		}

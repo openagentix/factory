@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const maxAttentionActions = 1_000_000 // a larger value is not believed, and cannot overflow the sum
+
 const gaugeMinSamples = 5 // record 0004: every gauge with a threshold needs five cases
 
 func (c *ctx) sourceGaugeState(keys ...SourceKey) (GaugeState, bool) {
@@ -63,6 +65,10 @@ func (c *ctx) gaugeAccepted() Gauge {
 	st, ok := c.sourceGaugeState(SourceStaging)
 	g.State = st
 	if !ok {
+		return g
+	}
+	if c.acceptedBad {
+		g.State = GaugeReadFailed // an accepted change with no ticket cannot be counted
 		return g
 	}
 	series := make([]int, 7)
@@ -192,7 +198,7 @@ func (c *ctx) gaugeAttention() Gauge {
 	actions := map[int]int{}
 	for _, a := range c.in.Attention.Val {
 		t, tok := known(a.AcceptedAt)
-		if !tok || t.After(c.now) || a.Actions < 0 || a.Goal <= 0 {
+		if !tok || t.After(c.now) || a.Actions < 0 || a.Actions > maxAttentionActions || a.Goal <= 0 {
 			g.State = GaugeReadFailed
 			return g
 		}

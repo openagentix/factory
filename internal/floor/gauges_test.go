@@ -189,7 +189,7 @@ func TestInWorkCountsStationsOneToSixAndNamesTheMachines(t *testing.T) {
 	in.Holding = Some(holdingWith(true, 3))
 	in.Accepted = Some([]AcceptedIn{{Ticket: 4, Goal: 40, At: Some(at(-time.Hour))}})
 	in = withRuns(in, run(1, 1, api.PhaseWorking), run(3, 1, api.PhaseSucceeded))
-	in.Gate = Some([]GateIn{{Ticket: 3, Status: GatePassed}})
+	in.Gate = Some([]GateIn{{Ticket: 3, Run: "r_B3", Attempt: 1, Status: GatePassed}})
 	in.Claims = Some([]ClaimIn{claim(2, "bob-laptop", -time.Minute, time.Hour)})
 	g := gauge(Project(in), GaugeInWork)
 	if g.State != GaugeOK || *g.Value != 3 || *g.Machines != 2 { // t1, t2, t3; t4 is accepted

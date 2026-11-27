@@ -96,7 +96,9 @@ func Dependents(list []Entry, id string) ([]string, error) {
 			waiting[d] = append(waiting[d], e.Ticket)
 		}
 	}
-	reached := map[int]bool{}
+	// The ticket of id goes too, so its other changes (a fix-ci change after
+	// an implement change) are taken, and so is everything that waits for it.
+	reached := map[int]bool{list[root].Ticket: true}
 	queue := []int{list[root].Ticket}
 	for len(queue) > 0 {
 		t := queue[0]

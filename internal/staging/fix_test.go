@@ -1,8 +1,11 @@
 package staging
 
 import (
+	"context"
 	"errors"
+	"github.com/openagentix/factory/internal/api"
 	"github.com/openagentix/factory/internal/githost"
+	"github.com/openagentix/factory/internal/verify"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,3 +225,49 @@ func TestFix06_MergeOfAnotherBranchIsNotAnAccept(t *testing.T) {
 }
 
 var _ = githost.StagingBranch
+
+// Fix 8: the list has a size limit. Add refuses when it is full and stores
+// nothing.
+func TestFix08_AddRefusesWhenTheListIsFull(t *testing.T) {
+	t.Parallel()
+	f := newFx(t, func(_ *fx, c *Config) { c.MaxEntries = 2 })
+	f.queueFile(1, "a.txt")
+	f.queueFile(2, "b.txt")
+	e := f.entry(3, f.commit(f.def, put("c.txt", "c\n")), f.def)
+	if _, err := f.s.Add(f.ctx, e, f.decision(e)); !errors.Is(err, ErrFull) {
+		t.Fatalf("Add: %v", err)
+	}
+	if got := f.liveIDs(); len(got) != 2 {
+		t.Errorf("live = %v", got)
+	}
+	cfg := f.cfg
+	cfg.MaxEntries = -1
+	if _, err := New(cfg); err == nil {
+		t.Error("a negative limit was accepted")
+	}
+}
+
+// Fix 9: a check moves the mirror ref to a commit that does not descend from
+// the old default. The rebuild does not adopt it.
+func TestFix09_DefaultThatIsNotAFastForwardIsNotAdopted(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	stranger := f.commit("", put("evil.txt", "e\n"))
+	real, moved := f.s.runChecks, false
+	f.s.runChecks = func(ctx context.Context, d, commit string, cs []api.Check, o verify.CheckOptions) ([]verify.CheckOutcome, error) {
+		if !moved {
+			moved = true
+			if err := f.r.SetDefaultMirror(ctx, stranger, f.def); err != nil {
+				t.Error(err)
+			}
+		}
+		return real(ctx, d, commit, cs, o)
+	}
+	e := f.entry(1, f.commit(f.def, put("a.txt", "a\n")), f.def)
+	if _, err := f.s.Add(f.ctx, e, f.decision(e)); !errors.Is(err, ErrDefaultMoved) {
+		t.Fatalf("err = %v", err)
+	}
+	if f.latestSeq() != 0 || f.hostStaging() != "" {
+		t.Error("a state was recorded or pushed")
+	}
+}

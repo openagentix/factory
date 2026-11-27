@@ -423,6 +423,14 @@ func (s *Staging) record(ctx context.Context, st State, oldRef, def string) (Sta
 		return State{}, false, err
 	}
 	if now != def {
+		// Only a real fast-forward is followed. A default that is not a
+		// descendant of the one the rebuild used was not fetched by the
+		// factory, so it is not adopted.
+		if ff, err := s.cfg.Repo.IsAncestor(ctx, def, now); err != nil {
+			return State{}, false, err
+		} else if !ff {
+			return State{}, false, ErrDefaultMoved
+		}
 		return State{}, true, nil
 	}
 	cur, err := s.readStagingRef(ctx)

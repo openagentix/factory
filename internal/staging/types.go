@@ -186,6 +186,8 @@ var (
 	ErrNoChecks = errors.New("staging: no task checks are configured")
 	// ErrCheckUnknown: a check result is missing, so nothing is combined.
 	ErrCheckUnknown = errors.New("staging: a check result is missing")
+	// ErrFull: the list of changes is at its size limit.
+	ErrFull = errors.New("staging: the list of changes is full")
 	// ErrMergedUnseen: the staging pull request was merged at a head that
 	// the person did not see.
 	ErrMergedUnseen = errors.New("staging: the pull request was merged at a state nobody accepted")

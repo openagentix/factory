@@ -15,6 +15,9 @@ import (
 	"github.com/openagentix/factory/internal/verify"
 )
 
+// DefaultMaxEntries is the default of Config.MaxEntries.
+const DefaultMaxEntries = 50
+
 // Config is everything a Staging needs. Every field that gates a decision
 // must be set on purpose: a blank value is an error, never a default that
 // lets a change in.
@@ -48,6 +51,10 @@ type Config struct {
 	// NoAcceptance is true. An error or a blank answer stops the rebuild.
 	AcceptanceSource func(ctx context.Context, goal int) (string, error)
 	NoAcceptance     bool
+
+	// MaxEntries is the most changes in the live and waiting lists together.
+	// Zero means DefaultMaxEntries. A negative value is an error.
+	MaxEntries int
 
 	// DefaultBranch is the name of the default branch, the base of the
 	// staging pull request.
@@ -104,6 +111,8 @@ func New(cfg Config) (*Staging, error) {
 		return bad("no acceptance source and NoAcceptance is not set")
 	case cfg.AcceptanceSource != nil && cfg.NoAcceptance:
 		return bad("an acceptance source is set and NoAcceptance is true")
+	case cfg.MaxEntries < 0:
+		return bad("MaxEntries must be at least 1")
 	case len(cfg.AllowedTasks) == 0:
 		return bad("no task is allowed, so nothing could be added")
 	}
@@ -119,6 +128,9 @@ func New(cfg Config) (*Staging, error) {
 		if strings.TrimSpace(c.Name) == "" || strings.TrimSpace(c.Run) == "" {
 			return bad("check %d has no name or no command", i)
 		}
+	}
+	if cfg.MaxEntries == 0 {
+		cfg.MaxEntries = DefaultMaxEntries
 	}
 	s := &Staging{cfg: cfg, runChecks: verify.RunChecks, runAcceptance: acceptance.Run}
 	if s.cfg.Now == nil {

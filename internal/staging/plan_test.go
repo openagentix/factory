@@ -121,3 +121,21 @@ func TestDependentsOnlyLiveEntries(t *testing.T) {
 		t.Fatalf("Dependents = %v, %v", got, err)
 	}
 }
+
+// Fix 7: an undone change takes the other changes of its ticket too, and
+// everything that waits for any ticket taken.
+func TestFix07_DependentsTakeTheSameTicket(t *testing.T) {
+	e1, e1fix, e2, e3 := goodEntry("r1", 1, '1'), goodEntry("r1fix", 1, '5'), goodEntry("r2", 2, '2'), goodEntry("r3", 3, '3')
+	e1fix.Task = "fix-ci"
+	e2.DependsOn = []int{1}
+	got, err := Dependents([]Entry{e1, e1fix, e2, e3}, "r1")
+	if err != nil || !reflect.DeepEqual(got, []string{"r1fix", "r2"}) {
+		t.Fatalf("Dependents = %v, %v", got, err)
+	}
+	e4 := goodEntry("r4", 4, '4')
+	e4.DependsOn = []int{2}
+	got, _ = Dependents([]Entry{e1, e1fix, e2, e4}, "r1fix")
+	if !reflect.DeepEqual(got, []string{"r1", "r2", "r4"}) {
+		t.Fatalf("Dependents(r1fix) = %v", got)
+	}
+}

@@ -75,6 +75,15 @@ func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, e
 	if err != nil {
 		return State{}, err
 	}
+	live, waiting, err := s.cfg.Store.Entries(ctx)
+	if err != nil {
+		return State{}, err
+	}
+	if len(live)+len(waiting) >= s.cfg.MaxEntries {
+		if retry, _ := s.isUnrecordedRetry(ctx, e, ErrDuplicate); !retry {
+			return State{}, fmt.Errorf("%w: %d changes", ErrFull, s.cfg.MaxEntries)
+		}
+	}
 	if err := s.cfg.Store.AddEntry(ctx, e, frozen); err != nil {
 		retry, rerr := s.isUnrecordedRetry(ctx, e, err)
 		if rerr != nil {

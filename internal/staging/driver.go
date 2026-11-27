@@ -48,6 +48,9 @@ const maxTitleRunes = 200
 // nothing, and the error is ErrFrozen. The waiting change is applied by the
 // first rebuild after the freeze ends.
 //
+// Add is refused, and nothing is stored, between an accept and the next fetch
+// of the default branch (ErrMirrorBehind). The caller retries later.
+//
 // After admission, an error from the rebuild leaves the change in the list.
 // Call Rebuild to try again.
 func (s *Staging) Add(ctx context.Context, e Entry, dec gate.Decision) (State, error) {
@@ -467,16 +470,30 @@ func (s *Staging) gate(ctx context.Context, stateDefault string) error {
 // and Accept return ErrMergedUnseen. By clearing it, the person confirms that
 // they have looked at what was merged into the default branch and accept it
 // as the new base. Clearing does not undo the merge. It records the default
-// commit it was cleared on, and nothing proceeds until the mirror names a
-// different default commit and a rebuild has run on it.
+// commit the latest state was built on as out of date, and nothing proceeds
+// until the mirror names a different default commit and a rebuild has run on
+// it. It is an error when no exception is recorded.
 func (s *Staging) ClearException(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	def, err := s.readDefault(ctx)
+	if _, bad, err := s.cfg.Store.GetException(ctx); err != nil {
+		return err
+	} else if !bad {
+		return errors.New("staging: no exception is recorded")
+	}
+	// The base that is now out of date is the default the latest state was
+	// built on, not the current mirror, which may be fetched already.
+	latest, ok, err := s.cfg.Store.Latest(ctx)
 	if err != nil {
 		return err
 	}
-	return s.cfg.Store.ClearException(ctx, def)
+	mark := latest.Default
+	if !ok {
+		if mark, err = s.readDefault(ctx); err != nil {
+			return err
+		}
+	}
+	return s.cfg.Store.ClearException(ctx, mark)
 }
 
 func (s *Staging) prTitle(st State) string {

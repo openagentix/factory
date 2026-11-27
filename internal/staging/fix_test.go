@@ -426,3 +426,83 @@ func TestRound2D_WedgeNamesTheChange(t *testing.T) {
 		t.Fatalf("Undo: %+v %v %v", st, removed, err)
 	}
 }
+
+// Last fixes, 1: the mark is the default the latest state was built on.
+func TestLast1_ClearExceptionMarksTheOldBase(t *testing.T) {
+	t.Parallel()
+	mk := func(t *testing.T) (*fx, State) {
+		f, s2 := oneState(t, devMode)
+		res, _ := f.s.Accept(f.ctx, s2.Seq, s2.Commit)
+		_ = f.s.CancelAccept(f.ctx, s2.Seq)
+		f.fake.SimulateMerge(res.Pending.PR, "a-developer")
+		f.host.prHead = strings.Repeat("5", 40)
+		if _, err := f.s.Resolve(f.ctx); !errors.Is(err, ErrMergedUnseen) {
+			t.Fatal(err)
+		}
+		return f, s2
+	}
+	t.Run("mirror already fetched", func(t *testing.T) {
+		f, _ := mk(t)
+		f.setDefault(f.commit(f.def, put("merged.txt", "m\n")))
+		if err := f.s.ClearException(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.s.Rebuild(f.ctx); err != nil {
+			t.Fatalf("Rebuild on the new default: %v", err)
+		}
+	})
+	t.Run("mirror not fetched", func(t *testing.T) {
+		f, s2 := mk(t)
+		if err := f.s.ClearException(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.s.Rebuild(f.ctx); !errors.Is(err, ErrMirrorBehind) {
+			t.Errorf("Rebuild: %v", err)
+		}
+		if _, err := f.s.Accept(f.ctx, s2.Seq, s2.Commit); !errors.Is(err, ErrMirrorBehind) {
+			t.Errorf("Accept: %v", err)
+		}
+		f.setDefault(f.commit(f.def, put("merged.txt", "m\n")))
+		if _, err := f.s.Rebuild(f.ctx); err != nil {
+			t.Errorf("Rebuild after the fetch: %v", err)
+		}
+	})
+	t.Run("no exception", func(t *testing.T) {
+		f, _ := oneState(t)
+		before, _ := f.store.BaseMark(f.ctx)
+		if err := f.s.ClearException(f.ctx); err == nil {
+			t.Fatal("cleared an exception that is not there")
+		}
+		if after, _ := f.store.BaseMark(f.ctx); after != before {
+			t.Errorf("the mark changed: %q to %q", before, after)
+		}
+	})
+}
+
+// Last fixes, 2: an accept at or below the last accepted state changes
+// nothing.
+func TestLast2_MarkAcceptedIsIdempotent(t *testing.T) {
+	t.Parallel()
+	m := NewMemStore()
+	ctx := context.Background()
+	for i, d := range []string{strings.Repeat("a", 40), strings.Repeat("b", 40)} {
+		seq, err := m.SaveState(ctx, State{Commit: strings.Repeat("c", 40), Default: d, Applied: []AppliedEntry{{EntryID: "e" + string(rune('1'+i))}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.MarkPublished(ctx, seq); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.MarkAccepted(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkAccepted(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	last, _, _ := m.LastAccepted(ctx)
+	mark, _ := m.BaseMark(ctx)
+	if last.Seq != 2 || mark != strings.Repeat("b", 40) {
+		t.Errorf("last %d, mark %q", last.Seq, mark)
+	}
+}

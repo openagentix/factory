@@ -73,6 +73,8 @@
 //     stopped the rebuild.
 //   - Undo of one change of a ticket takes every change of that ticket,
 //     earlier ones too, and everything that waits for the ticket.
+//   - Add is refused, and nothing is stored, between an accept and the next
+//     fetch of the default branch. The caller retries later.
 //   - After any accept, or a cleared exception, the states recorded before it
 //     are stale. Add, Undo, Rebuild and Accept refuse with ErrMirrorBehind
 //     until the mirror names another default commit, and Accept refuses a

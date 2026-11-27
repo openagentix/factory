@@ -2,6 +2,7 @@ package githost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -86,6 +87,7 @@ type fakeState struct {
 	protected     bool
 	parents       map[int]int
 	permissions   map[string]string
+	failures      map[string]bool // op -> fail after the write; one shot
 }
 
 // Fake is an in memory git host that follows the same rules as the real one,
@@ -292,15 +294,61 @@ func (f *Fake) ListComments(_ context.Context, n int, since time.Time) ([]Commen
 	return classify(it.comments, f.factoryLogin, since, f.writer), nil
 }
 
-func (f *Fake) post(n int, text, marker string) error {
+// FailNext makes the next call of op fail once. With afterWrite false the
+// call fails before it writes anything. With afterWrite true it writes, then
+// reports a failure, as a host does when its answer is lost. op is a method
+// name: PostComment, PostAnswer, PostConsequenceAnswer, AddLabel,
+// RemoveLabel, MergeStaging. The error holds no text from the caller.
+func (f *Fake) FailNext(op string, afterWrite bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failures == nil {
+		f.failures = map[string]bool{}
+	}
+	f.failures[op] = afterWrite
+}
+
+// takeFailure reports whether op must fail, and when. The caller holds f.mu.
+func (s *fakeState) takeFailure(op string) (fail, afterWrite bool) {
+	after, ok := s.failures[op]
+	if ok {
+		delete(s.failures, op)
+	}
+	return ok, after
+}
+
+var errFakeFailure = errors.New("githost: the fake host failed on purpose")
+
+// EditIssueBody changes the body of an issue, as a person editing it would.
+func (f *Fake) EditIssueBody(number int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil {
+		it.Body = body
+	}
+}
+
+// postRaw posts body exactly as given, under op's failure hook.
+func (f *Fake) postRaw(op string, n int, body string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fail, after := f.takeFailure(op)
+	if fail && !after {
+		return 0, errFakeFailure
+	}
 	it, err := f.get(n)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	f.addRawComment(it, f.factoryLogin, "NONE", withMarker(text, marker))
-	return nil
+	f.addRawComment(it, f.factoryLogin, "NONE", body)
+	if fail {
+		return 0, errFakeFailure
+	}
+	return f.nextComment, nil
+}
+
+func (f *Fake) post(op string, n int, text, marker string) (int64, error) {
+	return f.postRaw(op, n, withMarker(text, marker))
 }
 
 func (f *Fake) PostComment(_ context.Context, n int, runID, body string) error {
@@ -308,11 +356,20 @@ func (f *Fake) PostComment(_ context.Context, n int, runID, body string) error {
 	if err != nil {
 		return err
 	}
-	return f.post(n, body, m)
+	_, err = f.post("PostComment", n, body, m)
+	return err
 }
 
-func (f *Fake) PostAnswer(_ context.Context, n int, body string) error {
-	return f.post(n, body, AnswerMarker())
+func (f *Fake) PostAnswer(_ context.Context, n int, body string) (int64, error) {
+	return f.post("PostAnswer", n, body, AnswerMarker())
+}
+
+func (f *Fake) PostConsequenceAnswer(_ context.Context, n int, m ConsequenceMarker) (int64, error) {
+	body, err := ConsequenceAnswerBody(m.Run, m.Attempt, m.Commit, m.Yes)
+	if err != nil {
+		return 0, err
+	}
+	return f.postRaw("PostConsequenceAnswer", n, body)
 }
 
 func (f *Fake) AddLabel(_ context.Context, n int, label string) error {
@@ -321,12 +378,19 @@ func (f *Fake) AddLabel(_ context.Context, n int, label string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("AddLabel")
+	if fail && !after {
+		return errFakeFailure
+	}
 	it, err := f.get(n)
 	if err != nil {
 		return err
 	}
 	if !it.HasLabel(label) {
 		it.Labels = append(it.Labels, label)
+	}
+	if fail {
+		return errFakeFailure
 	}
 	return nil
 }
@@ -337,6 +401,10 @@ func (f *Fake) RemoveLabel(_ context.Context, n int, label string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("RemoveLabel")
+	if fail && !after {
+		return errFakeFailure
+	}
 	it, err := f.get(n)
 	if err != nil {
 		return err
@@ -348,6 +416,9 @@ func (f *Fake) RemoveLabel(_ context.Context, n int, label string) error {
 		}
 	}
 	it.Labels = keep
+	if fail {
+		return errFakeFailure
+	}
 	return nil
 }
 
@@ -359,7 +430,7 @@ func (f *Fake) Claim(ctx context.Context, n int, machineID, runID string, expiry
 		return ClaimResult{}, err
 	}
 	m, _ := ClaimMarkerText(machineID, runID)
-	if err := f.post(n, "Claimed by a factory run.", m); err != nil {
+	if _, err := f.post("Claim", n, "Claimed by a factory run.", m); err != nil {
 		return ClaimResult{}, err
 	}
 	now := f.clock()
@@ -506,11 +577,21 @@ func (f *Fake) MergeStaging(_ context.Context, spec MergeSpec) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("MergeStaging")
+	if fail && !after {
+		return errFakeFailure
+	}
 	it, err := f.get(spec.PullRequest)
 	if err != nil {
 		return err
 	}
-	return f.mergeLocked(it, StagingBranch, spec.Commit)
+	if err := f.mergeLocked(it, StagingBranch, spec.Commit); err != nil {
+		return err
+	}
+	if fail {
+		return errFakeFailure
+	}
+	return nil
 }
 
 func (f *Fake) OpenRevert(_ context.Context, spec RevertSpec) (PullRequest, error) {

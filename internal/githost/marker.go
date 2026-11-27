@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,7 @@ import (
 //	<!-- oxf:run id=RUN -->
 //	<!-- oxf:answer -->
 //	<!-- oxf:claim machine=MACHINE run=RUN -->
+//	<!-- oxf:consequence run=RUN attempt=N commit=COMMIT answer=yes -->
 //	<!-- oxf:deps {"criteria":[1],"dependsOn":[12]} -->
 
 var idRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
@@ -25,6 +27,7 @@ const (
 	markerRun
 	markerAnswer
 	markerClaim
+	markerConsequence
 )
 
 // Deps is the machine-read dependency block of a sub-issue body.
@@ -108,6 +111,10 @@ func parseMarker(body string) (markerKind, string, *ClaimMarker) {
 	case "answer":
 		if len(fields) == 1 {
 			return markerAnswer, "", nil
+		}
+	case "consequence":
+		if _, ok := ParseConsequence(body); ok {
+			return markerConsequence, "", nil
 		}
 	case "claim":
 		if len(fields) == 3 {
@@ -197,4 +204,113 @@ func MarkerIDBelongsToRun(id, runID string) bool {
 	}
 	slot, ok := strings.CutPrefix(id, runID+".")
 	return ok && slotRE.MatchString(slot)
+}
+
+// ConsequenceMarker is the content of a consequence answer marker: the open
+// exception it answers (run, attempt, commit) and the answer.
+type ConsequenceMarker struct {
+	Run     string
+	Attempt int
+	Commit  string
+	Yes     bool
+}
+
+var commit40RE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+func (m ConsequenceMarker) check() error {
+	if !idRE.MatchString(m.Run) {
+		return errBadID
+	}
+	if m.Attempt < 1 {
+		return errors.New("githost: attempt must be a positive number")
+	}
+	if !commit40RE.MatchString(m.Commit) {
+		return errors.New("githost: commit must be 40 lowercase hex characters")
+	}
+	return nil
+}
+
+// ConsequenceAnswerBody returns the exact comment of a yes or a no on a
+// consequence (record 0004, "Consequences").
+func ConsequenceAnswerBody(run string, attempt int, commit string, yes bool) (string, error) {
+	m := ConsequenceMarker{Run: run, Attempt: attempt, Commit: commit, Yes: yes}
+	if err := m.check(); err != nil {
+		return "", err
+	}
+	text, word := "No, send it back.", "no"
+	if yes {
+		text, word = "Yes, that is what I want.", "yes"
+	}
+	return text + "\n\n<!-- oxf:consequence run=" + run + " attempt=" + strconv.Itoa(attempt) +
+		" commit=" + commit + " answer=" + word + " -->", nil
+}
+
+// ParseConsequence reads a consequence marker on the last line of body. The
+// caller must check the author before it believes the result. Exactly four
+// fields, in this order, in single-space form.
+func ParseConsequence(body string) (ConsequenceMarker, bool) {
+	inner, ok := markerInner(lastLine(body))
+	if !ok {
+		return ConsequenceMarker{}, false
+	}
+	parts := strings.Split(inner, " ")
+	if len(parts) != 5 || parts[0] != "consequence" {
+		return ConsequenceMarker{}, false
+	}
+	val := func(f, key string) (string, bool) { return strings.CutPrefix(f, key+"=") }
+	run, ok1 := val(parts[1], "run")
+	att, ok2 := val(parts[2], "attempt")
+	com, ok3 := val(parts[3], "commit")
+	ans, ok4 := val(parts[4], "answer")
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return ConsequenceMarker{}, false
+	}
+	if att == "" || att[0] == '0' || len(att) > 9 {
+		return ConsequenceMarker{}, false
+	}
+	n := 0
+	for _, r := range att {
+		if r < '0' || r > '9' {
+			return ConsequenceMarker{}, false
+		}
+		n = n*10 + int(r-'0')
+	}
+	m := ConsequenceMarker{Run: run, Attempt: n, Commit: com}
+	switch ans {
+	case "yes":
+		m.Yes = true
+	case "no":
+	default:
+		return ConsequenceMarker{}, false
+	}
+	if m.check() != nil {
+		return ConsequenceMarker{}, false
+	}
+	return m, true
+}
+
+// ConsequenceQuestionBody returns the comment text of a consequence question:
+// a code block of exactly five lines (record 0004). The phrase is one fixed
+// line. The caller posts it with PostComment, which adds the run marker.
+func ConsequenceQuestionBody(phrase, run string, attempt int, commit, machine string) (string, error) {
+	m := ConsequenceMarker{Run: run, Attempt: attempt, Commit: commit}
+	if err := m.check(); err != nil {
+		return "", err
+	}
+	if !idRE.MatchString(machine) {
+		return "", errBadID
+	}
+	if strings.TrimSpace(phrase) == "" || strings.ContainsAny(phrase, "\n\r`<>&@") {
+		return "", errors.New("githost: the phrase must be one plain line")
+	}
+	return "```text\n" + phrase + "\nrun=" + run + "\nattempt=" + strconv.Itoa(attempt) +
+		"\ncommit=" + commit + "\nmachine=" + machine + "\n```", nil
+}
+
+// EndsWithMarker reports whether the last line of body is any factory marker
+// line ("<!-- oxf:" ... "-->"). A comment that does is never a person's
+// answer to a question; only the exact answer marker makes it one.
+func EndsWithMarker(body string) bool {
+	line := lastLine(body)
+	return strings.HasPrefix(line, "<!-- oxf:") && strings.HasSuffix(line, "-->")
 }

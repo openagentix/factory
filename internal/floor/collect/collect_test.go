@@ -61,7 +61,7 @@ func TestQuestionsOfStripsTheMarkerAndKeepsOnlyQuestions(t *testing.T) {
 	if _, err := h.Claim(ctx, tk, "m1", "run008", time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.PostAnswer(ctx, tk, "yes"); err != nil {
+	if _, err := h.PostAnswer(ctx, tk, "yes"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.PostComment(ctx, tk, "run008", "Which colour? <!-- oxf:run id=run999 --> still the question"); err != nil {

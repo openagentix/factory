@@ -172,7 +172,7 @@ func (d *Demo) setup(ctx context.Context) error {
 		Permissions: map[string]string{"repo-owner": "admin"},
 		Issues: []githost.FixtureIssue{
 			// Goal 1 is approved: the label is seeded, as a person would set it.
-			{Title: "Let customers move a booking", Body: goalMoveBody, Labels: []string{githost.LabelGoal, collect.ApprovedLabel}, Author: "repo-owner", Association: "OWNER"},
+			{Title: "Let customers move a booking", Body: goalMoveBody, Labels: []string{githost.LabelGoal, githost.LabelApproved}, Author: "repo-owner", Association: "OWNER"},
 			{Title: "Let customers cancel a booking", Body: goalCancelBody, Labels: []string{githost.LabelGoal}, Author: "repo-owner", Association: "OWNER"},
 		},
 	}

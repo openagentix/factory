@@ -542,9 +542,23 @@ func (g *GitHub) ListComments(ctx context.Context, n int, since time.Time) ([]Co
 }
 
 func (g *GitHub) postComment(ctx context.Context, n int, text, marker string) error {
-	_, err := g.call(ctx, g.propose, http.MethodPost, g.base.String()+g.path("/issues/"+strconv.Itoa(n)+"/comments"),
-		map[string]string{"body": withMarker(text, marker)}, nil)
+	_, err := g.postRaw(ctx, n, withMarker(text, marker))
 	return err
+}
+
+// postRaw posts body exactly as given and returns the host's id of the comment.
+func (g *GitHub) postRaw(ctx context.Context, n int, body string) (int64, error) {
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	if _, err := g.call(ctx, g.propose, http.MethodPost, g.base.String()+g.path("/issues/"+strconv.Itoa(n)+"/comments"),
+		map[string]string{"body": body}, &out); err != nil {
+		return 0, err
+	}
+	if out.ID <= 0 {
+		return 0, errors.New("githost: the host gave no id for the new comment")
+	}
+	return out.ID, nil
 }
 
 func (g *GitHub) PostComment(ctx context.Context, n int, runID, body string) error {
@@ -555,8 +569,16 @@ func (g *GitHub) PostComment(ctx context.Context, n int, runID, body string) err
 	return g.postComment(ctx, n, body, m)
 }
 
-func (g *GitHub) PostAnswer(ctx context.Context, n int, body string) error {
-	return g.postComment(ctx, n, body, AnswerMarker())
+func (g *GitHub) PostAnswer(ctx context.Context, n int, body string) (int64, error) {
+	return g.postRaw(ctx, n, withMarker(body, AnswerMarker()))
+}
+
+func (g *GitHub) PostConsequenceAnswer(ctx context.Context, n int, m ConsequenceMarker) (int64, error) {
+	body, err := ConsequenceAnswerBody(m.Run, m.Attempt, m.Commit, m.Yes)
+	if err != nil {
+		return 0, err
+	}
+	return g.postRaw(ctx, n, body)
 }
 
 func (g *GitHub) AddLabel(ctx context.Context, n int, label string) error {

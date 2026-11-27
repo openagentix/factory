@@ -94,7 +94,7 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 			if err := w.host.PostComment(ctx, 2, "run-1", "Working on it."); err != nil {
 				t.Fatal(err)
 			}
-			if err := w.host.PostAnswer(ctx, 2, "Use the blue one."); err != nil {
+			if _, err := w.host.PostAnswer(ctx, 2, "Use the blue one."); err != nil {
 				t.Fatal(err)
 			}
 			cs, err := w.host.ListComments(ctx, 2, time.Time{})
@@ -117,6 +117,25 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 			}
 			if cs[3].RunID != "run-1" {
 				t.Fatalf("run id = %q", cs[3].RunID)
+			}
+		}},
+		{"answers and consequence answers return the comment id", func(t *testing.T, w *world) {
+			id1, err := w.host.PostAnswer(ctx, 2, "blue")
+			if err != nil || id1 <= 0 {
+				t.Fatalf("id=%d err=%v", id1, err)
+			}
+			commit := strings.Repeat("c", 40)
+			id2, err := w.host.PostConsequenceAnswer(ctx, 2, ConsequenceMarker{Run: "run-1", Attempt: 2, Commit: commit, Yes: true})
+			if err != nil || id2 <= id1 {
+				t.Fatalf("id=%d err=%v", id2, err)
+			}
+			if _, err := w.host.PostConsequenceAnswer(ctx, 2, ConsequenceMarker{Run: "run-1", Attempt: 0, Commit: commit}); err == nil {
+				t.Fatal("a bad marker was posted")
+			}
+			cs, _ := w.host.ListComments(ctx, 2, time.Time{})
+			last := cs[len(cs)-1]
+			if last.ID != id2 || last.Kind != KindConsequence || last.Consequence == nil || !last.Consequence.Yes || last.Consequence.Attempt != 2 {
+				t.Fatalf("last = %+v", last)
 			}
 		}},
 		{"the factory neutralises markers in text it posts", func(t *testing.T, w *world) {
@@ -555,10 +574,14 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 				"GetIssue":     func() error { _, err := w.noAccept.GetIssue(ctx, 1); return err },
 				"ListComments": func() error { _, err := w.noAccept.ListComments(ctx, 1, time.Time{}); return err },
 				"PostComment":  func() error { return w.noAccept.PostComment(ctx, 1, "r", "x") },
-				"PostAnswer":   func() error { return w.noAccept.PostAnswer(ctx, 1, "x") },
-				"AddLabel":     func() error { return w.noAccept.AddLabel(ctx, 1, "factory:merge") },
-				"RemoveLabel":  func() error { return w.noAccept.RemoveLabel(ctx, 1, d) },
-				"Claim":        func() error { _, err := w.noAccept.Claim(ctx, 2, "m", "r", time.Hour); return err },
+				"PostAnswer":   func() error { _, err := w.noAccept.PostAnswer(ctx, 1, "x"); return err },
+				"PostConsequenceAnswer": func() error {
+					_, err := w.noAccept.PostConsequenceAnswer(ctx, 1, ConsequenceMarker{Run: "r", Attempt: 1, Commit: strings.Repeat("a", 40), Yes: true})
+					return err
+				},
+				"AddLabel":    func() error { return w.noAccept.AddLabel(ctx, 1, "factory:merge") },
+				"RemoveLabel": func() error { return w.noAccept.RemoveLabel(ctx, 1, d) },
+				"Claim":       func() error { _, err := w.noAccept.Claim(ctx, 2, "m", "r", time.Hour); return err },
 				"CreateSubIssues": func() error {
 					_, err := w.noAccept.CreateSubIssues(ctx, 2, []api.IssueProposal{{Title: "t"}})
 					return err

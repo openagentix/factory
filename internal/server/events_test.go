@@ -175,7 +175,7 @@ func TestResumeResetCases(t *testing.T) {
 		e.s.Hub().Publish(journal(i))
 	}
 	// the window holds 201..1200; 200 is the newest id that is gone but not missed
-	resets := []string{"100", "199", "abc", "-1", "1.5", " 5", "5 ", "", "0x10", "+5", "007", "99999999999999999999999", "1201", "5000", "0"}
+	resets := []string{"100", "199", "abc", "-1", "1.5", " 5", "5 ", "", "0x10", "+5", "007", "99999999999999999999999", "1201", "5000", "0", "05", "1e3", "-0", "١٢٣", strings.Repeat("1", 10<<10), strings.Repeat("0", 25)}
 	for _, id := range resets {
 		hr := map[string]string{"Last-Event-ID": id}
 		st := e.openStream(t, hr)

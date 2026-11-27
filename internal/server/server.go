@@ -1,9 +1,3 @@
-// Package server is the local HTTP server of the web app (record 0004).
-//
-// It listens on 127.0.0.1 only. Every request goes through the same guards,
-// in one fixed order, before any route runs. A route cannot be added that
-// skips them: all routes are kept in one table that only the guarded
-// dispatcher reads.
 package server
 
 import (

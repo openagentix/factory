@@ -39,6 +39,12 @@ func withWriteRouteOn(t *testing.T, s *Server) *atomic.Int32 {
 
 // Every registered route, added through the extension point or built in, is
 // behind every guard. A route that skipped a guard fails here.
+//
+// Limit: this test sees only routes that went through Handle. Code that wraps
+// Server.Handler() from outside, for example an http.ServeMux that sends
+// some paths elsewhere, adds routes this test cannot see. Handler() is the
+// guarded whole; whoever wraps it owns that risk. Handle is the only way in
+// that this package offers, and it refuses a route after serving has started.
 func TestEveryRouteHasEveryGuard(t *testing.T) {
 	e := newEnv(t)
 	calls := withWriteRoute(t, e)
@@ -270,6 +276,17 @@ func TestHandleRefusesBadRoutes(t *testing.T) {
 		{Method: "", Path: "/api/v1/x", Handler: ok},
 		{Method: "GET", Path: "/api/v1/x"},
 		{Method: "GET", Path: "/api/v1/x", Handler: ok, NewBody: func() any { return nil }},
+		// wildcard and pattern forms that net/http's mux would take
+		{Method: "GET", Path: "/api/v1/*", Handler: ok},
+		{Method: "GET", Path: "/api/v1/x/*", Handler: ok},
+		{Method: "GET", Path: "/api/v1/{id...}", Handler: ok},
+		{Method: "GET", Path: "/api/v1/{$}", Handler: ok},
+		{Method: "GET", Path: "/api/v1/x/", Handler: ok},
+		{Method: "GET", Path: "GET /api/v1/x", Handler: ok},
+		{Method: "GET", Path: "/api/v1/x{id}", Handler: ok},
+		{Method: "GET", Path: "/*", Handler: ok},
+		{Method: "GET", Path: "/", Handler: ok},
+		{Method: "GET", Path: "", Handler: ok},
 	}
 	for i, c := range cases {
 		if err := e.s.Handle(c); err == nil {

@@ -86,6 +86,9 @@ func TestHoldingFrom(t *testing.T) {
 	if len(h.Removed) != 1 || !h.Removed[0].At.Known {
 		t.Fatalf("bad removed: %+v", h.Removed)
 	}
+	if h.Applied[0].EntryID != "e1" || h.Applied[1].EntryID != "e2" {
+		t.Fatalf("the entry id is not carried: %+v", h.Applied)
+	}
 	p := &staging.Pending{StateSeq: 3, PR: 9, Mode: staging.ModeMerge}
 	h = HoldingFrom(st, true, p, LedgerFacts{PendingSince: at})
 	if !h.PendingAccept || h.PullRequest != 9 || h.PendingMode != floor.PendingMerge || !h.PendingSince.Known || !h.Frozen {

@@ -177,15 +177,23 @@ func TestScrubbedEnvKeys(t *testing.T) {
 				hasHome = true
 			}
 		}
-		if !hasHome {
-			t.Errorf("%s: no HOME", goos)
+		// secret-tool talks to the secret service over D-Bus and needs no home
+		// directory, so on Linux none is passed. The macOS tool needs one.
+		if goos == "darwin" && !hasHome {
+			t.Error("darwin: no HOME")
+		}
+		if goos == "linux" && hasHome {
+			t.Error("linux: HOME was passed to the tool")
 		}
 	}
-	if _, err := scrubbedEnv("linux", "relative/home", "1000"); err == nil {
+	if _, err := scrubbedEnv("darwin", "relative/home", "1000"); err == nil {
 		t.Error("relative home accepted")
 	}
-	if _, err := scrubbedEnv("linux", "", "1000"); err == nil {
+	if _, err := scrubbedEnv("darwin", "", "1000"); err == nil {
 		t.Error("empty home accepted")
+	}
+	if _, err := scrubbedEnv("linux", "", "1000"); err != nil {
+		t.Errorf("linux needs no home: %v", err)
 	}
 }
 

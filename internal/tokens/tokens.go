@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -71,11 +72,18 @@ func NewSystem(onSecret func(secret string)) (Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	u, err := user.Current()
-	if err != nil {
-		return nil, errors.New("tokens: cannot find the home directory of the user")
+	uid := strconv.Itoa(os.Getuid())
+	home := ""
+	if kind == kindSecurity {
+		// On macOS os/user asks the system user database (getpwuid_r), with or
+		// without cgo. The user must be the one this process runs as.
+		u, err := user.Current()
+		if err != nil || u.Uid != uid {
+			return nil, errors.New("tokens: cannot find the home directory of the user")
+		}
+		home = u.HomeDir
 	}
-	env, err := scrubbedEnv(runtime.GOOS, u.HomeDir, u.Uid)
+	env, err := scrubbedEnv(runtime.GOOS, home, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -108,17 +116,24 @@ func checkTool(p string) (string, error) {
 }
 
 // scrubbedEnv is the whole environment of the tool. Nothing is copied from
-// the environment of oxf. The home directory comes from the user database.
+// the environment of oxf.
+//
+// On macOS the tool needs HOME to find the keychain. The caller takes it from
+// the system user database (see NewSystem). On Linux no HOME is passed at all:
+// secret-tool talks to the secret service over D-Bus and needs no home
+// directory. This also means that the Linux code never has to trust os/user,
+// which in a build without cgo can fall back to $HOME.
 func scrubbedEnv(goos, home, uid string) ([]string, error) {
-	if home == "" || !filepath.IsAbs(home) || strings.ContainsAny(home, "\x00\r\n=") {
-		return nil, errors.New("tokens: the home directory of the user is not an absolute path")
-	}
 	if n, err := strconv.Atoi(uid); err != nil || n < 0 {
 		return nil, errors.New("tokens: the user id is not a number")
 	}
-	env := []string{"PATH=/usr/bin:/bin", "HOME=" + home, "LANG=C"}
+	env := []string{"PATH=/usr/bin:/bin", "LANG=C"}
 	switch goos {
 	case "darwin":
+		if home == "" || !filepath.IsAbs(home) || strings.ContainsAny(home, "\x00\r\n=") {
+			return nil, errors.New("tokens: the home directory of the user is not an absolute path")
+		}
+		env = append(env, "HOME="+home)
 	case "linux":
 		env = append(env, "XDG_RUNTIME_DIR=/run/user/"+uid, "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+uid+"/bus")
 	default:

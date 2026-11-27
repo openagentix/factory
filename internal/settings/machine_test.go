@@ -548,6 +548,11 @@ func TestConfigDirThatIsALinkIsRefused(t *testing.T) {
 func TestParentsMustNotBeWritableByOthers(t *testing.T) {
 	for name, mode := range map[string]os.FileMode{"0777": 0o777, "0770": 0o770, "0707": 0o707, "0772": 0o772} {
 		t.Run(name, func(t *testing.T) {
+			if mode&0o002 == 0 && ownGroupIsPrivate() {
+				// A directory only the user's own private group can write to is
+				// allowed. TestParentAllowedTable covers the rule itself.
+				t.Skip("the test user's primary group is private")
+			}
 			f := newFixture(t)
 			shared := filepath.Join(filepath.Dir(f.cfg), "shared")
 			if err := os.Mkdir(shared, 0o700); err != nil {

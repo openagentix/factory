@@ -201,6 +201,22 @@ func stepTo(t *testing.T, beat string) *Demo {
 	return nil
 }
 
+// stepToAfter plays only the beats this one needs before it, then makes the
+// story ready to run `beat` next. The whole story is played by the story tests.
+func stepToAfter(t *testing.T, beat string, prereqs ...string) *Demo {
+	t.Helper()
+	d := newDemo(t)
+	playBeats(t, d, prereqs...)
+	for i, b := range d.beats {
+		if b.name == beat {
+			d.next = i
+			return d
+		}
+	}
+	t.Fatalf("no beat %s", beat)
+	return nil
+}
+
 func diverged(t *testing.T, d *Demo, want, got Outcome) {
 	t.Helper()
 	_, _, err := d.Step(context.Background())
@@ -217,7 +233,7 @@ func diverged(t *testing.T, d *Demo, want, got Outcome) {
 // made to give a different reason of the same kind, and the story stops.
 
 func TestTakenOutBeatExpectsTheExactRemovalReason(t *testing.T) {
-	d := stepTo(t, "taken_out")
+	d := stepToAfter(t, "taken_out", "write_checks", "build_move")
 	d.jobHook = func(j *job) {
 		// The move step changes under it, so the replay conflicts instead of
 		// the acceptance line regressing.
@@ -243,7 +259,7 @@ func TestChecksFailBeatExpectsTheExactCheckAndGateReason(t *testing.T) {
 }
 
 func TestRiskBeatExpectsTheExactExceptionAndRiskReason(t *testing.T) {
-	d := stepTo(t, "risk")
+	d := stepToAfter(t, "risk", "write_checks")
 	// The same path is now a contract path. The real code gives another reason.
 	d.factory.Spec.RiskPaths.Contract = []string{"auth/**"}
 	d.factory.Spec.RiskPaths.Security = nil
@@ -251,7 +267,7 @@ func TestRiskBeatExpectsTheExactExceptionAndRiskReason(t *testing.T) {
 }
 
 func TestQuestionBeatExpectsExactlyOneQuestion(t *testing.T) {
-	d := stepTo(t, "question")
+	d := stepToAfter(t, "question", "write_checks")
 	d.jobHook = func(j *job) {
 		j.script.Result.Questions = []string{"First?", "Second?"}
 	}

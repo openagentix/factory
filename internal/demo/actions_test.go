@@ -716,6 +716,7 @@ func TestActionsAndTheStoryTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
+	d.taskErr = func(err error) { t.Errorf("a follow-up task failed: %v", err) }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stepsTo(t, d, "question")
@@ -780,6 +781,12 @@ func TestActionsAndTheStoryTogether(t *testing.T) {
 	if playErr != nil || ansErr != nil || appErr != nil || conErr != nil {
 		t.Fatalf("play %v, answer %v, approve %v, consequence %v", playErr, ansErr, appErr, conErr)
 	}
+	if err := d.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// A task that the work loop took is still running: wait for it before the stop.
+	d.stepMu.Lock()
+	d.stepMu.Unlock()
 	if err := d.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -899,9 +906,6 @@ func TestApproveWhileAStoryStepRunsIsRaceFree(t *testing.T) {
 	wg.Wait()
 	if stepErr != nil || actErr != nil {
 		t.Fatalf("step %v, approve %v", stepErr, actErr)
-	}
-	if err := d.Drain(ctx); err != nil {
-		t.Fatal(err)
 	}
 	if err := invariants(snap(t, d)); err != nil {
 		t.Fatal(err)

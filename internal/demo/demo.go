@@ -132,7 +132,9 @@ type Demo struct {
 	addHook func() error
 	// taskHook is called when a follow-up task starts. Tests only.
 	taskHook func()
-	failed   atomic.Bool
+	// taskErr sees the error of a follow-up task that failed. Tests only.
+	taskErr func(error)
+	failed  atomic.Bool
 	// closing is set when Close starts: no action, step or task starts after it.
 	closing atomic.Bool
 }

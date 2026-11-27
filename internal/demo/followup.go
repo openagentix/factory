@@ -103,24 +103,32 @@ func (d *Demo) Drain(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(errs, err)...)
 		}
+		// The step lock is taken before a task is taken from the queue, so a
+		// moment with the queue empty and the lock free means no task is in flight.
+		d.stepMu.Lock()
 		f, ok := d.dequeue()
 		if !ok {
+			d.stepMu.Unlock()
 			return errors.Join(errs...)
 		}
-		if err := d.runFollowup(ctx, f); err != nil {
+		err := d.runFollowup(ctx, f)
+		d.stepMu.Unlock()
+		if err != nil {
 			// A stop the person asked for ends the task, and is not a failure.
 			if ctx.Err() == nil && !d.closing.Load() {
 				d.failed.Store(true)
 				d.report("a step after an action did not finish")
+			}
+			if d.taskErr != nil {
+				d.taskErr(err)
 			}
 			errs = append(errs, err)
 		}
 	}
 }
 
+// runFollowup does one task. The caller holds the step lock.
 func (d *Demo) runFollowup(ctx context.Context, f followup) error {
-	d.stepMu.Lock()
-	defer d.stepMu.Unlock()
 	if d.closing.Load() {
 		return server.ErrUnavailable
 	}
@@ -170,6 +178,9 @@ func (d *Demo) addAnswered(ctx context.Context, f followup) error {
 	}
 	if err == nil {
 		return nil
+	}
+	if ctx.Err() != nil {
+		return err // a stop, not a failure: the change is not marked
 	}
 	// The real step failed after the person was told "done". Say so.
 	ticket := f.j.ticket

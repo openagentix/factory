@@ -53,7 +53,7 @@ func TestUntrustedMakesControlAndDirectionCharactersVisible(t *testing.T) {
 		"a\u2060b":       "a[U+2060]b",  // word joiner
 		"a\U000e0041b":   "a[U+E0041]b", // tag character
 		"a\nb\r\nc\td":   "a b  c d",    // line breaks and tabs become spaces
-		"a\u2028b":       "a b",         // line separator
+		"a\u2028b":       "a[U+2028]b",  // line separator is now visible (fix round 1)
 		"a\xffb":         "a\uFFFDb",    // invalid UTF-8
 	}
 	for in, want := range cases {

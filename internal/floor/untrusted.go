@@ -30,6 +30,10 @@ func NewUntrusted(raw string, max int) Untrusted {
 	if max <= 0 {
 		return Untrusted{Truncated: raw != ""}
 	}
+	// Typed text that looks like one of our own tokens is changed first, so a
+	// typed token and a real one never read the same: the opening bracket
+	// becomes a full-width bracket. Same for "--]" (a real "-->" becomes that).
+	raw = lookAlikes.Replace(raw)
 	window := max*4 + 256
 	var b strings.Builder
 	consumed, cut := 0, false
@@ -44,9 +48,10 @@ func NewUntrusted(raw string, max int) Untrusted {
 		switch {
 		case r == utf8.RuneError && w == 1:
 			b.WriteRune(0xFFFD)
-		case r == '\n' || r == '\r' || r == '\t' || r == 0x2028 || r == 0x2029:
+		case r == '\n' || r == '\r' || r == '\t':
 			b.WriteByte(' ')
-		case unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Co, unicode.Cs):
+		// Characters that draw nothing or look like a blank are made visible too.
+		case unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Co, unicode.Cs) || isBlankLook(r):
 			fmt.Fprintf(&b, "[U+%04X]", r)
 		default:
 			b.WriteRune(r)
@@ -69,3 +74,17 @@ var secretShape = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Z
 
 // partialToken matches half of a visible token at the end of a cut.
 var partialToken = regexp.MustCompile(`\[(U(\+[0-9A-F]*)?|r(e(d(a(c(t(e(d)?)?)?)?)?)?)?)?$`)
+
+// lookAlikes turns typed text that could pass for one of our tokens into text
+// that cannot. 0xFF3B is the full-width left square bracket, 0xFF3D the right.
+var lookAlikes = strings.NewReplacer("[U+", "\uFF3BU+", "[redacted", "\uFF3Bredacted", "[!--", "\uFF3B!--", "--]", "--\uFF3D")
+
+// isBlankLook is true for characters that show as empty space but are letters
+// or symbols, so no category test finds them.
+func isBlankLook(r rune) bool {
+	switch r {
+	case 0x2800, 0x3164, 0x115F, 0x1160, 0xFFA0:
+		return true
+	}
+	return false
+}

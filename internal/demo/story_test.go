@@ -2,9 +2,14 @@ package demo
 
 import (
 	"context"
+	"encoding/json"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/openagentix/factory/internal/floor"
+	"github.com/openagentix/factory/internal/staging"
 )
 
 type want struct {
@@ -18,6 +23,47 @@ type want struct {
 func TestStoryBeatByBeat(t *testing.T) {
 	d := newDemo(t)
 	ctx := context.Background()
+	// Ten readers hammer Floor while the story advances. Every snapshot must
+	// parse and satisfy the invariants: no beat is ever seen half done.
+	var stop atomic.Bool
+	var readers sync.WaitGroup
+	var reads atomic.Int64
+	errs := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for !stop.Load() {
+				b, err := d.Floor(context.Background())
+				if err != nil {
+					errs <- err
+					return
+				}
+				var f tfloor
+				if err := json.Unmarshal(b, &f); err != nil {
+					errs <- err
+					return
+				}
+				if err := invariants(f); err != nil {
+					errs <- err
+					return
+				}
+				reads.Add(1)
+				time.Sleep(20 * time.Millisecond) // a polite reader: the machine is shared
+			}
+		}()
+	}
+	defer func() {
+		stop.Store(true)
+		readers.Wait()
+		close(errs)
+		for err := range errs {
+			t.Errorf("a concurrent reader saw a bad snapshot: %v", err)
+		}
+		if reads.Load() < 10 {
+			t.Errorf("only %d concurrent reads", reads.Load())
+		}
+	}()
 	check := func(step string, lamp floor.Lamp, pieces map[string]want, gone ...string) {
 		t.Helper()
 		f := snap(t, d)
@@ -122,5 +168,35 @@ func TestStoryBeatByBeat(t *testing.T) {
 	}
 	if _, done, _ := d.Step(ctx); !done {
 		t.Error("a step after the end must stay done")
+	}
+
+	// The person's actions are driver methods for now. Undo takes the second
+	// change and what depends on it out of the holding area.
+	runID := ""
+	if p := piece(f, "t4"); p != nil && p.Run != nil {
+		runID = *p.Run
+	}
+	ids, err := d.Undo(ctx, runID)
+	if err != nil || len(ids) == 0 || ids[0] != runID {
+		t.Fatalf("Undo(%s) = %v, %v", runID, ids, err)
+	}
+	f = snap(t, d)
+	if err := invariants(f); err != nil {
+		t.Fatalf("after undo: %v", err)
+	}
+	if p := piece(f, "t4"); p == nil || p.Station == 6 {
+		t.Errorf("t4 is still in the holding area: %+v", p)
+	}
+	// Accept takes what is left. t3 is accepted today, so it is at 07.
+	res, err := d.Accept(ctx)
+	if err != nil || res.Outcome != staging.OutcomeAccepted {
+		t.Fatalf("Accept = %+v, %v", res, err)
+	}
+	f = snap(t, d)
+	if err := invariants(f); err != nil {
+		t.Fatalf("after accept: %v", err)
+	}
+	if p := piece(f, "t3"); p == nil || p.Station != 7 {
+		t.Errorf("t3 after accept: %+v", p)
 	}
 }

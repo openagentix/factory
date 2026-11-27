@@ -190,6 +190,7 @@ func TestRunDemoServesRefusesASecondAndCleansUp(t *testing.T) {
 	if ents, _ := os.ReadDir(root); len(ents) != 0 {
 		t.Errorf("the data directory was not removed: %v", ents)
 	}
+	noStrays(t, root)
 	if c, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond); err == nil {
 		c.Close()
 		t.Error("the port is still open")
@@ -197,7 +198,7 @@ func TestRunDemoServesRefusesASecondAndCleansUp(t *testing.T) {
 }
 
 func TestRunDemoCancelAtEveryPoint(t *testing.T) {
-	for _, after := range []time.Duration{0, 300 * time.Millisecond, 2 * time.Second, 5 * time.Second} {
+	for _, after := range []time.Duration{0, 300 * time.Millisecond, 2 * time.Second, 5 * time.Second, 12 * time.Second} {
 		root := t.TempDir()
 		var out, errOut syncBuf
 		ctx, cancel := context.WithTimeout(context.Background(), after)
@@ -209,6 +210,19 @@ func TestRunDemoCancelAtEveryPoint(t *testing.T) {
 		onlyDemoLines(t, "cancel", out.String()+errOut.String())
 		if ents, _ := os.ReadDir(root); len(ents) != 0 {
 			t.Errorf("after %v: the data directory was not removed: %v", after, ents)
+		}
+		noStrays(t, root)
+	}
+}
+
+// noStrays checks that no git or stub process of this demo is left. Every such
+// process has the data directory root in its command line or its directory.
+func noStrays(t *testing.T, root string) {
+	t.Helper()
+	out, _ := exec.Command("ps", "-eo", "command").Output()
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.Contains(l, root) {
+			t.Errorf("a process of the demo is still running: %s", l)
 		}
 	}
 }

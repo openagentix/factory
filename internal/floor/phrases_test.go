@@ -31,6 +31,9 @@ func TestEveryCodeKindAndWordHasAPhrase(t *testing.T) {
 		need = append(need, PhraseKey("call."+string(k)))
 	}
 	need = append(need, "honest.not_built", "honest.read_failed", "honest.not_enough_yet")
+	for _, c := range RefusalCodes() {
+		need = append(need, PhraseKey("refusal."+c))
+	}
 	for _, k := range need {
 		if s, ok := p[k]; !ok || strings.TrimSpace(s) == "" {
 			t.Errorf("no phrase for %s", k)

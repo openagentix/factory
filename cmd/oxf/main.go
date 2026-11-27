@@ -12,13 +12,15 @@ var Version = "0.0.0-dev"
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: oxf <command>\ncommands: version")
+		fmt.Fprintln(stderr, "usage: oxf <command>\ncommands: version, run")
 		return 2
 	}
 	switch args[0] {
 	case "version":
 		fmt.Fprintf(stdout, "oxf %s\n", Version)
 		return 0
+	case "run":
+		return runCommand(args[1:], stdout, stderr)
 	case "stub-harness":
 		// Hidden: not in the usage text. See stub_harness.go.
 		return runStubHarness(args[1:], stdout, stderr)

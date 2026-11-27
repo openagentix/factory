@@ -9,6 +9,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -65,6 +66,23 @@ type Server struct {
 
 // New checks the config and makes a Server with a fresh key.
 func New(cfg Config) (*Server, error) {
+	// Deny by default: only known good values pass. The messages never hold
+	// a value from the config, so nothing odd can reach a log through them.
+	if cfg.Host != "" && cfg.Host != "127.0.0.1" {
+		return nil, errors.New("server: only 127.0.0.1 can be listened on in this release")
+	}
+	if cfg.Port < 1024 || cfg.Port > 65535 {
+		return nil, errors.New("server: port must be from 1024 to 65535")
+	}
+	if cfg.Mode != "demo" && cfg.Mode != "live" {
+		return nil, errors.New("server: mode must be demo or live")
+	}
+	if cfg.Static == nil {
+		return nil, errors.New("server: no web app files")
+	}
+	if cfg.PingInterval < 0 || cfg.StreamMaxAge < 0 || cfg.WriteDeadline < 0 {
+		return nil, errors.New("server: a duration cannot be negative")
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}

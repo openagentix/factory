@@ -331,7 +331,7 @@ One Go binary, `oxf`.
 | `harness` | Thin adapters that build the command line for `claude`, `codex` and the stub, and read their event streams |
 | `governance` | Interface. v0.1: local, with usage as reported and the three usage states |
 | `verify` | Diff, protected paths with real glob matching, checks, acceptance checks and criterion states, risk rules, the machine gate, evidence bundle |
-| `staging` | The list of passed changes and the combine action: rebuild staging from the default branch and the list, take out what no longer fits, freeze during Accept, Accept and Undo |
+| `staging` | The list of passed changes and the combine action: rebuild staging from the default branch and the list, take out what no longer fits, freeze during Accept, Accept and Undo. **Built**, with its state kept in memory for now |
 | `trajectory` | Course per goal by rules, the per-goal last good point, and the stop and replan with the person on off course |
 | `planning` | The live planning conversation in the web app, relayed to a harness session, and the quick-lane spec and ticket |
 | `orchestrator` | Polls, matches triggers to tasks, applies the dial, throttles, the cap and claims, drives the three stages |
@@ -342,7 +342,7 @@ One Go binary, `oxf`.
 | `demo` | The made-up project and story for `--demo`, with a driver that stands in for the orchestrator until it exists |
 | `web/` | The web app source. Its built files are embedded and not committed |
 
-Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate` and `runner`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
+Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate`, `runner` and `staging`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
 
 Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 

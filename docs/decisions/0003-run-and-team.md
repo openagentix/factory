@@ -36,6 +36,7 @@ dataDir: /Users/alice/.local/share/oxf   # absolute
 harnesses:                               # one or two; stub is refused
   - { name: claude-code, path: /usr/local/bin/claude }
   - { name: codex, path: /usr/local/bin/codex }
+# webPort: <port>                       # optional; 1024 to 65535, the web app's port on 127.0.0.1 (record 0004)
 ```
 
 - Strict: an unknown or missing field, a duplicate harness or a relative path stops the start.
@@ -79,14 +80,14 @@ Written by the orchestrator to `/factory/in/trigger.json`. Never read back.
 - `trigger` is the same as in the run record of 0001.
 - Every `title`, `body`, `text`, `question`, `answer` and `reviewPoints[].text` is untrusted. The prompt marks it so. `reviewPoints` has the schema of `points` in `review.json`.
 - `body` is cut at 32 KiB, and `truncated` says so. **(call)** `answers` holds only answers that count (Part 2).
-- `rework` is `null` on a first attempt. `reason` is one of `check_failed`, `protected_path`, `acceptance_regressed`, `review_disagrees`, `no_change`, `bad_result`, `deadline`, `pull_request_closed`. It never holds check output.
+- `rework` is `null` on a first attempt. `reason` is one of `check_failed`, `protected_path`, `acceptance_regressed`, `review_disagrees`, `person_said_no` (record 0004), `no_change`, `bad_result`, `deadline`, `pull_request_closed`. It never holds check output.
 
 ### Run record additions
 
 | Field | Meaning |
 |---|---|
 | `id` | Now a time-ordered random id (ULID style) made on the machine, so run ids are unique across machines |
-| `heldReason` | Required in `held`, empty otherwise. One of `cap`, `throttle`, `staging_frozen`, `level_unset`, `level_off`, `level_guided`, `read_failed`, `key_busy`, `untrusted_trigger`, `too_many_cut_offs`, `needs_human`, `goal_not_approved` |
+| `heldReason` | Required in `held`, empty otherwise. One of `cap`, `throttle`, `staging_frozen`, `level_unset`, `level_off`, `level_guided`, `read_failed`, `key_busy`, `untrusted_trigger`, `too_many_cut_offs`, `needs_human`, `goal_not_approved`, `paused` (record 0004: Pause the line on this machine) |
 | `endReason` | Required in `failed`. A `rework.reason`, or `claim_lost`, `goal_not_approved`, `cut_off` or `no_process` |
 | `concurrencyKey` | The resolved key. At most one unfinished run holds a key |
 | `input.base` | The full commit id the work was built on |
@@ -157,7 +158,7 @@ The factory reads, in one GraphQL response, the body, its `lastEditedAt` (null m
 
 **(owner)** The run ends `needs_human` and uses an attempt, as 0001 counts work-stage starts. That ticket stops and is labelled `factory:needs-human`. The questions go in one comment on the ticket issue, in a code block, with the run marker. Other work goes on.
 
-The answers are the unedited comments by a trusted person on that ticket after the question comment and before the removal of `factory:needs-human`, read from the question's comment id onward. A comment whose last line is an `oxf:` marker is never an answer. Each one is one `answers` entry, with `question` set to the text of the question comment. If the label is removed and no answer remains, the factory puts it back with one fixed comment, "No answer was found", and starts nothing.
+The answers are the unedited comments by a trusted person on that ticket after the question comment and before the removal of `factory:needs-human`, read from the question's comment id onward. A comment whose last line is an `oxf:` marker is never an answer, except the `oxf:answer` marker the web app posts: that comment is an answer when its author is a trusted person and it is unedited (record 0004). Each one is one `answers` entry, with `question` set to the text of the question comment. If the label is removed and no answer remains, the factory puts it back with one fixed comment, "No answer was found", and starts nothing.
 
 ### Publish steps
 
@@ -294,3 +295,7 @@ A commit a teammate's machine makes is signed off in that teammate's own name, f
 - Signed markers, with a key per machine.
 - The five-second settle time and the 32 KiB cut.
 - A trial of the edit-time behaviour will be recorded under `docs/trials/` before team mode is called working.
+
+## History
+
+On 2026-11-27 record 0004 changed these rules: an `oxf:answer` comment from a trusted person, unedited, is an answer; `paused` is a held reason; `person_said_no` is a rework reason; machine settings have an optional `webPort` field.

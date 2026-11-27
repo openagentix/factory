@@ -1,0 +1,542 @@
+<!doctype html>
+<!-- Mockup with made-up data. Nothing here is live. This is the approved design reference for decision record 0004. It loads its fonts from a public font host; the real app bundles its fonts. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory Floor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a plant control screen. Side rail of areas, a status header with the andon tower and gauges,
+   then the production line as the main object: numbered station bays over a moving belt, work travelling
+   left to right as tags. Colour is kept for state only, as on a real control panel. */
+:root{
+  --bg:#e6eaee; --panel:#f4f6f8; --raised:#ffffff; --sunk:#dce2e8;
+  --ink:#16202a; --ink2:#3d4b59; --muted:#5d6b79; --line:#c5ced7; --line2:#aeb9c4;
+  --flow:#0b5cab; --flow-bg:#dbe9f7; --flow-ink:#ffffff;
+  --ok:#17794a; --ok-bg:#dcf1e5; --wait:#96590a; --wait-bg:#fbeccd; --bad:#b93026; --bad-bg:#fadfdc; --idle:#5d6b79; --idle-bg:#e1e6eb;
+  --hz1:#e8b100; --hz2:#1c232b; --lamp-off:#c9d1d9; --shadow:0 1px 0 rgba(22,32,42,.06),0 6px 16px rgba(22,32,42,.07);
+  --f-sign:"Barlow Condensed","Arial Narrow",Impact,sans-serif; --f-text:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --f-data:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e141a; --panel:#151d26; --raised:#1b2530; --sunk:#0a0f14;
+  --ink:#e8eef4; --ink2:#c2ccd6; --muted:#8e9cab; --line:#2a3744; --line2:#3a4958;
+  --flow:#56adff; --flow-bg:#12304e; --flow-ink:#06131f;
+  --ok:#45d391; --ok-bg:#103424; --wait:#f4b942; --wait-bg:#3a2a08; --bad:#ff7366; --bad-bg:#421614; --idle:#8e9cab; --idle-bg:#222d39;
+  --hz1:#f2bd13; --hz2:#0a0f14; --lamp-off:#2a3744; --shadow:0 1px 0 rgba(0,0,0,.3),0 8px 20px rgba(0,0,0,.35); color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0e141a; --panel:#151d26; --raised:#1b2530; --sunk:#0a0f14;
+  --ink:#e8eef4; --ink2:#c2ccd6; --muted:#8e9cab; --line:#2a3744; --line2:#3a4958;
+  --flow:#56adff; --flow-bg:#12304e; --flow-ink:#06131f;
+  --ok:#45d391; --ok-bg:#103424; --wait:#f4b942; --wait-bg:#3a2a08; --bad:#ff7366; --bad-bg:#421614; --idle:#8e9cab; --idle-bg:#222d39;
+  --hz1:#f2bd13; --hz2:#0a0f14; --lamp-off:#2a3744; --shadow:0 1px 0 rgba(0,0,0,.3),0 8px 20px rgba(0,0,0,.35); color-scheme:dark }
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-text);font-size:14px;line-height:1.45}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--flow);outline-offset:2px}
+h1,h2,h3,p{margin:0}
+.sign{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.data{font-family:var(--f-data);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .small{font-size:12px}
+svg.i{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+.app{display:grid;grid-template-columns:200px minmax(0,1fr);gap:0 20px;max-width:1500px;margin:0 auto;padding-block:14px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+/* rail */
+.rail{display:flex;flex-direction:column;gap:14px;min-width:0}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 2px 10px;border-bottom:2px solid var(--ink)}
+.brand svg{width:30px;height:30px;flex:none}
+.brand b{font-family:var(--f-sign);font-size:22px;letter-spacing:.08em;line-height:1;text-transform:uppercase;display:block}
+.brand span{font-size:11px;color:var(--muted);display:block}
+.navg{display:flex;flex-direction:column;gap:2px}
+.navg h3{font-family:var(--f-sign);font-size:12px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;font-weight:600;padding:0 8px 3px;display:flex;gap:6px;align-items:center}
+.navg h3 em{font-style:normal;font-family:var(--f-text);letter-spacing:0;text-transform:none;font-size:10px;border:1px dashed var(--line2);padding:0 5px;border-radius:2px}
+.nav{display:flex;align-items:center;gap:9px;padding:7px 8px;border:0;background:transparent;border-radius:3px;text-align:left;font-weight:500;color:var(--ink2);width:100%}
+.nav:hover{background:var(--panel)}
+.nav[aria-current="page"]{background:var(--ink);color:var(--bg)}
+.nav .n{margin-left:auto;font-family:var(--f-data);font-size:11px;background:var(--wait-bg);color:var(--wait);padding:0 6px;border-radius:9px;font-weight:500}
+.nav[aria-current="page"] .n{background:var(--bg);color:var(--ink)}
+.railfoot{margin-top:auto;font-size:11px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.tgl{border:1px solid var(--line2);background:var(--panel);border-radius:3px;padding:5px 8px;font-size:12px;display:inline-flex;gap:6px;align-items:center;align-self:flex-start}
+
+main{min-width:0;display:flex;flex-direction:column;gap:16px}
+.screen{display:flex;flex-direction:column;gap:16px}
+.head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;justify-content:space-between}
+.head h1{font-family:var(--f-sign);font-size:30px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;line-height:1}
+.head p{color:var(--muted);max-width:64ch}
+.repo{font-family:var(--f-data);font-size:12px;border:1px solid var(--line2);padding:3px 8px;border-radius:3px;background:var(--panel);display:inline-flex;gap:6px;align-items:center}
+
+/* status header */
+.status{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:14px 16px;align-items:center;box-shadow:var(--shadow)}
+.tower{display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--sunk);border-radius:6px;border:1px solid var(--line)}
+.lamp{width:34px;height:18px;border-radius:3px;background:var(--lamp-off)}
+.lamp.on.r{background:var(--bad);box-shadow:0 0 14px var(--bad)} .lamp.on.a{background:var(--wait);box-shadow:0 0 14px var(--wait)} .lamp.on.g{background:var(--ok);box-shadow:0 0 14px var(--ok)}
+.say{display:flex;flex-direction:column;gap:4px;min-width:0}
+.say .st{display:inline-flex;align-items:center;gap:7px;font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.1em;font-size:15px;font-weight:700}
+.say p{font-size:19px;font-weight:500;line-height:1.3;text-wrap:balance}
+.say p b{font-weight:600}
+.c-ok{color:var(--ok)} .c-wait{color:var(--wait)} .c-bad{color:var(--bad)} .c-idle{color:var(--idle)} .c-flow{color:var(--flow)}
+
+.gauges{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.g{background:var(--panel);padding:10px 14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.g .k{font-family:var(--f-sign);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.g .v{font-family:var(--f-sign);font-size:34px;font-weight:600;line-height:1;display:flex;align-items:baseline;gap:6px}
+.g .v small{font-family:var(--f-text);font-size:12px;font-weight:400;color:var(--muted);letter-spacing:0;text-transform:none}
+.g .d{font-size:11px;color:var(--muted)}
+.spark{height:22px;width:100%;margin-top:2px}
+
+/* the line */
+.linewrap{background:var(--panel);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);overflow:hidden}
+.linehead{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line)}
+.linehead h2{font-family:var(--f-sign);font-size:18px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--ink2)}
+.legend span{display:inline-flex;gap:5px;align-items:center}
+.btn{border:1px solid var(--line2);background:var(--raised);border-radius:3px;padding:6px 12px;font-weight:500;min-height:32px;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--ink2)}
+.btn.pri{background:var(--flow);border-color:var(--flow);color:var(--flow-ink);font-weight:600}
+.btn.sm{padding:3px 9px;min-height:26px;font-size:12px}
+.btn.warn{border-color:var(--bad);color:var(--bad)}
+.scroll{overflow-x:auto}
+.line{display:grid;grid-template-columns:repeat(7,minmax(158px,1fr));min-width:1106px}
+.bay{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;position:relative}
+.bay:last-child{border-right:0}
+.hz{height:6px;background:var(--line)}
+.bay.s-stuck .hz{background:repeating-linear-gradient(135deg,var(--hz1) 0 9px,var(--hz2) 9px 18px)}
+.bay.s-person .hz{background:var(--wait)} .bay.s-working .hz{background:var(--ok)}
+.bh{padding:9px 10px 8px;display:grid;grid-template-columns:auto 1fr;gap:0 9px;align-items:center;border-bottom:1px solid var(--line);background:var(--raised)}
+.bh .no{grid-row:span 2;font-family:var(--f-sign);font-size:34px;font-weight:700;line-height:.9;color:var(--line2)}
+.bh .nm{font-family:var(--f-sign);font-size:17px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;line-height:1.05;display:flex;align-items:center;gap:6px}
+.bh .who{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px}
+.bstat{padding:6px 10px;font-size:12px;display:flex;flex-direction:column;gap:2px;border-bottom:1px dashed var(--line);min-height:50px}
+.bstat .top{display:flex;justify-content:space-between;gap:6px;align-items:center}
+.bstat .cnt{font-family:var(--f-data);font-weight:500}
+.bstat .why{font-weight:600;display:flex;gap:5px;align-items:flex-start;line-height:1.25}
+.bstat .why svg{margin-top:2px}
+.tags{padding:10px 8px 12px;display:flex;flex-direction:column;gap:7px;flex:1;min-height:214px}
+.tag{position:relative;text-align:left;background:var(--raised);border:1px solid var(--line2);border-radius:2px;padding:7px 8px 7px 22px;display:flex;flex-direction:column;gap:2px;width:100%;box-shadow:0 1px 0 var(--line)}
+.tag::before{content:"";position:absolute;left:7px;top:9px;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--line2);background:var(--bg)}
+.tag:hover{border-color:var(--ink2)}
+.tag .id{font-family:var(--f-data);font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:6px}
+.tag .t{font-weight:500;font-size:13px;line-height:1.25}
+.tag .s{font-size:11px;font-weight:600;display:flex;gap:4px;align-items:center}
+.tag.working{border-color:var(--ok)} .tag.stuck{border-color:var(--bad);background:var(--bad-bg)} .tag.person{border-color:var(--wait);background:var(--wait-bg)}
+.tag.done{opacity:.72}
+.tag.fresh{animation:arrive .7s cubic-bezier(.2,.8,.2,1)}
+@keyframes arrive{from{transform:translateX(-46px);opacity:0}to{transform:none;opacity:1}}
+.more{font-size:11px;color:var(--muted);padding-left:4px}
+.belt{height:16px;background:var(--sunk);border-top:1px solid var(--line);position:relative;overflow:hidden;min-width:1106px}
+.belt i{position:absolute;inset:0;background:var(--line2);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='16'%3E%3Cpath d='M4 3l6 5-6 5' fill='none' stroke='%23000' stroke-width='2.4'/%3E%3C/svg%3E") 0 0/22px 16px repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='16'%3E%3Cpath d='M4 3l6 5-6 5' fill='none' stroke='%23000' stroke-width='2.4'/%3E%3C/svg%3E") 0 0/22px 16px repeat-x;animation:belt 1.1s linear infinite}
+.belt.halt i{animation-play-state:paused}
+@keyframes belt{to{-webkit-mask-position:22px 0;mask-position:22px 0}}
+
+.cols{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(280px,1fr);gap:16px;align-items:start}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:4px;min-width:0}
+.box>h2{font-family:var(--f-sign);font-size:16px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;padding:10px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.box>h2 span{font-family:var(--f-text);font-size:12px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--muted)}
+.pad{padding:12px 14px}
+
+/* goal lanes */
+.lane{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.5fr) 168px;gap:6px 14px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+.lane:last-child{border-bottom:0}
+.lane .gn{font-weight:600;line-height:1.25}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:1px 7px;border-radius:2px;border:1px solid currentColor;white-space:nowrap}
+.chip.ok{color:var(--ok);background:var(--ok-bg)} .chip.wait{color:var(--wait);background:var(--wait-bg);border-style:dashed} .chip.bad{color:var(--bad);background:var(--bad-bg)} .chip.idle{color:var(--idle);background:var(--idle-bg);border-style:dotted} .chip.flow{color:var(--flow);background:var(--flow-bg)}
+.mini{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.mini div{height:22px;background:var(--sunk);border-radius:1px;display:flex;align-items:center;justify-content:center;gap:2px;font-family:var(--f-data);font-size:10px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--idle)}
+.dot.working{background:var(--ok)} .dot.stuck{background:var(--bad);border-radius:1px;transform:rotate(45deg)} .dot.person{background:var(--wait);border-radius:1px} .dot.queued{background:transparent;border:1.5px solid var(--idle)} .dot.done{background:var(--flow)}
+.minilab{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-family:var(--f-sign);font-size:10px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;text-align:center}
+.lbar{display:flex;gap:2px;width:92px}
+.lbar i{height:8px;flex:1;border-radius:1px}
+.lbar .ok{background:var(--ok)} .lbar .no{background:repeating-linear-gradient(90deg,var(--wait) 0 3px,transparent 3px 5px);border:1px solid var(--wait)} .lbar .unk{border:1px dotted var(--idle)}
+.lres{display:flex;flex-direction:column;gap:3px;align-items:flex-end;font-size:12px}
+.lines{grid-column:1/-1;list-style:none;margin:4px 0 0;padding:8px 0 0;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:6px}
+.lines li{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px;align-items:start}
+.lines .note{color:var(--muted);font-size:12px}
+
+/* calls */
+.call{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.call:last-child{border-bottom:0}
+.call .meta{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:12px;color:var(--muted)}
+.call .q{font-size:15px;font-weight:500;line-height:1.35}
+.call textarea{width:100%;min-height:54px;border:1px solid var(--line2);background:var(--raised);border-radius:3px;padding:7px 9px;resize:vertical}
+.acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.caution{font-size:12px;color:var(--wait);display:flex;gap:5px;align-items:flex-start}
+.empty{padding:22px 14px;color:var(--muted);text-align:center}
+.log{list-style:none;margin:0;padding:0}
+.log li{display:grid;grid-template-columns:48px 14px minmax(0,1fr);gap:8px;padding:7px 14px;border-bottom:1px solid var(--line);align-items:start}
+.log li:last-child{border-bottom:0}
+.log time{font-family:var(--f-data);font-size:12px;color:var(--muted)}
+.log svg{margin-top:3px}
+
+/* tables */
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:8px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-sign);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td.num{font-family:var(--f-data);text-align:right} th.num{text-align:right}
+
+/* live cells */
+.cells{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:16px}
+.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin:10px 0 4px}
+.steps div{font-size:11px;text-align:center;padding:5px 2px;background:var(--sunk);border-radius:2px;color:var(--muted);line-height:1.15}
+.steps .dn{background:var(--ok-bg);color:var(--ok)} .steps .cur{background:var(--ok);color:var(--bg);font-weight:600}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0}
+.dial{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.stop{border:1px solid var(--line2);background:var(--raised);border-radius:3px;padding:8px 4px;text-align:center;font-weight:500;min-height:52px;display:flex;flex-direction:column;gap:2px;align-items:center;justify-content:center}
+.stop small{font-size:10px;color:var(--muted);font-weight:400}
+.stop[aria-checked="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)} .stop[aria-checked="true"] small{color:var(--bg)}
+.stop:disabled{opacity:.5;border-style:dashed;cursor:not-allowed}
+.pl{display:grid;grid-template-columns:repeat(7,18px);gap:2px}
+.pl i{height:18px;border-radius:1px;background:var(--sunk);font-style:normal;font-family:var(--f-data);font-size:10px;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.pl .w{background:var(--ok-bg);color:var(--ok)} .pl .p{background:var(--wait-bg);color:var(--wait);outline:1px dashed var(--wait)} .pl .x{background:repeating-linear-gradient(135deg,var(--hz1) 0 4px,var(--hz2) 4px 8px);color:transparent}
+
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(8,12,16,.45);z-index:20}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(440px,100%);background:var(--panel);border-left:2px solid var(--ink);z-index:21;overflow:auto;padding:calc(16px + env(safe-area-inset-top,0px)) max(18px,env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0px)) 18px;display:flex;flex-direction:column;gap:14px}
+.drawer h2{font-family:var(--f-sign);font-size:24px;text-transform:uppercase;letter-spacing:.05em;line-height:1.05}
+.drawer h3{font-family:var(--f-sign);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:5px}
+.route{list-style:none;margin:0;padding:0}
+.route li{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;padding:5px 0;position:relative;align-items:center}
+.route li i{width:12px;height:12px;border-radius:50%;border:2px solid var(--line2);background:var(--panel);justify-self:center;z-index:1}
+.route li.dn i{background:var(--flow);border-color:var(--flow)} .route li.cur i{background:var(--ok);border-color:var(--ok);box-shadow:0 0 0 4px var(--ok-bg)}
+.route li:not(:last-child)::after{content:"";position:absolute;left:8px;top:18px;bottom:-8px;width:2px;background:var(--line)}
+.route li.dn:not(:last-child)::after{background:var(--flow)}
+.route .tm{font-family:var(--f-data);font-size:12px;color:var(--muted)}
+.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:3px;z-index:30;max-width:min(520px,calc(100% - 32px));font-weight:500}
+.mock{font-size:11px;color:var(--muted);text-align:right}
+
+@media (max-width:1020px){ .cols{grid-template-columns:minmax(0,1fr)} }
+@media (max-width:820px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .rail{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;gap:10px;align-items:center;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--line)}
+  .brand{border:0;padding:0} .brand span,.navg h3,.railfoot span{display:none}
+  .navg{flex-direction:row;flex:none} .nav{white-space:nowrap;width:auto} .railfoot{margin:0;border:0;padding:0;flex:none}
+  .status{grid-template-columns:minmax(0,1fr)} .tower{flex-direction:row;align-self:flex-start}
+  .say p{font-size:16px}
+  .lane{grid-template-columns:minmax(0,1fr)} .lres{align-items:flex-start;flex-direction:row;gap:10px}
+  .lines li{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){ .belt i,.tag.fresh{animation:none} }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <svg viewBox="0 0 30 30" aria-hidden="true"><path d="M2 27V13l8 5v-5l8 5V6h8v21z" fill="currentColor"/><path d="M7 22h3M13 22h3M19 22h4" stroke="var(--bg)" stroke-width="2"/></svg>
+      <div><b>Factory</b><span>OpenAgentix Software Factory</span></div>
+    </div>
+    <nav class="navg" aria-label="Factory"><h3>Factory</h3>
+      <button class="nav" data-go="floor"><svg class="i" viewBox="0 0 16 16"><path d="M1 13h14M2 13V7l4 2.5V7l4 2.5V4h4v9"/></svg>Floor</button>
+      <button class="nav" data-go="needs-you"><svg class="i" viewBox="0 0 16 16"><path d="M8 2a4 4 0 0 1 4 4v3l1.5 2.5h-11L4 9V6a4 4 0 0 1 4-4zM6.5 13.5a1.5 1.5 0 0 0 3 0"/></svg>Needs you<span class="n" id="navN">0</span></button>
+      <button class="nav" data-go="goals"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>Goals</button>
+      <button class="nav" data-go="live"><svg class="i" viewBox="0 0 16 16"><path d="M1 8h3l2-5 3 10 2-5h4"/></svg>Live</button>
+      <button class="nav" data-go="team"><svg class="i" viewBox="0 0 16 16"><circle cx="5.5" cy="5" r="2.3"/><circle cx="11.3" cy="6" r="1.8"/><path d="M1.5 13c0-2.6 2-4 4-4s4 1.4 4 4M10.5 9.6c2 0 3.8 1 3.8 3.4"/></svg>Team</button>
+    </nav>
+    <nav class="navg" aria-label="Engineering"><h3>Engineering</h3>
+      <button class="nav" data-go="runs"><svg class="i" viewBox="0 0 16 16"><path d="M5.5 4L1.5 8l4 4M10.5 4l4 4-4 4"/></svg>Runs and changes</button>
+      <button class="nav" data-go="autonomy"><svg class="i" viewBox="0 0 16 16"><path d="M2.5 12a6 6 0 1 1 11 0"/><path d="M8 9l3-4"/></svg>Autonomy</button>
+    </nav>
+    <nav class="navg" aria-label="Organisation"><h3>Organisation <em>designed</em></h3>
+      <button class="nav" data-go="plant"><svg class="i" viewBox="0 0 16 16"><path d="M2 3h12M2 8h12M2 13h12"/><circle cx="5" cy="3" r="1.3" fill="currentColor"/><circle cx="10" cy="8" r="1.3" fill="currentColor"/><circle cx="7" cy="13" r="1.3" fill="currentColor"/></svg>Plant</button>
+      <button class="nav" data-go="record"><svg class="i" viewBox="0 0 16 16"><path d="M3 2h8l2 2v10H3zM5.5 6.5h5M5.5 9h5M5.5 11.5h3"/></svg>Record</button>
+    </nav>
+    <div class="railfoot"><button class="tgl" id="theme" type="button"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M3 13l1.4-1.4M11.6 4.4L13 3"/></svg>Light / dark</button><span>Mockup. Made-up data. Nothing here is live.</span></div>
+  </aside>
+
+  <main id="main"></main>
+</div>
+<div id="over"></div>
+
+<script>
+(function(){
+"use strict";
+var $=function(s,r){return (r||document).querySelector(s)};
+function h(t){return String(t).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+function svg(p){return '<svg class="i" viewBox="0 0 16 16" aria-hidden="true">'+p+'</svg>'}
+var I={
+ ok:svg('<circle cx="8" cy="8" r="6"/><path d="M5.2 8.2l2 2 3.6-4"/>'),
+ work:svg('<circle cx="8" cy="8" r="6"/><path d="M6.5 5.5v5l4-2.5z" fill="currentColor"/>'),
+ wait:svg('<circle cx="8" cy="5" r="2.4"/><path d="M3 14c0-3 2.3-4.6 5-4.6s5 1.600 5 4.600"/>'),
+ stuck:svg('<path d="M8 1.800l6.500 11.400h-13z"/><path d="M8 6.500v3M8 11.500v.1"/>'),
+ queue:svg('<circle cx="8" cy="8" r="6"/><path d="M8 4.500V8l2.300 1.500"/>'),
+ unk:svg('<path d="M8 1.500l6.500 6.500L8 14.500 1.500 8z"/><path d="M6.600 6.400c.2-1.500 3-1.500 2.800.2 0 1-1.400 1.100-1.400 2M8 10.800v.1"/>'),
+ no:svg('<circle cx="8" cy="8" r="6" stroke-dasharray="2.400 2"/><path d="M5.500 8h5"/>'),
+ bot:svg('<rect x="3" y="5.500" width="10" height="7" rx="1"/><path d="M8 5.500V3M6 8.500v1.500M10 8.500v1.500"/>'),
+ done:svg('<path d="M2.500 8.500l3.500 3.500 7.500-8"/>'),
+ back:svg('<path d="M6 4L2.500 7.500 6 11M2.500 7.500H10a3.500 3.500 0 0 1 0 7H8"/>')
+};
+
+/* ---------- the plant's data (made up) ---------- */
+var ST=[
+ {n:"Plan",who:"person",gate:"You approve the plan"},
+ {n:"Write checks",who:"agent"},
+ {n:"Build",who:"agent"},
+ {n:"Check",who:"factory"},
+ {n:"Second opinion",who:"agent"},
+ {n:"Holding area",who:"factory"},
+ {n:"Accepted",who:"person",gate:"You accept"}
+];
+var STEP=["waiting for the plan","writing the checks","writing the change","running the checks","getting a second opinion","in the holding area","accepted"];
+var G=[
+ {id:"g1",n:"Combine passing changes in a holding area",course:"ok",lane:"Standard",
+  lines:[["ok","A change that passes every check goes into the holding area."],["ok","A change that fails a check never goes in."],["ok","Two changes that touch the same place are combined in order."],["unk","The holding area can be rebuilt after a crash.","No check could be written yet. Ticket 52 is building it."]]},
+ {id:"g2",n:"Two teammates' machines share one queue",course:"wait",lane:"Standard",
+  lines:[["ok","Each machine takes a different ticket."],["no","The first machine to claim a ticket keeps it.","Checks failed twice. Stuck at Check."],["no","A machine that goes away frees its ticket.","Waiting for your answer."],["unk","It still works when two clocks differ."]]},
+ {id:"g3",n:"A person approves a goal by listing its lines",course:"ok",lane:"Quick",
+  lines:[["no","A goal with one to three plain lines can be approved.","Being built."],["no","The factory repeats the lines back, word for word.","Queued."]]},
+ {id:"g4",n:"Watch the factory on one screen",course:"idle",lane:"Standard",
+  lines:[["no","The line shows where every piece of work is."],["no","A stuck piece says why, and since when."],["no","What needs a person is listed in plain words."]]}
+];
+var IT=[
+ {id:70,g:"g4",t:"Plan: watch the factory on one screen",st:0,state:"person",age:95,why:"Plan is ready. It waits for your approval."},
+ {id:62,g:"g3",t:"Repeat the lines back",st:1,state:"queued",age:14},
+ {id:61,g:"g3",t:"Read the lines strictly",st:1,state:"queued",age:22},
+ {id:58,g:"g2",t:"Free a ticket when a machine goes away",st:2,state:"person",age:52,why:"The agent asked a question only you can answer."},
+ {id:52,g:"g1",t:"Rebuild the holding area after a crash",st:2,state:"working",m:"laptop-a",age:6,rul:["Kept the last good state on disk, not in memory. Cost if wrong: one slower restart."],unk:["No check covers a crash during the rebuild itself."]},
+ {id:57,g:"g2",t:"Lowest claim wins",st:3,state:"stuck",age:40,why:"Checks failed twice. One try left.",unk:["Two machines claiming in the same second."]},
+ {id:55,g:"g2",t:"Only trusted people can start work",st:4,state:"working",m:"laptop-b",age:4,rul:["Compared names in plain letters only. Cost if wrong: an odd name is refused."]},
+ {id:49,g:"g1",t:"Take out a change that breaks a line",st:5,state:"done",age:31},
+ {id:47,g:"g1",t:"Combine changes in order",st:5,state:"done",age:64},
+ {id:46,g:"g1",t:"Refuse a change that fails a check",st:5,state:"done",age:88},
+ {id:44,g:"g0",t:"Open a folder once, before the agent starts",st:6,state:"done",age:0},
+ {id:42,g:"g0",t:"Count programs, not seconds",st:6,state:"done",age:0},
+ {id:41,g:"g0",t:"Re-apply one change on another",st:6,state:"done",age:0},
+ {id:39,g:"g0",t:"Never push the holding area to main",st:6,state:"done",age:0}
+];
+var M=[{id:"laptop-a",who:"You",agent:"Claude Code"},{id:"laptop-b",who:"Teammate",agent:"Codex CLI"}];
+var CALLS=[
+ {id:"c1",kind:"q",who:"You",since:52,item:58,goal:"g2",q:"A machine holds a ticket and then goes away. After how long may another machine take it: 2 hours, or sooner?"},
+ {id:"c2",kind:"yn",who:"Anyone trusted",since:18,item:55,goal:"g2",q:"Ticket 55 changes who is allowed to start work. People who are not on your team list will be ignored. Is that what you want?"},
+ {id:"c3",kind:"acc",who:"You",since:31,goal:"g1",q:"Goal: combine passing changes in a holding area. 3 of 4 lines work. 1 could not be confirmed. Accept what works now?"},
+ {id:"c4",kind:"plan",who:"You",since:95,item:70,goal:"g4",q:"The plan for 'Watch the factory on one screen' is ready: 3 lines, 5 tickets. Approve it so building can start?"}
+];
+var LOG=[
+ ["12:41","ok","Ticket 49 passed its checks and went into the holding area."],
+ ["12:33","stuck","Ticket 57 failed its checks a second time. It has one try left."],
+ ["12:10","back","Ticket 51 was taken out of the holding area. It broke a line that was working. It is being built again."],
+ ["11:56","wait","Ticket 58 stopped with a question for you."],
+ ["11:20","unk","One line of the holding-area goal could not be confirmed. No check exists for it yet."],
+ ["09:05","ok","You accepted 4 changes. They are part of the product now."]
+];
+var FEED={"laptop-a":[["12:42","Started ticket 52. Took its claim."],["12:43","Read the brief and the lines it serves."],["12:46","Decided for you: keep the last good state on disk."],["12:47","Writing the change. Two files so far."]],
+          "laptop-b":[["12:44","Started a second opinion on ticket 55."],["12:45","Read the change and the person's own lines."],["12:47","One point so far: an error message is vague."]]};
+var clock=[12,48],paused=false,turn=0,timer=null,open={};
+var reduce=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function goal(id){for(var i=0;i<G.length;i++)if(G[i].id===id)return G[i];return null}
+function item(id){for(var i=0;i<IT.length;i++)if(IT[i].id===id)return IT[i];return null}
+function at(s){return IT.filter(function(a){return a.st===s})}
+function age(m){return m<60?m+" min":Math.floor(m/60)+" h "+(m%60<10?"0":"")+(m%60)+" min"}
+function now(){return (clock[0]<10?"0":"")+clock[0]+":"+(clock[1]<10?"0":"")+clock[1]}
+var SW={working:["c-ok",I.work,"Working"],queued:["c-idle",I.queue,"Waiting for a machine"],person:["c-wait",I.wait,"Waiting for a person"],stuck:["c-bad",I.stuck,"Stuck"],done:["c-flow",I.done,"Ready"]};
+var LS={ok:["ok",I.ok,"Working"],no:["wait",I.no,"Not working yet"],unk:["idle",I.unk,"Could not confirm"]};
+var CS={ok:["ok",I.ok,"On course"],wait:["wait",I.stuck,"Drifting"],bad:["bad",I.stuck,"Off course"],idle:["idle",I.queue,"Not started"]};
+function chip(c){return '<span class="chip '+c[0]+'">'+c[1]+c[2]+'</span>'}
+
+/* ---------- floor ---------- */
+function summary(){
+  var live=IT.filter(function(a){return a.st<6}),mov=live.filter(function(a){return a.state==="working"||a.state==="queued"}).length;
+  var stuck=live.filter(function(a){return a.state==="stuck"}),hold=at(5).length;
+  var s=[];
+  s.push("<b>"+mov+" "+(mov===1?"piece":"pieces")+" moving.</b>");
+  if(stuck.length)s.push('<b class="c-bad">'+stuck.length+" stuck for "+age(stuck[0].age)+" at "+ST[stuck[0].st].n+".</b>");
+  if(CALLS.length)s.push('<b class="c-wait">'+CALLS.length+" "+(CALLS.length===1?"thing waits":"things wait")+" for a person.</b>");
+  if(hold)s.push(hold+" in the holding area, ready for you to accept.");
+  var mode=stuck.length?["r","c-bad",I.stuck,"Stuck"]:CALLS.length?["a","c-wait",I.wait,"Needs a person"]:mov?["g","c-ok",I.work,"Running"]:["","c-idle",I.queue,"Idle"];
+  return {html:s.join(" "),mode:mode,mov:mov};
+}
+function floor(){
+  var s=summary(),wip=IT.filter(function(a){return a.st<6}).length,acc=at(6).length;
+  var o='<div class="head"><div><h1>Factory floor</h1><p>Every piece of work, where it is on the line, and what stops it.</p></div><span class="repo">'+I.bot+'openagentix/factory</span></div>';
+  o+='<section class="status" aria-label="Line status"><div class="tower" role="img" aria-label="Signal: '+s.mode[3]+'"><div class="lamp r'+(s.mode[0]==="r"?" on":"")+'"></div><div class="lamp a'+(s.mode[0]==="a"?" on":"")+'"></div><div class="lamp g'+(s.mode[0]==="g"?" on":"")+'"></div></div>'+
+     '<div class="say"><span class="st '+s.mode[1]+'">'+s.mode[2]+s.mode[3]+'</span><p>'+s.html+'</p></div></section>';
+  o+='<section class="gauges" aria-label="Today">'+
+   '<div class="g"><span class="k">In work</span><span class="v data">'+wip+'<small>pieces on the line</small></span><span class="d">2 machines, one job each at a time</span></div>'+
+   '<div class="g"><span class="k">Accepted today</span><span class="v data">'+acc+'<small>changes</small></span><svg class="spark" viewBox="0 0 120 22" preserveAspectRatio="none" aria-hidden="true"><path d="M0 18 L20 15 L40 16 L60 10 L80 12 L100 6 L120 4 L120 22 L0 22z" fill="var(--flow-bg)"/><path d="M0 18 L20 15 L40 16 L60 10 L80 12 L100 6 L120 4" fill="none" stroke="var(--flow)" stroke-width="1.6"/><circle cx="120" cy="4" r="2.4" fill="var(--flow)"/></svg></div>'+
+   '<div class="g"><span class="k">Right first time</span><span class="v data">71%<small>last 30 days</small></span><span class="d">Changes that passed every check on the first try</span></div>'+
+   '<div class="g"><span class="k">Goal to holding area</span><span class="v data">38<small>min, typical</small></span><span class="d">From an approved plan to a checked change</span></div>'+
+   '<div class="g"><span class="k">Your attention</span><span class="v data">1.2<small>touches per goal</small></span><span class="d">4 questions and 2 yes or no this week</span></div></section>';
+  o+='<section class="linewrap" aria-label="The line"><div class="linehead"><h2>The line</h2><div class="legend"><span class="c-ok">'+I.work+'Working</span><span class="c-idle">'+I.queue+'Waiting for a machine</span><span class="c-wait">'+I.wait+'Waiting for a person</span><span class="c-bad">'+I.stuck+'Stuck</span></div>'+
+     '<button class="btn sm" id="pause" type="button" aria-pressed="'+paused+'">'+(paused?"Resume the line":"Pause the line")+'</button></div><div class="scroll"><div class="line">';
+  ST.forEach(function(st,i){
+    var its=at(i),stuck=its.filter(function(a){return a.state==="stuck"})[0],per=its.filter(function(a){return a.state==="person"})[0],wk=its.filter(function(a){return a.state==="working"})[0];
+    var cls=i===6?"":stuck?"s-stuck":per?"s-person":wk?"s-working":"";
+    var oldest=its.reduce(function(m,a){return Math.max(m,a.age)},0);
+    o+='<div class="bay '+cls+'"><div class="hz"></div><div class="bh"><span class="no">'+(i+1<10?"0":"")+(i+1)+'</span><span class="nm">'+h(st.n)+'</span><span class="who">'+(st.who==="person"?I.wait+h(st.gate):st.who==="agent"?I.bot+"An agent works here":I.ok+"The factory checks here")+'</span></div>';
+    o+='<div class="bstat"><div class="top"><span class="cnt">'+its.length+(i===6?" today":its.length===1?" piece":" pieces")+'</span>'+(i<6&&its.length?'<span class="muted">oldest '+age(oldest)+'</span>':"")+'</div>';
+    if(i<6){ if(stuck)o+='<span class="why c-bad">'+I.stuck+h(stuck.why)+'</span>'; else if(per)o+='<span class="why c-wait">'+I.wait+h(per.why)+'</span>'; else if(wk)o+='<span class="why c-ok">'+I.work+"Moving</span>"; else if(its.length&&i===5)o+='<span class="why c-flow">'+I.done+"Checked. Ready to accept.</span>"; else if(its.length)o+='<span class="why c-idle">'+I.queue+"Both machines are busy</span>"; }
+    else o+='<span class="why c-flow">'+I.done+"Part of the product</span>";
+    o+='</div><div class="tags">';
+    its.slice(0,4).forEach(function(a){
+      var w=SW[a.state];
+      o+='<button type="button" class="tag '+a.state+(a.fresh?" fresh":"")+'" data-item="'+a.id+'"><span class="id"><span>#'+a.id+'</span><span>'+(a.m?h(a.m):i===6?"":age(a.age))+'</span></span><span class="t">'+h(a.t)+'</span>'+(i<6?'<span class="s '+w[0]+'">'+w[1]+w[2]+'</span>':"")+'</button>';
+      a.fresh=false;
+    });
+    if(its.length>4)o+='<span class="more">and '+(its.length-4)+' more</span>';
+    o+='</div></div>';
+  });
+  o+='</div><div class="belt'+(paused||!s.mov?" halt":"")+'" aria-hidden="true"><i></i></div></div></section>';
+  o+='<div class="cols"><div style="display:flex;flex-direction:column;gap:16px;min-width:0"><section class="box"><h2>Goals on the line<span>position shows progress</span></h2>'+lanes()+'</section>'+
+     '<section class="box"><h2>Since you last looked<span>today</span></h2><ul class="log">'+LOG.slice(0,6).map(function(l){var c={ok:["c-ok",I.ok],stuck:["c-bad",I.stuck],back:["c-wait",I.back],wait:["c-wait",I.wait],unk:["c-idle",I.unk]}[l[1]];return '<li><time>'+l[0]+'</time><span class="'+c[0]+'">'+c[1]+'</span><span>'+h(l[2])+'</span></li>'}).join("")+'</ul></section></div>'+
+     '<section class="box"><h2>Needs a person<span>'+CALLS.length+' open</span></h2>'+calls(3)+'</section></div>';
+  return o;
+}
+function lanes(){
+  var o='<div class="lane" aria-hidden="true" style="padding-block:6px"><span></span><div class="minilab">'+ST.map(function(s,i){return '<span>'+(i+1<10?"0":"")+(i+1)+'</span>'}).join("")+'</div><span></span></div>';
+  G.forEach(function(g){
+    var ok=g.lines.filter(function(l){return l[0]==="ok"}).length;
+    o+='<div class="lane"><div><div class="gn">'+h(g.n)+'</div><div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">'+chip(CS[g.course])+'<span class="muted small">'+g.lane+' lane</span></div></div><div class="mini">';
+    ST.forEach(function(s,i){var its=IT.filter(function(a){return a.g===g.id&&a.st===i});o+='<div>'+its.map(function(a){return '<span class="dot '+a.state+'" title="#'+a.id+'"></span>'}).join("")+'</div>'});
+    o+='</div><div class="lres"><span class="lbar" role="img" aria-label="'+ok+' of '+g.lines.length+' lines working">'+g.lines.map(function(l){return '<i class="'+l[0]+'"></i>'}).join("")+'</span><span><b class="data">'+ok+' of '+g.lines.length+'</b> lines working</span><button class="btn sm" type="button" data-open="'+g.id+'" aria-expanded="'+!!open[g.id]+'">'+(open[g.id]?"Hide lines":"Show lines")+'</button></div>';
+    if(open[g.id])o+=lines(g);
+    o+='</div>';
+  });
+  return o;
+}
+function lines(g){return '<ul class="lines">'+g.lines.map(function(l){return '<li>'+chip(LS[l[0]])+'<span>'+h(l[1])+(l[2]?'<br><span class="note">'+h(l[2])+'</span>':"")+'</span></li>'}).join("")+'</ul>'}
+function calls(max){
+  if(!CALLS.length)return '<div class="empty">'+I.ok+'<p>Nothing waits for a person. The line runs by itself.</p></div>';
+  var o="";
+  CALLS.slice(0,max||99).forEach(function(c){
+    var kind={q:["wait",I.wait,"Question"],yn:["wait",I.stuck,"Yes or no"],acc:["flow",I.done,"Ready to accept"],plan:["wait",I.wait,"Plan to approve"]}[c.kind];
+    o+='<div class="call"><div class="meta">'+chip(kind)+'<span><b>'+h(c.who)+'</b> must act</span><span class="data">waiting '+age(c.since)+'</span></div><p class="q">'+h(c.q)+'</p>';
+    if(c.kind==="q")o+='<label class="small muted" for="a-'+c.id+'">Your answer, in plain words</label><textarea id="a-'+c.id+'"></textarea><div class="acts"><button class="btn pri" type="button" data-act="answer" data-c="'+c.id+'">Send answer</button></div>';
+    if(c.kind==="yn")o+='<div class="acts"><button class="btn pri" type="button" data-act="yes" data-c="'+c.id+'">Yes, that is what I want</button><button class="btn" type="button" data-act="no" data-c="'+c.id+'">No, send it back</button></div>';
+    if(c.kind==="acc")o+='<div class="acts"><button class="btn" type="button" data-act="try" data-c="'+c.id+'">Try it</button><button class="btn pri" type="button" data-act="accept" data-c="'+c.id+'">Accept</button><button class="btn" type="button" data-act="undo" data-c="'+c.id+'">Undo a change</button></div><p class="caution">'+I.stuck+'Try it runs code the factory wrote. No person has read it.</p>';
+    if(c.kind==="plan")o+='<div class="acts"><button class="btn pri" type="button" data-act="approve" data-c="'+c.id+'">Approve the plan</button><button class="btn" type="button" data-act="replan" data-c="'+c.id+'">Keep planning</button></div>';
+    o+='</div>';
+  });
+  if(max&&CALLS.length>max)o+='<div class="pad"><button class="btn sm" type="button" data-go="needs-you">See all '+CALLS.length+'</button></div>';
+  return o;
+}
+
+/* ---------- other screens ---------- */
+function needs(){return '<div class="head"><div><h1>Needs you</h1><p>The only places the factory stops for a person. One plain question each. Everything else keeps moving.</p></div></div><section class="box"><h2>Open<span>oldest first</span></h2>'+calls()+'</section>'}
+function goals(){
+  var o='<div class="head"><div><h1>Goals</h1><p>What the team asked for, in its own words, and whether each line works.</p></div><button class="btn pri" type="button" data-toast="Mockup. This starts a planning conversation.">Plan a new goal</button></div>';
+  G.forEach(function(g){var ok=g.lines.filter(function(l){return l[0]==="ok"}).length,inw=IT.filter(function(a){return a.g===g.id&&a.st<6}).length;
+    o+='<section class="box"><h2>'+h(g.n)+'<span>'+g.lane+' lane</span></h2><div class="pad" style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center">'+chip(CS[g.course])+'<span><b class="data">'+ok+' of '+g.lines.length+'</b> lines working</span><span class="muted">'+inw+' pieces on the line</span><span style="flex:1"></span><button class="btn sm" type="button" data-toast="Mockup. This starts the working version for you to try.">Try it</button><button class="btn sm" type="button" data-toast="Mockup. You would pick a change to take back.">Undo a change</button></div><div class="pad" style="padding-top:0">'+lines(g).replace('class="lines"','class="lines" style="border-top:0;padding-top:0;margin-top:0"')+'</div></section>'});
+  return o;
+}
+function live(){
+  var o='<div class="head"><div><h1>Live</h1><p>What each machine is doing right now.</p></div><button class="btn sm" id="pause" type="button" aria-pressed="'+paused+'">'+(paused?"Resume the line":"Pause the line")+'</button></div><div class="cells">';
+  M.forEach(function(m){
+    var a=IT.filter(function(x){return x.m===m.id&&x.state==="working"})[0];
+    o+='<section class="box"><h2><span class="data" style="font-size:14px;color:var(--ink)">'+m.id+'</span>'+(a?chip(["ok",I.work,"Running"]):chip(["idle",I.queue,"Idle"]))+'</h2><div class="pad">';
+    if(a){o+='<dl class="kv"><dt>Whose</dt><dd>'+m.who+'</dd><dt>Job</dt><dd><b>#'+a.id+'</b> '+h(a.t)+'</dd><dt>Agent</dt><dd>'+m.agent+'</dd><dt>At this station</dt><dd class="data">'+age(a.age)+'</dd></dl><div class="steps">'+[1,2,3,4,5].map(function(i){return '<div class="'+(i<a.st?"dn":i===a.st?"cur":"")+'">'+h(ST[i].n)+'</div>'}).join("")+'</div><p class="small muted">Now: '+STEP[a.st]+'.</p>'}
+    else o+='<p class="muted">No job. It takes the next ticket that is ready.</p>';
+    o+='</div><ul class="log" style="border-top:1px solid var(--line)">'+FEED[m.id].slice(-5).reverse().map(function(f){return '<li><time>'+f[0]+'</time><span class="c-idle">'+I.queue+'</span><span>'+h(f[1])+'</span></li>'}).join("")+'</ul></section>';
+  });
+  o+='</div><section class="box"><h2>Waiting, and why<span>who must act</span></h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>Where</th><th>Why it waits</th><th>Who acts</th><th class="num">Since</th></tr></thead><tbody>';
+  IT.filter(function(a){return a.st<5&&a.state!=="working"}).forEach(function(a){var w=SW[a.state];o+='<tr><td><b>#'+a.id+'</b> '+h(a.t)+'</td><td>'+ST[a.st].n+'</td><td><span class="'+w[0]+'" style="display:inline-flex;gap:5px;align-items:center;font-weight:600">'+w[1]+h(a.why||"One job at a time on each machine")+'</span></td><td>'+(a.state==="person"?"You":a.state==="stuck"?"Nobody yet. One try left.":"Nobody. It starts by itself.")+'</td><td class="num">'+age(a.age)+'</td></tr>'});
+  return o+'</tbody></table></div></section>';
+}
+function team(){return '<div class="head"><div><h1>Team</h1><p>Each person runs the factory on their own machine, with their own agent sign-in. Nobody shares a login. Only trusted people can start work or answer.</p></div></div>'+
+ '<section class="box"><h2>Trusted people and their machines</h2><div class="scroll"><table><thead><tr><th>Person</th><th>Machine</th><th>State</th><th>Agent</th><th>Holds now</th><th>Frees itself</th></tr></thead><tbody>'+
+ '<tr><td><b>You</b><br>'+chip(["ok",I.ok,"Trusted"])+'</td><td class="data">laptop-a</td><td>'+chip(["ok",I.work,"Running"])+'</td><td>Claude Code</td><td>Ticket 52. Also the holding area for this project.</td><td>2 hours after the machine goes quiet</td></tr>'+
+ '<tr><td rowspan="2"><b>Teammate</b><br>'+chip(["ok",I.ok,"Trusted"])+'</td><td class="data">laptop-b</td><td>'+chip(["ok",I.work,"Running"])+'</td><td>Codex CLI</td><td>Second opinion on ticket 55.</td><td>2 hours after the machine goes quiet</td></tr>'+
+ '<tr><td class="data">desktop-b</td><td>'+chip(["idle",I.queue,"Switched off"])+'</td><td>Claude Code</td><td>Nothing.</td><td>Nothing to free</td></tr></tbody></table></div></section>'+
+ '<section class="box"><h2>How the team shares work</h2><div class="pad"><ul class="plain"><li>A machine takes a ticket by claiming it on GitHub. The first claim wins. The other machine takes something else.</li><li>A change built on one machine gets its second opinion on the other, with the other agent, when both are running.</li><li>If a machine goes away, its ticket frees itself after 2 hours.</li><li>Someone with access to the project who is not on this list can comment. Their comments never start work.</li></ul></div></section>'}
+function runs(){return '<div class="head"><div><h1>Runs and changes</h1><p>The same work with the machinery showing. You came here on purpose. This screen uses engineering words.</p></div></div>'+
+ '<section class="box"><h2>Runs<span>latest first</span></h2><div class="scroll"><table><thead><tr><th>Run</th><th>Ticket</th><th>Task</th><th>Stage</th><th>Harness</th><th>Evidence</th><th></th></tr></thead><tbody>'+
+ '<tr><td class="data">r_01JD8</td><td>#52</td><td>implement</td><td>'+chip(["ok",I.work,"working"])+'</td><td>Claude Code</td><td>1 ruling. No denial.</td><td><a href="#runs" data-toast="Mockup. This opens the pull request on GitHub.">Open on GitHub</a></td></tr>'+
+ '<tr><td class="data">r_01JD7</td><td>#55</td><td>review</td><td>'+chip(["ok",I.work,"working"])+'</td><td>Codex CLI</td><td>Subject built by Claude Code. Two opinions.</td><td><a href="#runs" data-toast="Mockup. This opens the pull request on GitHub.">Open on GitHub</a></td></tr>'+
+ '<tr><td class="data">r_01JD5</td><td>#57</td><td>implement</td><td>'+chip(["bad",I.stuck,"failed"])+'</td><td>Codex CLI</td><td>check_failed: test, exit 1. Attempt 2 of 3.</td><td><a href="#runs" data-toast="Mockup. This opens the pull request on GitHub.">Open on GitHub</a></td></tr>'+
+ '<tr><td class="data">r_01JD2</td><td>#49</td><td>implement</td><td>'+chip(["flow",I.done,"combined"])+'</td><td>Claude Code</td><td>5 of 5 checks. Review agrees. Risk low.</td><td><a href="#runs" data-toast="Mockup. This opens the pull request on GitHub.">Open on GitHub</a></td></tr></tbody></table></div></section>'+
+ '<section class="box"><h2>Change for ticket 55<span>decision card</span></h2><div class="pad" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px">'+
+ '<div><h3 class="sign small muted">Changed</h3><ul class="plain data small"><li>internal/githost/trust.go</li><li>internal/githost/trust_test.go (new)</li><li>internal/api/factory.go</li></ul><h3 class="sign small muted" style="margin-top:12px">Risk</h3>'+chip(["bad",I.stuck,"High"])+'<p class="small" style="margin-top:4px">A path under riskPaths.security changed.</p></div>'+
+ '<div><h3 class="sign small muted">Decided for you</h3><ul class="plain"><li>Compare logins in plain letters only. <button class="btn sm" type="button" data-toast="Ruling overturned. The ticket goes back for rework.">Overturn</button></li><li>Refuse an empty list. <button class="btn sm" type="button" data-toast="Ruling overturned. The ticket goes back for rework.">Overturn</button></li></ul></div>'+
+ '<div><h3 class="sign small muted">Not confirmed</h3><ul class="plain"><li>1 changed file is not covered by any claim.</li><li>A renamed account that is reused by someone else.</li></ul><h3 class="sign small muted" style="margin-top:12px">Independent review</h3><p>In progress on laptop-b, by the other agent.</p></div></div></section>'}
+var TASKS=[{n:"Build a ticket",k:"implement",ceil:2,lv:2,rec:[14,2,0],earn:"14 accepted, 0 taken back, every second opinion from the other agent."},{n:"Fix a failed check",k:"fix-ci",ceil:2,lv:1,rec:[6,1,1],earn:"1 change taken back 9 days ago. The count starts again."},{n:"Write the checks",k:"acceptance",ceil:2,lv:2,rec:[9,3,0],earn:"3 of 12 sets of checks needed a second try."}];
+function autonomy(){var L=["Off","Guided","Autopilot","Accepts by itself"],o='<div class="head"><div><h1>Autonomy</h1><p>One dial per kind of job. It sets where the factory stops for a person once the plan is approved. Trust comes from what happened after you accepted, never from pressing Accept.</p></div><button class="btn warn" type="button" data-toast="All jobs paused. Nothing new starts until you resume.">Stop the line</button></div>';
+ TASKS.forEach(function(t,ti){o+='<section class="box"><h2>'+t.n+'<span class="data">'+t.k+' · ceiling: '+L[t.ceil].toLowerCase()+'</span></h2><div class="pad" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px"><div><div class="dial" role="radiogroup" aria-label="Level for '+t.n+'">'+L.map(function(l,i){var dis=i===3||i>t.ceil;return '<button type="button" role="radio" class="stop" data-dial="'+ti+'" data-lv="'+i+'" aria-checked="'+(t.lv===i)+'"'+(dis?" disabled":"")+'>'+l+'<small>'+(i===3?"not active yet":i>t.ceil?"above ceiling":["never runs","you approve each change","stops only at Accept",""][i])+'</small></button>'}).join("")+'</div></div><div><dl class="kv"><dt>Last 30 days</dt><dd><b class="data">'+t.rec[0]+'</b> accepted, <b class="data">'+t.rec[1]+'</b> reworked, <b class="data">'+t.rec[2]+'</b> taken back</dd><dt>Earned so far</dt><dd>'+t.earn+'</dd></dl></div></div></section>'});
+ return o}
+function plant(){var R=[["openagentix/factory","a","Needs a person",[1,2,2,1,1,3,4],[0,0,1,2,0,0,0],"Check, 40 min","You, 4 open","Autopilot"],["acme/payments-api","g","Running",[0,1,3,1,1,2,9],[0,0,0,0,0,0,0],"Not stuck","Nobody","Autopilot"],["acme/web-app","r","Stuck",[2,0,1,4,0,0,2],[0,0,0,2,0,0,0],"Check, 3 h 10 min","Platform team","Guided"],["acme/billing-jobs","g","Running",[0,0,1,0,1,1,6],[0,0,0,0,0,0,0],"Not stuck","Nobody","Autopilot"],["acme/docs","a","Needs a person",[3,0,0,0,0,5,12],[1,0,0,0,0,0,0],"Not stuck","Docs lead, 3 plans","Autopilot"],["acme/mobile","","Stopped",[0,0,0,0,0,0,0],[0,0,0,0,0,0,0],"Stopped by a person","Mobile lead","Off"]];
+ var mc={a:["wait",I.wait],g:["ok",I.work],r:["bad",I.stuck],"":["idle",I.queue]};
+ return '<div class="head"><div><h1>Plant</h1><p>Every line in the organisation at once. The eye should go to the lines that need someone. Designed, not built.</p></div></div><section class="box"><h2>Lines<span>6 projects</span></h2><div class="scroll"><table><thead><tr><th>Project</th><th>Signal</th><th>The line, stations 01 to 07</th><th>Stuck at</th><th>Waits for</th><th>Autonomy</th></tr></thead><tbody>'+R.map(function(r){return '<tr><td class="data">'+r[0]+'</td><td>'+chip([mc[r[1]][0],mc[r[1]][1],r[2]])+'</td><td><div class="pl">'+r[3].map(function(n,i){return '<i class="'+(r[4][i]===2?"x":r[4][i]===1?"p":n?"w":"")+'">'+(n||"")+'</i>'}).join("")+'</div></td><td>'+r[5]+'</td><td>'+r[6]+'</td><td>'+r[7]+'</td></tr>'}).join("")+'</tbody></table></div></section>'}
+function record(){return '<div class="head"><div><h1>Record</h1><p>What the factory produced, whether it stayed good, and what it used. Designed, not built.</p></div></div>'+
+ '<section class="box"><h2>Results by kind of change<span>last 30 days</span></h2><div class="scroll"><table><thead><tr><th>Kind of change</th><th class="num">Accepted</th><th class="num">Still good</th><th class="num">Reworked</th><th class="num">Taken back</th><th>Usage</th></tr></thead><tbody>'+
+ '<tr><td>Documents</td><td class="num">11</td><td class="num">11</td><td class="num">0</td><td class="num">0</td><td>0.4 M tokens, included in plan</td></tr><tr><td>Tests</td><td class="num">8</td><td class="num">7</td><td class="num">1</td><td class="num">0</td><td>1.1 M tokens, included in plan</td></tr><tr><td>Code, low risk</td><td class="num">14</td><td class="num">12</td><td class="num">2</td><td class="num">0</td><td>6.2 M tokens, included in plan</td></tr><tr><td>Code that changes a contract</td><td class="num">3</td><td class="num">2</td><td class="num">0</td><td class="num">1</td><td>$41.20 metered, 2.9 M tokens</td></tr><tr><td>Dependencies</td><td class="num">2</td><td class="num">2</td><td class="num">0</td><td class="num">0</td><td>Unknown. The agent reported nothing.</td></tr></tbody></table></div><div class="pad small muted">Spending limits are reported on a laptop. They are enforced on OpenAgentix.</div></section>'+
+ '<section class="box"><h2>Who decided what</h2><ul class="log"><li><time>12:02</time><span class="c-idle">'+I.wait+'</span><span>Teammate answered a question on ticket 53.</span></li><li><time>09:05</time><span class="c-ok">'+I.ok+'</span><span>You accepted 4 changes for the holding-area goal.</span></li><li><time>Tue</time><span class="c-wait">'+I.back+'</span><span>You moved "Fix a failed check" from autopilot to guided.</span></li><li><time>Mon</time><span class="c-wait">'+I.back+'</span><span>Teammate took back 1 change. It changed a contract by mistake.</span></li></ul></section>'}
+
+var SCREENS={floor:floor,"needs-you":needs,goals:goals,live:live,team:team,runs:runs,autonomy:autonomy,plant:plant,record:record},cur="floor";
+function render(){
+  $("#main").innerHTML='<div class="screen">'+SCREENS[cur]()+'<p class="mock">Mockup. Made-up data. Nothing here is live.</p></div>';
+  $("#navN").textContent=CALLS.length; $("#navN").hidden=!CALLS.length;
+  [].forEach.call(document.querySelectorAll(".nav"),function(b){if(b.dataset.go===cur)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current")});
+}
+function go(s){if(!SCREENS[s])s="floor";cur=s;render();window.scrollTo(0,0);try{if(location.hash!=="#"+s)history.replaceState(null,"","#"+s)}catch(e){}}
+var tt;function toast(m){var o=$("#toastEl");if(!o){o=document.createElement("div");o.id="toastEl";o.className="toast";o.setAttribute("role","status");document.body.appendChild(o)}o.textContent=m;o.hidden=false;clearTimeout(tt);tt=setTimeout(function(){o.hidden=true},2800)}
+
+/* ---------- traveler drawer ---------- */
+function traveler(id){
+  var a=item(id);if(!a)return;var g=goal(a.g),w=SW[a.state];
+  var o='<div class="scrim" data-close="1"></div><aside class="drawer" role="dialog" aria-modal="true" aria-label="Ticket '+a.id+'"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><span class="data muted">Ticket #'+a.id+'</span><h2>'+h(a.t)+'</h2></div><button class="btn sm" type="button" data-close="1">Close</button></div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="chip '+({working:"ok",queued:"idle",person:"wait",stuck:"bad",done:"flow"}[a.state])+'">'+w[1]+(a.st===6?"Accepted":w[2])+'</span>'+(a.m?'<span class="data small">on '+a.m+'</span>':"")+(g?'<span class="muted small">for: '+h(g.n)+'</span>':"")+'</div>';
+  if(a.why)o+='<p class="'+w[0]+'" style="font-weight:600">'+h(a.why)+'</p>';
+  o+='<div><h3>Its route so far</h3><ol class="route">'+ST.map(function(s,i){return '<li class="'+(i<a.st?"dn":i===a.st?"cur":"")+'"><i></i><span>'+(i+1<10?"0":"")+(i+1)+" "+h(s.n)+'</span><span class="tm">'+(i<a.st?"done":i===a.st?(a.st===6?"today":"here "+age(a.age)):"")+'</span></li>'}).join("")+'</ol></div>';
+  o+='<div><h3>Decided for you</h3>'+(a.rul?'<ul class="plain">'+a.rul.map(function(r){return "<li>"+h(r)+"</li>"}).join("")+"</ul>":'<p class="muted">Nothing yet.</p>')+'</div>';
+  o+='<div><h3>Could not be confirmed</h3>'+(a.unk?'<ul class="plain">'+a.unk.map(function(r){return "<li>"+h(r)+"</li>"}).join("")+"</ul>":'<p class="muted">Nothing so far.</p>')+'</div>';
+  o+='<div class="acts"><button class="btn" type="button" data-go="runs" data-close="1">Open in Engineering</button>'+(a.st===5?'<button class="btn" type="button" data-toast="Mockup. This change would be taken back and the holding area rebuilt.">Undo this change</button>':"")+'</div></aside>';
+  $("#over").innerHTML=o;var b=$(".drawer button");if(b)b.focus();
+}
+function closeDrawer(){$("#over").innerHTML=""}
+
+/* ---------- the line moves ---------- */
+function say(m,t){FEED[m].push([now(),t])}
+function tick(){
+  clock[1]++;if(clock[1]>59){clock[1]=0;clock[0]++}
+  IT.forEach(function(a){if(a.st<6)a.age++});
+  CALLS.forEach(function(c){c.since++});
+  var m=M[turn++%M.length],w=IT.filter(function(a){return a.m===m.id&&a.state==="working"})[0];
+  if(w){
+    w.st++;w.age=0;w.fresh=true;
+    if(w.st>=5){w.st=5;w.state="done";w.m=null;say(m.id,"Ticket "+w.id+" passed. It is in the holding area.");LOG.unshift([now(),"ok","Ticket "+w.id+" passed its checks and went into the holding area."])}
+    else say(m.id,"Ticket "+w.id+": now "+STEP[w.st]+".");
+  }else{
+    var q=IT.filter(function(a){return a.state==="queued"&&a.st>0&&a.st<5}).sort(function(x,y){return y.st-x.st||y.age-x.age})[0];
+    if(q){q.state="working";q.m=m.id;q.fresh=true;say(m.id,"Started ticket "+q.id+". Took its claim.")}
+  }
+  if(!$(".drawer")&&document.activeElement&&document.activeElement.tagName!=="TEXTAREA"&&(cur==="floor"||cur==="live"))render();
+}
+function setPaused(p){paused=p;clearInterval(timer);timer=null;if(!p)timer=setInterval(tick,3800);if(cur==="floor"||cur==="live")render()}
+
+/* ---------- actions ---------- */
+function drop(c){CALLS=CALLS.filter(function(x){return x.id!==c.id})}
+document.addEventListener("click",function(e){
+  var t=e.target.closest("[data-close]");if(t)closeDrawer();
+  t=e.target.closest("[data-go]");if(t){go(t.dataset.go);return}
+  t=e.target.closest("[data-item]");if(t){traveler(+t.dataset.item);return}
+  t=e.target.closest("[data-open]");if(t){open[t.dataset.open]=!open[t.dataset.open];render();return}
+  t=e.target.closest("[data-toast]");if(t){e.preventDefault();toast(t.dataset.toast);return}
+  t=e.target.closest("#pause");if(t){setPaused(!paused);return}
+  t=e.target.closest("#theme");if(t){var r=document.documentElement,d=r.getAttribute("data-theme")||((window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light");d=d==="dark"?"light":"dark";r.setAttribute("data-theme",d);ls("oxf-theme",d);return}
+  t=e.target.closest("[data-dial]");if(t&&!t.disabled){TASKS[+t.dataset.dial].lv=+t.dataset.lv;render();toast("Level changed. It takes effect now and is written to the record.");return}
+  t=e.target.closest("[data-act]");if(!t)return;
+  var c=CALLS.filter(function(x){return x.id===t.dataset.c})[0];if(!c)return;var a=c.item?item(c.item):null,act=t.dataset.act;
+  if(act==="answer"){var ta=$("#a-"+c.id);if(!ta||!ta.value.trim()){toast("Type an answer first.");if(ta)ta.focus();return}a.state="queued";a.why="";drop(c);LOG.unshift([now(),"ok","You answered the question on ticket "+a.id+". It can start again."]);toast("Answer sent. Ticket "+a.id+" is back in the queue.")}
+  else if(act==="yes"){drop(c);toast("Recorded as passed by a person. Ticket "+c.item+" goes on.")}
+  else if(act==="no"){drop(c);if(a){a.st=2;a.state="queued";a.m=null;a.age=0;a.fresh=true}toast("Sent back to Build with your answer.")}
+  else if(act==="try"){toast("Mockup. This starts the working version for you to try.");return}
+  else if(act==="undo"){toast("Mockup. You would pick which change to take back.");return}
+  else if(act==="accept"){IT.forEach(function(x){if(x.g===c.goal&&x.st===5){x.st=6;x.age=0;x.fresh=true}});drop(c);LOG.unshift([now(),"ok","You accepted the changes for one goal. They are part of the product now."]);toast("Accepted. The changes are part of the product now.")}
+  else if(act==="approve"){a.st=1;a.state="queued";a.why="";a.age=0;a.fresh=true;a.t="Write checks for the factory screen";var g=goal(c.goal);if(g)g.course="ok";drop(c);toast("Plan approved. The factory works alone from here.")}
+  else if(act==="replan"){toast("Mockup. This reopens the planning conversation.");return}
+  render();
+});
+document.addEventListener("keydown",function(e){if(e.key==="Escape")closeDrawer()});
+window.addEventListener("hashchange",function(){var s=location.hash.slice(1);if(SCREENS[s]&&s!==cur)go(s)});
+var st=ls("oxf-theme");if(st==="light"||st==="dark")document.documentElement.setAttribute("data-theme",st);
+var first=location.hash.slice(1);cur=SCREENS[first]?first:"floor";
+paused=!!reduce;render();if(!paused)timer=setInterval(tick,3800);
+})();
+</script>
+</body>
+</html>

@@ -22,6 +22,17 @@ The file `embed/sqlite3.wasm` in `go-sqlite3` is built from C code with `-nostdl
 | The module's own C glue and minimal libc (`sqlite3/*.c`, `sqlite3/libc/`) | as the module | MIT | Maths is done on the Go side |
 | Doug Lea's `malloc` (`sqlite3/libc/malloc.c`) | 2.8.6 | MIT-0 | The allocator. It is relicensed from CC0 by its author in 2023 |
 
+## Web app (planned, not built)
+
+Record 0004 plans these for the web app. Nothing is installed yet. Versions are to be confirmed at install time against the lockfile. Their licence notices will ship with the binary.
+
+| Part | Licence | Note |
+|---|---|---|
+| The web framework's runtime (`svelte`) | MIT | Shipped in the binary |
+| The router's runtime (`@sveltejs/kit`) | MIT | Shipped in the binary. These two are the only web code shipped; the build tools are not |
+| Barlow Condensed font files | SIL Open Font Licence 1.1 | Font data, the one exception to the licence rule |
+| IBM Plex Sans and IBM Plex Mono font files | SIL Open Font Licence 1.1, reserved name "Plex" | The publisher's own unmodified files |
+
 ## Programs that are started, not shipped
 
 OpenAgentix Software Factory starts these programs when they are installed on the user's machine. They are not part of this repository or of any build from it. Each has its own licence and terms.

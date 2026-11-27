@@ -1,10 +1,10 @@
 # OpenAgentix Software Factory: design
 
-Date: 2026-11-26. Revision 7: agrees with decision record 0001. Planning is interactive and has no limit; after the plan is approved the factory works alone. Quick and standard lanes, acceptance checks, a machine gate, staging with Accept and Undo, and trajectory. Status: working draft, published for comment. Nothing here is proven by a run.
+Date: 2026-11-27. Revision 8: agrees with decision records 0001, 0003 and 0004. The web app follows the approved Floor design and is built side by side with the backend. Planning is interactive and has no limit; after the plan is approved the factory works alone. Quick and standard lanes, acceptance checks, a machine gate, staging with Accept and Undo, and trajectory. Status: working draft, published for comment. Nothing here is proven by a run.
 
 Lines marked **(owner)** were decided by the owner. Lines marked **(call)** are the assistant's choices and can be changed.
 
-Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/0002-threat-model.md`, `docs/decisions/0003-run-and-team.md` (running on one machine and in a team).
+Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/0002-threat-model.md`, `docs/decisions/0003-run-and-team.md` (running on one machine and in a team), `docs/decisions/0004-web-app-and-read-model.md` (the web app and its read model).
 
 ## 1. Intent
 
@@ -148,11 +148,11 @@ Default **(call)**: every task at 2, so after planning a person meets only Accep
 Rules for the dial:
 
 - The repository configuration sets a **ceiling** per task. It changes only through the default branch, so it is shared and has a history.
-- In the web app a person moves the dial at or below the ceiling. It takes effect at once and the change is logged.
+- In the web app a person moves the dial at or below the ceiling, on their own machine. It takes effect at once and the change is logged.
 - The trust ledger sits beside the dial. In v0.1 it informs. It does not move the dial.
 - On OpenAgentix the platform policy sets the ceiling and enforces it. Policy can only tighten. Same dial, stronger hand.
 
-**The decision card** is the engineering view of one change, computed from structured inputs, not from a model's prose: what changed under risky paths, what was decided for you, what was not confirmed, the independent review, the risk. At level 1 it is where a developer approves a change.
+**The decision card** is the engineering view of one change, on Runs and changes, computed from structured inputs, not from a model's prose: what changed under risky paths, what was decided for you, what was not confirmed, the independent review, the risk. At level 1 it is where a developer approves a change.
 
 ```
 CHANGE 14: reschedule endpoint                    risk: MEDIUM
@@ -250,11 +250,11 @@ Rules **(calls)**:
 2. **Verify.** `oxf` computes the change, fails the run on a change to a protected path, runs the task's checks and the acceptance checks on a clean checkout of the commit with no model access, in the same scrubbed environment and sandbox as the worker, and builds the evidence bundle.
 3. **Publish.** `oxf` pushes a `factory/` branch, opens a draft pull request into staging, comments, labels or creates tickets, with a **propose token**. A fixed list of actions, none of which writes to the default branch.
 
-The evidence bundle is rendered in the pull request body as Summary, Evidence and Risk, and in the engineering view. It lists the **rulings** the agent made ("decisions made for you") and anything the policy denied.
+The evidence bundle is rendered in the pull request body as Summary, Evidence and Risk, and in the engineering view (Runs and changes). It lists the **rulings** the agent made ("decisions made for you") and anything the policy denied.
 
 **Staging, Accept and Undo.** A change that passes the machine gate is added to a list, and the branch `factory-staging` is rebuilt from the default branch plus each change on the list, in order, one commit per change. Staging is never patched. It is rebuilt whenever a change passes, a change is undone, or the default branch moves. The checks and acceptance checks run again on every rebuild. A change that no longer fits is taken out and built again on its ticket, which uses an attempt. The acceptance list the person sees is computed from that staging state.
 
-- **Accept** takes the whole of staging, the exact state the person saw, and always needs the web app's login token. While it is pending, staging is frozen. If the person granted an **accept token**, the factory merges staging into the default branch. If not, the outcome view says "ask a developer to finish this step", and a developer merges the staging pull request without squashing, or the changes' outcomes cannot be attributed.
+- **Accept** takes the whole of staging, the exact state the person saw, and always needs the web app's login token. While it is pending, staging is frozen. If the person granted an **accept token**, the factory merges staging into the default branch. If not, the Floor says "ask a developer to finish this step", and a developer merges the staging pull request without squashing, or the changes' outcomes cannot be attributed.
 - **Undo** works on any change, not only the last. Before Accept it takes the change, and any that depend on it, off the list and rebuilds. After Accept it is a revert on the default branch, which needs the accept token or a developer. An undone change's ticket is closed as taken back.
 
 **Trajectory.** Each goal is on course, drifting or off course, by rules with starting thresholds that are untested. Off course means a ticket used all its attempts, the same criterion stopped working on two rebuilds, or two changes of the goal were undone. Then the factory stops building on that goal, takes that goal's changes back to its own last good point (other goals' changes stay), tells the person which lines are not working yet, and plans again with them. For a quick goal it proposes the standard lane.
@@ -273,76 +273,50 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 
 - In the target repository under `.factory/`: `factory.yaml`, `tasks/*.yaml`, `prompts/*.md`. Read from the default branch only. A protected path for every task except `onboard`.
 - The binary carries the prompts of the `builtin` method. Task files never come from the binary: a repository with no `.factory/` runs nothing. Until `onboard` is built, a person commits `.factory/` by hand; `oxf init` prints starter files for that.
-- Machine settings (which harnesses are installed, the listen address) live in the user's home directory, never in the repository. The GitHub tokens and the login token are kept in the operating system's credential store.
+- Machine settings (which harnesses are installed, the web app's port) live in the user's home directory, never in the repository. The GitHub tokens are kept in the operating system's credential store. The login token is made fresh at each start and never stored.
 - GitHub access in v0.1 is a fine-grained personal access token limited to the repository, as the propose token, and optionally a second one as the accept token. Branch protection must stop the propose token's user from updating the default branch. For `factory-staging`, restrict who may push; do not forbid force pushes, which every rebuild needs. A GitHub App comes later. **(call)**
-- On a dedicated machine `oxf` installs as a service and the web app can listen on the local network behind a login token. On a laptop it listens on localhost. The web app has no accounts, so Accept and Undo always need the login token, on localhost too. Runs are designed to be safe to repeat, so sleep or a restart loses only the run in flight. **(call)**
+- In v0.1 the web app listens on loopback only, on a fixed default port, on a laptop and on a dedicated machine. A dedicated machine is reached through a tunnel the person sets up, for example over ssh. Listening on another address, with encryption, is designed, not built. The web app has no accounts, so every data route, reads included, needs the login token. Runs are designed to be safe to repeat, so sleep or a restart loses only the run in flight. **(call)**
 
 ## 10. The web app
 
-Stack: the OpenAgentix console stack, so it can later mount in the console. Svelte 5 with runes, SvelteKit as a single-page app, Tailwind 4 with theme tokens, no component kit, strict content security policy, embedded in the binary. Live updates by server-sent events.
+Detail in decision record 0004. The design the owner approved is `docs/design/factory-floor-mockup.html`, a mockup with made-up data. It is the contract for look, words and behaviour. **(owner)** Nothing in this section is built.
 
-Principle: **outcomes first, detail on demand.** The **outcome view** is what the whole team watches: goals, acceptance lists with three states, questions waiting for a person, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. The **engineering view** shows runs, evidence, decision cards and pull requests. **Simple by default, full control one deliberate step away.** The outcome view opens first for everyone. A developer who wants control takes it on purpose: opens the engineering view, sets a task's dial to guided so they approve each step, or takes the wheel on a ticket. A person can set the engineering view as their own start page. **(owner)**
+Stack: Svelte 5 with runes, SvelteKit as a static single-page app, Vite and strict TypeScript, with no utility style framework for now, embedded in the binary. The design's CSS variables are the tokens. Fonts are bundled under the SIL Open Font Licence 1.1. A strict content security policy. Live updates by server-sent events, read with `fetch` so the key is never in a cookie or a URL. **(call)**
 
-```
- Let customers reschedule bookings              ON COURSE
+Principle: **outcomes first, detail on demand. Simple by default, full control one deliberate step away.** **(owner)** The app is a plant control screen. Its home is the **Floor**:
 
-  ok  A customer can move a booking to another day
-  ok  A booking that already started cannot be moved
-  ok  The customer gets a confirmation email
-  ..  Old bookings still show the old time   not working yet  (being worked on)
-  ?   Works on a phone                    could not confirm
+- a signal tower with one plain sentence: "1 piece moving. 1 stuck for 40 min at Check. 4 things wait for a person.";
+- five gauges: In work, Accepted today, Right first time, Goal to holding area, Your attention;
+- the line, with seven numbered stations: 01 Plan, 02 Write checks, 03 Build, 04 Check, 05 Second opinion, 06 Holding area, 07 Accepted. Work moves along it as tags, each in one state: working, waiting for a machine, waiting for a person, stuck, ready. A stuck station shows hazard stripes and a reason in words;
+- goals as lanes on the same line, with their lines in three states;
+- Needs a person, answered in place;
+- a shift log of what happened.
 
-  [ Try it ]      [ Accept ]      [ Undo a change ]
-
- Try it runs code the factory wrote. No person has read it.
-
- ONE QUESTION FOR YOU
-  Should a customer be able to move a booking more than once?
-```
-
-The engineering view, for those who want it:
-
-```
-+ Goal: Let customers reschedule bookings ---------------------+
-| Spec ok   Plan ok (6)   Build > 2 of 6   Verify   Ship       |
-+ NEEDS YOU (2) -----------------------------------------------+
-| ? Can a booking move after it started?           [answer]    |
-| ! Change 15 is high risk: a public contract      [card]      |
-+ LIVE --------------------------------------------------------+
-| > 9 reschedule API, claude, 4m, running tests                |
-+--------------------------------------------------------------+
-```
-
-The dial, one per task:
-
-```
- implement                                  ceiling: autopilot
-   off      guided     [AUTOPILOT]    auto-accept (not active)
-    o---------o------------O- - - - - - - x
- last 30 days: 14 changes accepted, 2 reworked, 0 undone
- your attention: 1.2 touches per accepted goal
- 4 questions, 31 rulings, 2 overturned
- auto-accept is not active in v0.1
-```
+The seven stations are a view of v0.1 from goal to Accept. They are not the seven phases of section 7.
 
 Screens in v0.1:
 
-| Screen | Shows | Actions |
-|---|---|---|
-| Outcomes (default) | Each goal with its acceptance list in three states, its trajectory, and plain questions | New goal. Plan. Answer. Try it. Accept. Undo a change |
-| Planning | The live planning conversation, the spec or plan so far, and the independent review's points | Talk. Change the lane. Approve |
-| Home (engineering) | Each goal as a pipeline strip. The inbox. Live runs | Open |
-| Goal | Phases, the spec, tickets with state, staging, runs, usage | Answer questions |
-| Run | Live transcript, stage, evidence bundle with rulings and denials, usage, limits | Cancel. Take the wheel |
-| Change | The decision card for one change: what changed, decided for you, not confirmed, independent review, risk | Approve at level 1. Overturn a ruling. Undo. Open on GitHub |
-| Inbox | Everything that waits for a person, batched: questions, exceptions, plans waiting for approval, changes at level 1, held tickets with the reason | Answer. Open on GitHub |
-| Autonomy | A dial per task with its ceiling, the trust ledger and the attention record beside each | Move a dial. Pause all |
-| Tasks | Each task as a card: trigger, reads and writes, next step, where a person re-enters, what stops double work, method | View the file |
-| Settings | Repository, harnesses found, the cap, whether an accept token is granted, readiness report | Edit machine settings |
+| Group | Screen | Shows | Status |
+|---|---|---|---|
+| Factory | Floor (home) | The tower, the gauges, the line, goal lanes, Needs a person, the shift log | Designed, not built |
+| Factory | Needs you | Questions, yes or no on a consequence, plans to approve, Accept, oldest first | Designed, not built |
+| Factory | Goals | Each goal with its lane, its course and its lines | Designed, not built |
+| Factory | Live | What this machine does now; a teammate's machine from its claim | Designed, not built |
+| Factory | Team | Trusted people and their machines | Designed, not built |
+| Engineering | Runs and changes | Runs, evidence with rulings and denials, the decision card | Designed, not built |
+| Engineering | Autonomy | A dial per task with its ceiling and record; Pause the line | Designed, not built |
+| Organisation | Plant | Every line in an organisation | Designed, not built. A description only in v0.1 |
+| Organisation | Record | Results by kind of change; who decided what | Designed, not built. A description only in v0.1 |
+
+The **outcome view** of record 0001 is the Floor, Needs you and Goals. The **engineering view** is Runs and changes and Autonomy. The plain screens never use the words pull request, merge, diff, review, branch, commit, staging, gate, harness, run id, token or evidence, so a product owner or a teammate from another discipline can read them. The Floor opens first for everyone. A developer who wants control takes it on purpose: opens Runs and changes, sets a task's dial to guided, or takes the wheel on a ticket. A person can set Runs and changes as their own start page.
+
+Planning, Tasks and Settings are designed, not built, and not in the approved design. Planning will be reached from Plan a new goal and Keep planning; Tasks and Settings will sit under Engineering. Actions that are not built are shown disabled with "Not built yet".
+
+**The key.** In v0.1 the web app listens on loopback only. Every data route needs the login token, which the screens call the key, the person's own laptop too. It is made fresh at each start and never stored. When standard error is a terminal the link with the key is printed there once; otherwise only the path of a private file that holds it is printed. **(call)**
+
+**Demo mode** is marked everywhere: a band on every screen, a DEMO plate, a page title starting with DEMO, `mode: "demo"` in every API response, a "scripted" tag on each scripted station, and printed lines starting with `DEMO`. The project is made up and the git host is fake. The factory code that moves the line is real.
 
 At setup (designed, not built) the app shows, per agent program, whether runs will be billed to an API key or to the signed-in plan, and recommends a key for a public repository. Wherever a control is only advisory on this rung, the app marks it "enforced on OpenAgentix".
-
-The look is the owner's to decide. Mockups come before the web app is planned.
 
 ## 11. Architecture
 
@@ -363,8 +337,10 @@ One Go binary, `oxf`.
 | `orchestrator` | Polls, matches triggers to tasks, applies the dial, throttles, the cap and claims, drives the three stages |
 | `policy` | The permission policy for a run: what is allowed, what is denied and recorded |
 | `wheel` | The Model Context Protocol endpoint for planning or taking the wheel in a person's own session: list, claim, ask, submit |
-| `server` | JSON API, server-sent events, the embedded web app |
-| `web/` | The Svelte app |
+| `floor` | The read model: its types, one pure function from records to a snapshot, reason codes, gauge rules, the journal |
+| `server` | JSON API with the key on every data route, request checks, live events, the actions, the embedded web app or a placeholder page |
+| `demo` | The made-up project and story for `--demo`, with a driver that stands in for the orchestrator until it exists |
+| `web/` | The web app source. Its built files are embedded and not committed |
 
 Built and tested, but not wired together: `api`, `store`, `harness`, `githost`, `verify`, `repo`, `acceptance`, `gate` and `runner`. The `acceptance` and `gate` packages hold the criterion states and the machine gate listed under `verify`, and `repo` is the factory's own repository. The rest of the table is design.
 
@@ -386,7 +362,7 @@ Seams for Kubernetes and OpenAgentix, all present in v0.1 as interfaces:
 
 ## 12. Releases
 
-Release content and the build order live in one place: [ROADMAP.md](../ROADMAP.md). In short, v0.1 is the quick and standard lanes on one machine, built in this order: the quick lane unattended on one machine, team basics (the trusted list and claims across teammates' machines), the web app, the standard lane, take the wheel. The deep lane, container and Kubernetes runners, deploying and automatic Accept come later.
+Release content and the build order live in one place: [ROADMAP.md](../ROADMAP.md). In short, v0.1 is the quick and standard lanes on one machine, built in this order: the quick lane unattended on one machine, with trajectory rules; team basics (the trusted list and claims across teammates' machines); the standard lane; take the wheel. The web app is built side by side with all of these. It starts with a demo line that real factory code moves, and each backend piece makes one more station real. **(owner)** The deep lane, container and Kubernetes runners, deploying and automatic Accept come later.
 
 ## 13. Limits and risks, stated plainly
 
@@ -416,7 +392,7 @@ A fresh reviewer read revision 1 as the person who must plan it. Its questions w
 | How can `onboard` write `.factory/` if it is protected? | It is the one exception. Configuration is read from the default branch only, so it takes effect after Accept |
 | What do `fix-ci` and `review` work on? | `fix-ci`: open agent pull requests only, known by the `factory/` branch prefix and a label, never `factory-staging`. It shares the ticket's attempts with `implement`. `review`: specs, plans, acceptance checks and changes. No fork pull requests in v0.1 |
 | Does a limit stop a run? | The deadline always does. A cost limit applies to metered usage, by cancelling, best effort |
-| What is demo mode? | A fake git host with a seeded repository and a scripted story. No login or token. Labelled as a demo |
+| What is demo mode? | A fake git host with a made-up project, real factory code with the stub harness, and a story that waits for the person. No login or token. Marked as a demo on every screen (record 0004) |
 | Who opens the pull requests? | The propose token's user. The docs recommend a separate machine user. A GitHub App comes later |
 
 Kept open on purpose, so later products are not blocked: more than one repository per install, a store interface that another database can back, and an auth seam in the web app.

@@ -16,15 +16,16 @@ A small engineering team plans a goal in conversation, then the factory builds i
 
 Build order:
 
-1. **The quick lane, unattended, on one machine.** One goal with a few acceptance lines. Acceptance checks, one build run under a permission policy, checks outside the builder, an independent review, the staging branch.
+1. **The quick lane, unattended, on one machine.** One goal with a few acceptance lines. Acceptance checks, one build run under a permission policy, checks outside the builder, an independent review, the staging branch, trajectory rules per goal.
 2. **Team basics.** The list of trusted logins, and claims that work across teammates' machines, so a second person's machine can take work.
-3. **The web app.** The outcome view with the acceptance list, Accept and Undo. Then the engineering view.
-4. **The standard lane.** Interactive planning to a spec and tickets. Trajectory.
-5. **Take the wheel.** A person's own session claims a piece of work.
+3. **The standard lane.** Interactive planning to a spec and tickets.
+4. **Take the wheel.** A person's own session claims a piece of work.
+
+**The web app is built alongside these steps.** It starts with a demo line on a made-up project, moved by real factory code. Each backend piece then makes one more station of the line real. Its design is in decision record 0004.
 
 Also in v0.1: the dial, the trust and attention records, built-in prompts, use of an installed workflow plugin by name, a demo mode.
 
-There is a useful product after step 3 if later steps slip.
+There is a useful product after step 2, with the web app's Floor, Accept and Undo, if later steps slip.
 
 ## v0.2
 

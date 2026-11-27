@@ -87,7 +87,7 @@ type fakeState struct {
 	protected     bool
 	parents       map[int]int
 	permissions   map[string]string
-	failures      map[string]bool // op -> fail after the write; one shot
+	failures      map[string]failure // op -> how the next call of it fails; one shot
 }
 
 // Fake is an in memory git host that follows the same rules as the real one,
@@ -294,27 +294,41 @@ func (f *Fake) ListComments(_ context.Context, n int, since time.Time) ([]Commen
 	return classify(it.comments, f.factoryLogin, since, f.writer), nil
 }
 
+type failure struct {
+	skip  int  // calls of the op that go through first
+	after bool // fail after the write
+}
+
 // FailNext makes the next call of op fail once. With afterWrite false the
 // call fails before it writes anything. With afterWrite true it writes, then
 // reports a failure, as a host does when its answer is lost. op is a method
 // name: PostComment, PostAnswer, PostConsequenceAnswer, AddLabel,
-// RemoveLabel, MergeStaging. The error holds no text from the caller.
-func (f *Fake) FailNext(op string, afterWrite bool) {
+// RemoveLabel, MergeStaging, CreateSubIssues. The error holds no text from the caller.
+func (f *Fake) FailNext(op string, afterWrite bool) { f.FailAfter(op, 0, afterWrite) }
+
+// FailAfter is FailNext for the call after the next `calls` calls of op.
+func (f *Fake) FailAfter(op string, calls int, afterWrite bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failures == nil {
-		f.failures = map[string]bool{}
+		f.failures = map[string]failure{}
 	}
-	f.failures[op] = afterWrite
+	f.failures[op] = failure{skip: calls, after: afterWrite}
 }
 
 // takeFailure reports whether op must fail, and when. The caller holds f.mu.
 func (s *fakeState) takeFailure(op string) (fail, afterWrite bool) {
-	after, ok := s.failures[op]
-	if ok {
-		delete(s.failures, op)
+	fl, ok := s.failures[op]
+	if !ok {
+		return false, false
 	}
-	return ok, after
+	if fl.skip > 0 {
+		fl.skip--
+		s.failures[op] = fl
+		return false, false
+	}
+	delete(s.failures, op)
+	return true, fl.after
 }
 
 var errFakeFailure = errors.New("githost: the fake host failed on purpose")
@@ -456,7 +470,17 @@ func (f *Fake) linkSubIssue(_ context.Context, goal, child Issue) error {
 }
 
 func (f *Fake) CreateSubIssues(ctx context.Context, goal int, p []api.IssueProposal) ([]Issue, error) {
-	return createSubIssues(ctx, f, goal, p)
+	f.mu.Lock()
+	fail, after := f.takeFailure("CreateSubIssues")
+	f.mu.Unlock()
+	if fail && !after {
+		return nil, errFakeFailure
+	}
+	out, err := createSubIssues(ctx, f, goal, p)
+	if err == nil && fail {
+		return nil, errFakeFailure // the issues exist, the reply is lost
+	}
+	return out, err
 }
 
 func (f *Fake) OpenPullRequest(_ context.Context, spec PRSpec) (PullRequest, error) {

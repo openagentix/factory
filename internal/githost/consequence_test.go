@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/openagentix/factory/internal/api"
 )
 
 const c40 = "0123456789abcdef0123456789abcdef01234567"
@@ -234,6 +236,45 @@ func TestAnswerBodyIsWhatPostAnswerPosts(t *testing.T) {
 		}
 		if got == "" || got != AnswerBody(text) {
 			t.Fatalf("AnswerBody(%q) = %q, host has %q", text, AnswerBody(text), got)
+		}
+	}
+}
+
+func TestFakeFailAfterAndCreateSubIssues(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	prop := func(title string) []api.IssueProposal {
+		return []api.IssueProposal{{Title: title, Body: "b", Criteria: []int{1}}}
+	}
+	children := func() int {
+		n := 0
+		for i := 1; i < 50; i++ {
+			if f.Parent(i) == 1 {
+				n++
+			}
+		}
+		return n
+	}
+	// before the write: nothing is made
+	f.FailNext("CreateSubIssues", false)
+	if _, err := f.CreateSubIssues(ctx, 1, prop("a")); err == nil || children() != 0 {
+		t.Fatalf("before-write: err=%v children=%d", err, children())
+	}
+	// the next call is clean
+	if _, err := f.CreateSubIssues(ctx, 1, prop("a")); err != nil || children() != 1 {
+		t.Fatalf("clean: %v %d", err, children())
+	}
+	// after the write: the issue exists, the reply is lost
+	f.FailNext("CreateSubIssues", true)
+	if _, err := f.CreateSubIssues(ctx, 1, prop("b")); err == nil || children() != 2 {
+		t.Fatalf("after-write: err=%v children=%d", err, children())
+	}
+	// FailAfter skips the given number of calls
+	f.FailAfter("AddLabel", 2, false)
+	for i, wantErr := range []bool{false, false, true, false} {
+		err := f.AddLabel(ctx, 2, LabelPlanned)
+		if (err != nil) != wantErr {
+			t.Fatalf("call %d: err=%v", i, err)
 		}
 	}
 }

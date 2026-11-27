@@ -560,6 +560,23 @@ func checkInvariants(t *testing.T, i int, in Inputs, f Floor) {
 		}
 	}
 	moving, stuck, waiting := 0, 0, 0
+	at6, at7 := map[int]bool{}, map[int]bool{}
+	n6 := 0
+	for _, p := range f.Pieces {
+		if p.Station == 6 {
+			n6++
+		}
+		if p.Station == 7 && p.Ticket != nil {
+			at7[*p.Ticket] = true
+		}
+		at6[0] = false
+	}
+	// The accept call counts exactly the pieces at 06, and none that is at 07.
+	if c := callOfKindIn(f, CallAccept); c != nil {
+		if callNum(*c, "count") != n6 || n6 == 0 {
+			fail("accept call counts %d, pieces at 06: %d", callNum(*c, "count"), n6)
+		}
+	}
 	for _, p := range f.Pieces {
 		if _, dup := ids[p.ID]; dup {
 			fail("piece %s twice", p.ID)
@@ -593,10 +610,11 @@ func checkInvariants(t *testing.T, i int, in Inputs, f Floor) {
 				moving++
 			}
 		}
-		if p.State == StateStuck {
+		inherited := p.RootBlocker != nil && p.State != StateWaitingMachine // counted by its root
+		if p.State == StateStuck && !inherited {
 			stuck++
 		}
-		if p.State == StateWaitingPerson && p.Reason.Code != Paused {
+		if p.State == StateWaitingPerson && p.Reason.Code != Paused && !inherited {
 			waiting++
 		}
 		if p.Kind == KindPlan && p.Station != 1 || p.Kind == KindChecks && p.Station != 2 {
@@ -732,3 +750,5 @@ func contains(ks []SourceKey, k SourceKey) bool {
 	}
 	return false
 }
+
+func callOfKindIn(f Floor, k CallKind) *Call { return callOfKind(f, k) }

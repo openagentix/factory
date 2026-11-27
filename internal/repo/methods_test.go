@@ -41,6 +41,10 @@ func allMethods(t *testing.T, tr *trapRepo) map[string]error {
 	defer dstRoot.Close()
 	_, _, out["ImportRoot"] = r.ImportRoot(ctx, srcRoot, tr.head, "m", testAuthor, ImportOptions{})
 	_, out["ExportRoot"] = r.ExportRoot(ctx, tr.head, dstRoot, Limits{})
+	_, _, out["Replay"] = r.Replay(ctx, tr.base, tr.head, tr.base, testAuthor, "m")
+	_, out["IsAncestor"] = r.IsAncestor(ctx, tr.base, tr.head)
+	_, out["CommitParents"] = r.CommitParents(ctx, tr.head)
+	_, out["TreeOf"] = r.TreeOf(ctx, tr.head)
 	out["Prune"] = r.Prune(ctx, 2*time.Hour)
 	_, out["Open"] = Open(tr.dir)
 	return out

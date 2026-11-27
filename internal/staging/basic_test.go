@@ -2,12 +2,14 @@ package staging
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/openagentix/factory/internal/api"
 	"github.com/openagentix/factory/internal/repo"
+	"github.com/openagentix/factory/internal/verify"
 )
 
 // The ordinary case: two passed changes are replayed one commit each on top of
@@ -73,12 +75,32 @@ func TestRebuildStartsFromTheDefaultCommit(t *testing.T) {
 	if len(p) != 1 || p[0] != f.def {
 		t.Errorf("the rebuild did not start at the default commit: %v", p)
 	}
-	for _, a := range again.Applied {
-		for _, old := range st.Applied {
-			if a.Rebuilt == old.Rebuilt {
-				t.Errorf("a commit of an earlier staging state was reused: %s", a.Rebuilt)
-			}
+	// The property is not "new commit ids": Replay stamps the second as the
+	// commit time, so two rebuilds in one second make the same ids. The
+	// property is that the second rebuild started at the default commit and
+	// replayed each entry again, so its chain from the top commit is exactly
+	// its own applied entries, and the checks ran once on the default commit
+	// and once for each entry.
+	chain := 0
+	for c := again.Commit; c != f.def; chain++ {
+		p, err := f.r.CommitParents(f.ctx, c)
+		if err != nil || len(p) != 1 {
+			t.Fatalf("parents of %s: %v %v", c, p, err)
 		}
+		c = p[0]
+	}
+	if chain != len(again.Applied) {
+		t.Errorf("the chain has %d commits for %d entries", chain, len(again.Applied))
+	}
+	var checked []string
+	real := f.s.runChecks
+	f.s.runChecks = func(ctx context.Context, d, commit string, cs []api.Check, o verify.CheckOptions) ([]verify.CheckOutcome, error) {
+		checked = append(checked, commit)
+		return real(ctx, d, commit, cs, o)
+	}
+	third := f.rebuild()
+	if len(checked) != 3 || checked[0] != f.def || checked[2] != third.Commit {
+		t.Errorf("checks ran on %v, want the default commit, then one step for each entry", checked)
 	}
 	// The default commit moves: the rebuild is on the new one.
 	d2 := f.commit(f.def, put("late.txt", "late\n"))
@@ -144,5 +166,33 @@ func TestNewRefusesBlankConfiguration(t *testing.T) {
 	cfg.Checks = nil
 	if _, err := New(cfg); !reflect.DeepEqual(err, ErrNoChecks) {
 		t.Errorf("empty checks: %v", err)
+	}
+}
+
+// Two states can have the same commit, because the commit time is in
+// seconds. Accept names a state by number and commit, so the older number is
+// refused and the newer one is allowed, whatever the commits are.
+func TestAcceptWhenTwoStatesShareACommit(t *testing.T) {
+	t.Parallel()
+	f, s1 := oneState(t)
+	again := s1
+	again.Seq = 0
+	again.Published = false
+	seq, err := f.store.SaveState(f.ctx, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.MarkPublished(f.ctx, seq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Accept(f.ctx, s1.Seq, s1.Commit); !errors.Is(err, ErrStale) {
+		t.Fatalf("the older number with the same commit: %v", err)
+	}
+	if _, ok, _ := f.store.GetPending(f.ctx); ok {
+		t.Fatal("pending after a refusal")
+	}
+	res, err := f.s.Accept(f.ctx, seq, s1.Commit)
+	if err != nil || res.Outcome != OutcomeAccepted {
+		t.Fatalf("the newer number: %+v %v", res, err)
 	}
 }

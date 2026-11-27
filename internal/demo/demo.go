@@ -365,6 +365,19 @@ func (d *Demo) Beats() []string {
 // Step performs the next beat. It returns the beat's name and whether the
 // story is now at its waiting point. After the last beat it does nothing.
 func (d *Demo) Step(ctx context.Context) (string, bool, error) {
+	name, done, err := d.stepOnce(ctx)
+	if err != nil || done {
+		return name, done, err
+	}
+	// The pause between beats is taken outside the step lock, so an action
+	// is not kept waiting for it.
+	if err := d.pause(ctx, d.cfg.BeatDelay); err != nil {
+		return name, false, err
+	}
+	return name, false, nil
+}
+
+func (d *Demo) stepOnce(ctx context.Context) (string, bool, error) {
 	d.stepMu.Lock()
 	defer d.stepMu.Unlock()
 	if d.next >= len(d.beats) {
@@ -381,11 +394,6 @@ func (d *Demo) Step(ctx context.Context) (string, bool, error) {
 	d.publish(ctx)
 	if d.cfg.OnBeat != nil {
 		d.cfg.OnBeat(b.name)
-	}
-	if d.next < len(d.beats) {
-		if err := d.pause(ctx, d.cfg.BeatDelay); err != nil {
-			return b.name, false, err
-		}
 	}
 	return b.name, d.next >= len(d.beats), nil
 }

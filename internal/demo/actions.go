@@ -68,6 +68,12 @@ func (d *Demo) comments(ctx context.Context, ticket int) ([]githost.Comment, err
 // as its last step.
 func (d *Demo) act(ctx context.Context, fn func(journal func(floor.JournalKind, int, int) int64) error) (server.ActionResult, error) {
 	var seq int64
+	// The step lock first: an action never runs inside a step of the story or of
+	// the follow-up loop, so what it checks cannot change under it, and what it
+	// writes cannot be read half done by a step. Then the write lock, so no
+	// snapshot sees half of it.
+	d.stepMu.Lock()
+	defer d.stepMu.Unlock()
 	err := d.mutate(ctx, func() error {
 		return fn(func(k floor.JournalKind, goal, ticket int) int64 {
 			seq = d.led.journal(k, goal, ticket, d.now())

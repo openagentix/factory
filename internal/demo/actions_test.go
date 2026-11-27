@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -662,32 +663,114 @@ func TestApproveRefusals(t *testing.T) {
 	}
 }
 
-// Actions and a running story do not interleave: every snapshot holds.
+// All three actions arrive while the story plays and the follow-up loop runs.
+// Every snapshot keeps its contract, and each action is done exactly once.
+// Run with -race.
 func TestActionsAndTheStoryTogether(t *testing.T) {
-	d := stepTo(t, "unconfirmed")
-	ctx := context.Background()
-	c := mustCall(t, d, "q-5-")
-	var wg sync.WaitGroup
-	var storyErr, actErr error
-	wg.Add(2)
-	go func() { defer wg.Done(); storyErr = d.Play(ctx) }()
-	go func() {
-		defer wg.Done()
-		_, actErr = d.Answer(ctx, answerReq(c, "together"))
-	}()
-	wg.Wait()
-	if storyErr != nil || actErr != nil {
-		t.Fatalf("story %v, action %v", storyErr, actErr)
+	cfg := testConfig(t)
+	risk := make(chan struct{})
+	var once sync.Once
+	cfg.OnBeat = func(name string) {
+		if name == "risk" {
+			once.Do(func() { close(risk) })
+		}
 	}
-	if err := d.Drain(ctx); err != nil {
+	d, err := New(context.Background(), cfg)
+	if err != nil {
 		t.Fatal(err)
+	}
+	t.Cleanup(d.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stepsTo(t, d, "question")
+	q := mustCall(t, d, "q-5-")
+	p := mustCall(t, d, "p-2")
+
+	// readers: the contract holds after every change
+	var stop atomic.Bool
+	var readers sync.WaitGroup
+	bad := make(chan error, 4)
+	for i := 0; i < 3; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for !stop.Load() {
+				b, err := d.Floor(context.Background())
+				if err == nil {
+					var f tfloor
+					if err = json.Unmarshal(b, &f); err == nil {
+						err = invariants(f)
+					}
+				}
+				if err != nil {
+					bad <- err
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}()
+	}
+	var work, acts sync.WaitGroup
+	work.Add(1)
+	go func() { defer work.Done(); _ = d.Work(ctx) }()
+	var playErr, ansErr, appErr, conErr error
+	acts.Add(4)
+	go func() { defer acts.Done(); playErr = d.Play(context.Background()) }()
+	go func() { defer acts.Done(); _, ansErr = d.Answer(context.Background(), answerReq(q, "together")) }()
+	go func() {
+		defer acts.Done()
+		_, appErr = d.Approve(context.Background(), server.ApproveRequest{Call: p.ID, Version: p.Version, Steps: &memSteps{}})
+	}()
+	go func() {
+		defer acts.Done()
+		<-risk
+		// A fresh read: Floor may give the last whole snapshot while a write runs.
+		d.mu.RLock()
+		f := d.project(context.Background())
+		d.mu.RUnlock()
+		var c callView
+		for _, fc := range f.Calls {
+			if strings.HasPrefix(fc.ID, "c-6-") {
+				c = callView{ID: fc.ID, Version: fc.Version}
+			}
+		}
+		if c.ID == "" {
+			t.Errorf("no consequence call after the risk beat")
+			return
+		}
+		_, conErr = d.Consequence(context.Background(), consReq(c, true))
+	}()
+	acts.Wait()
+	if playErr != nil || ansErr != nil || appErr != nil || conErr != nil {
+		t.Fatalf("play %v, answer %v, approve %v, consequence %v", playErr, ansErr, appErr, conErr)
+	}
+	if err := d.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	work.Wait()
+	stop.Store(true)
+	readers.Wait()
+	close(bad)
+	for err := range bad {
+		t.Errorf("a snapshot broke the contract: %v", err)
 	}
 	f := snap(t, d)
 	if err := invariants(f); err != nil {
 		t.Fatal(err)
 	}
-	if countKindOf(comments(t, d, 5), githost.KindAnswer) != 1 {
-		t.Fatal("expected one answer comment")
+	if countKindOf(comments(t, d, 5), githost.KindAnswer) != 1 || countKindOf(comments(t, d, 6), githost.KindConsequence) != 1 {
+		t.Fatal("each action posts exactly one comment")
+	}
+	for kind, want := range map[string]int{"answered": 1, "consequence_answered": 1, "plan_approved": 2} {
+		if got := countKind(t, d, kind); got != want {
+			t.Errorf("%s entries = %d, want %d", kind, got, want)
+		}
+	}
+	for _, id := range []string{"t5", "t6"} {
+		if pc := piece(f, id); pc == nil || pc.Station != 6 {
+			t.Errorf("%s = %+v", id, pc)
+		}
 	}
 }
 
@@ -757,5 +840,34 @@ func TestNoAnswerFoundIsOneFixedLineAndNeverAQuestion(t *testing.T) {
 	}
 	if n := len(fixed()); n != 3 {
 		t.Fatalf("fixed comments = %d, want 3", n)
+	}
+}
+
+// F1: an Approve while a story step runs. The story reads the ticket numbers
+// that Approve writes. Run with -race.
+func TestApproveWhileAStoryStepRunsIsRaceFree(t *testing.T) {
+	d := stepTo(t, "checks_fail")
+	ctx := context.Background()
+	c := mustCall(t, d, "p-2")
+	var wg sync.WaitGroup
+	var stepErr, actErr error
+	start := make(chan struct{})
+	wg.Add(2)
+	go func() { defer wg.Done(); <-start; _, _, stepErr = d.Step(ctx) }()
+	go func() {
+		defer wg.Done()
+		<-start
+		_, actErr = d.Approve(ctx, server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}})
+	}()
+	close(start)
+	wg.Wait()
+	if stepErr != nil || actErr != nil {
+		t.Fatalf("step %v, approve %v", stepErr, actErr)
+	}
+	if err := d.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := invariants(snap(t, d)); err != nil {
+		t.Fatal(err)
 	}
 }

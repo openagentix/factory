@@ -3,10 +3,12 @@ package demo
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/openagentix/factory/internal/floor"
+	"github.com/openagentix/factory/internal/githost"
 	"github.com/openagentix/factory/internal/harness"
 	"github.com/openagentix/factory/internal/staging"
 )
@@ -58,9 +60,9 @@ func TestStoryStopsWhenAFailingBeatSucceeds(t *testing.T) {
 // F10 and F11b: a fact is written only after the call it describes succeeded,
 // and a state that was not pushed is not the holding area.
 func TestNoFactBeforeTheHoldingAreaTookTheChange(t *testing.T) {
-	d := newDemo(t)
+	d, failPush := newDemoFailingPush(t)
 	ctx := context.Background()
-	d.failPush.Store(true)
+	failPush.Store(true)
 	if _, _, err := d.Step(ctx); err == nil { // write_checks
 		t.Fatal("the push failed and the beat did not")
 	}
@@ -82,12 +84,12 @@ func TestNoFactBeforeTheHoldingAreaTookTheChange(t *testing.T) {
 // A ticket whose push of the staging state fails leaves no gate fact and no
 // entry in the ledger.
 func TestNoGateFactWhenTheHoldingAreaRefuses(t *testing.T) {
-	d := newDemo(t)
+	d, failPush := newDemoFailingPush(t)
 	ctx := context.Background()
 	if _, _, err := d.Step(ctx); err != nil { // write_checks
 		t.Fatal(err)
 	}
-	d.failPush.Store(true)
+	failPush.Store(true)
 	if _, _, err := d.Step(ctx); err == nil {
 		t.Fatal("build_move: the push failed and the beat did not")
 	}
@@ -110,7 +112,6 @@ func TestNoGateFactWhenTheHoldingAreaRefuses(t *testing.T) {
 // observe counts only a published state.
 func TestObserveIgnoresAStateThatIsNotPublished(t *testing.T) {
 	d := newDemo(t)
-	d.failPush.Store(true)
 	ctx := context.Background()
 	d.mu.Lock()
 	d.observe(stagingState(false), job{})
@@ -131,7 +132,7 @@ func TestObserveIgnoresAStateThatIsNotPublished(t *testing.T) {
 // F11a: a stub run that hits its deadline ends with the deadline code.
 func TestRunThatHitsItsDeadlineIsLabelledDeadline(t *testing.T) {
 	cfg := testConfig(t)
-	cfg.Deadline = time.Second
+	cfg.runDeadline = time.Second
 	d, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -153,4 +154,31 @@ func TestRunThatHitsItsDeadlineIsLabelledDeadline(t *testing.T) {
 
 func stagingState(published bool) staging.State {
 	return staging.State{Seq: 9, Published: published, Applied: []staging.AppliedEntry{{EntryID: "runX", Ticket: 3, Goal: 1}}}
+}
+
+// failingHost is the host as staging sees it, with a push that can be made to
+// fail. It lives in a test file: the product code never names the push.
+type failingHost struct {
+	githost.Proposer
+	fail *atomic.Bool
+}
+
+func (h failingHost) PushStaging(ctx context.Context, dir, commit string) error {
+	if h.fail.Load() {
+		return errors.New("the push of the staging state failed")
+	}
+	return h.Proposer.PushStaging(ctx, dir, commit)
+}
+
+func newDemoFailingPush(t *testing.T) (*Demo, *atomic.Bool) {
+	t.Helper()
+	fail := &atomic.Bool{}
+	cfg := testConfig(t)
+	cfg.wrapHost = func(p githost.Proposer) githost.Proposer { return failingHost{Proposer: p, fail: fail} }
+	d, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Close)
+	return d, fail
 }

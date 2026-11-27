@@ -26,7 +26,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -55,32 +54,22 @@ type Config struct {
 	Hub *server.Hub
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
-	// Deadline is how long one stub run may take. Zero means two minutes.
-	Deadline time.Duration
+	// runDeadline is how long one stub run may take. Zero means two minutes.
+	// Unexported: only tests in this package set it.
+	runDeadline time.Duration
+	// wrapHost lets a test in this package put a wrapper around the host that
+	// staging sees. Unexported, nil in the product.
+	wrapHost func(githost.Proposer) githost.Proposer
 	// OnBeat is called after each beat of the story is done. It must return
 	// quickly. Nil means none.
 	OnBeat func(name string)
 }
 
 func (d *Demo) deadline() time.Duration {
-	if d.cfg.Deadline > 0 {
-		return d.cfg.Deadline
+	if d.cfg.runDeadline > 0 {
+		return d.cfg.runDeadline
 	}
 	return 2 * time.Minute
-}
-
-// stagingHost is the host as staging sees it. A test can make the push of the
-// staging state fail.
-type stagingHost struct {
-	githost.Proposer
-	failPush *atomic.Bool
-}
-
-func (h stagingHost) PushStaging(ctx context.Context, dir, commit string) error {
-	if h.failPush.Load() {
-		return errors.New("demo: the push of the staging state failed")
-	}
-	return h.Proposer.PushStaging(ctx, dir, commit)
 }
 
 // Demo is one running demo.
@@ -115,8 +104,6 @@ type Demo struct {
 	pendingSource map[int]string
 	// jobHook may change a job before it runs. Tests only.
 	jobHook func(*job)
-	// failPush makes the push of the staging state fail. Tests only.
-	failPush atomic.Bool
 }
 
 type beat struct {
@@ -224,8 +211,12 @@ func (d *Demo) setup(ctx context.Context) error {
 	for _, n := range []string{api.TaskImplement, api.TaskFixCI, api.TaskAcceptance} {
 		tasks[n] = taskFor(n)
 	}
+	var stHost githost.Proposer = d.host
+	if d.cfg.wrapHost != nil {
+		stHost = d.cfg.wrapHost(stHost)
+	}
 	d.stg, err = staging.New(staging.Config{
-		Repo: r, Host: stagingHost{Proposer: d.host, failPush: &d.failPush}, Accept: d.host, Store: d.stgSt, Factory: d.factory, Tasks: tasks,
+		Repo: r, Host: stHost, Accept: d.host, Store: d.stgSt, Factory: d.factory, Tasks: tasks,
 		AllowedTasks: []string{api.TaskImplement, api.TaskFixCI, api.TaskAcceptance},
 		Checks:       taskChecks(),
 		AcceptanceSource: func(_ context.Context, goal int) (string, error) {

@@ -20,6 +20,8 @@ const (
 	maxAttempts = 3
 	goalMove    = 1
 	goalCancel  = 2
+	// factoryLogin is the user the propose token acts as on the fake host.
+	factoryLogin = "factory-bot"
 )
 
 // seedFiles is the made-up project. The files are plain text.

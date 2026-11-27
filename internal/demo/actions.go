@@ -460,13 +460,13 @@ func (d *Demo) Approve(ctx context.Context, r server.ApproveRequest) (server.Act
 // making it when the host has none. A ticket that a failed call did make is
 // found again, never made twice.
 func (d *Demo) ticketOnHost(ctx context.Context, goal int, s ticketSpec) (int, error) {
-	if n, ok := d.findChild(ctx, goal, s.title); ok {
+	if n, ok := d.findChild(ctx, goal, s); ok {
 		return n, nil
 	}
 	issues, err := d.host.CreateSubIssues(ctx, goal, []api.IssueProposal{{Title: s.title, Body: s.body, Criteria: s.served}})
 	if err != nil {
 		// The call may have written before it failed. Look once more.
-		if n, ok := d.findChild(ctx, goal, s.title); ok {
+		if n, ok := d.findChild(ctx, goal, s); ok {
 			return n, nil
 		}
 		return 0, server.ErrHostFailed
@@ -477,14 +477,23 @@ func (d *Demo) ticketOnHost(ctx context.Context, goal int, s ticketSpec) (int, e
 	return issues[0].Number, nil
 }
 
-// findChild reads the host for a sub-issue of the goal with the title.
-func (d *Demo) findChild(ctx context.Context, goal int, title string) (int, bool) {
+// isOurs says whether an issue is the ticket Approve makes for a spec: written
+// by the factory's own login, with exactly the body Approve would make, as a
+// sub-issue of the goal. The body ends with the dependency block, which the
+// githost parser reads. Anything else with the same title is not ours.
+func (d *Demo) isOurs(iss githost.Issue, goal int, s ticketSpec) bool {
+	want, err := githost.SubIssueBody(s.body, s.served, nil)
+	return err == nil && d.host.Parent(iss.Number) == goal && iss.Title == s.title && iss.Author == factoryLogin && iss.Body == want
+}
+
+// findChild reads the host for the lowest-numbered ticket of ours.
+func (d *Demo) findChild(ctx context.Context, goal int, s ticketSpec) (int, bool) {
 	for n := 1; ; n++ {
 		iss, err := d.host.GetIssue(ctx, n)
 		if err != nil {
 			return 0, false // past the last issue
 		}
-		if d.host.Parent(n) == goal && iss.Title == title {
+		if d.isOurs(iss, goal, s) {
 			return n, true
 		}
 	}
@@ -494,7 +503,7 @@ func (d *Demo) findChild(ctx context.Context, goal int, title string) (int, bool
 // with both labels.
 func (d *Demo) ticketStands(ctx context.Context, goal int, s ticketSpec, n int) error {
 	iss, err := d.host.GetIssue(ctx, n)
-	if err != nil || d.host.Parent(n) != goal || iss.Title != s.title ||
+	if err != nil || !d.isOurs(iss, goal, s) ||
 		!iss.HasLabel(githost.LabelPlanned) || !iss.HasLabel(githost.LabelReady) {
 		return server.ErrHostFailed
 	}

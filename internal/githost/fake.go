@@ -212,6 +212,16 @@ func (f *Fake) SeedIssue(title, body, author, assoc string, labels ...string) in
 	return it.Number
 }
 
+// SeedSubIssue adds an issue from any user as a sub-issue of a goal, for tests,
+// and returns its number.
+func (f *Fake) SeedSubIssue(goal int, title, body, author, assoc string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	it := f.newItem(title, body, author, assoc)
+	f.parents[it.Number] = goal
+	return it.Number
+}
+
 // SimulateMerge marks a pull request as merged by a user, as a person would.
 func (f *Fake) SimulateMerge(number int, by string) {
 	f.mu.Lock()

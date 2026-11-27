@@ -198,7 +198,7 @@ func (d *Demo) setup(ctx context.Context) error {
 	d.def = def
 
 	fx := githost.Fixture{
-		DefaultBranch: "main", DefaultCommit: def, FactoryLogin: "factory-bot", AcceptLogin: "repo-owner",
+		DefaultBranch: "main", DefaultCommit: def, FactoryLogin: factoryLogin, AcceptLogin: "repo-owner",
 		Permissions: map[string]string{"repo-owner": "admin"},
 		Issues: []githost.FixtureIssue{
 			// Goal 1 is approved: the label is seeded, as a person would set it.

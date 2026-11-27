@@ -1100,3 +1100,55 @@ func TestNoAnswerLineIsPostedForASecondRemoval(t *testing.T) {
 		t.Fatalf("lines = %d, want one for each removal", lines())
 	}
 }
+
+// N2: an issue is adopted as Approve's own ticket only when the factory's login
+// wrote it, its body is the body Approve would make, and it is a sub-issue of
+// the goal. Anything else with the same title is left alone.
+func TestApproveAdoptsOnlyItsOwnTickets(t *testing.T) {
+	spec := tickets2()[0] // "Cancel a booking"
+	own, err := githost.SubIssueBody(spec.body, spec.served, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve := func(t *testing.T, d *Demo) {
+		t.Helper()
+		c := mustCall(t, d, "p-2")
+		if _, err := d.Approve(context.Background(), server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	labelled := func(d *Demo, n int) bool {
+		iss, _ := d.host.GetIssue(context.Background(), n)
+		return iss.HasLabel(githost.LabelPlanned) || iss.HasLabel(githost.LabelReady)
+	}
+	for name, seed := range map[string]struct{ author, body string }{
+		"another author, other text":          {"repo-owner", "Something else entirely."},
+		"the factory login, another body":     {"factory-bot", "Something else entirely."},
+		"another author, the identical body":  {"repo-owner", own},
+		"the factory login, body plus a line": {"factory-bot", own + "\nmore"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newDemo(t)
+			n := d.host.SeedSubIssue(2, spec.title, seed.body, seed.author, "OWNER")
+			approve(t, d)
+			if labelled(d, n) {
+				t.Fatalf("issue %d is not ours and was labelled", n)
+			}
+			if d.tk[spec.key] == n || d.tk[spec.key] == 0 {
+				t.Fatalf("tk = %d, the other issue is %d", d.tk[spec.key], n)
+			}
+			if iss, _ := d.host.GetIssue(context.Background(), d.tk[spec.key]); iss.Author != "factory-bot" || iss.Body != own {
+				t.Fatalf("our ticket: %+v", iss)
+			}
+		})
+	}
+	t.Run("two that match: the lowest, and the other is never labelled", func(t *testing.T) {
+		d := newDemo(t)
+		a := d.host.SeedSubIssue(2, spec.title, own, "factory-bot", "NONE")
+		b := d.host.SeedSubIssue(2, spec.title, own, "factory-bot", "NONE")
+		approve(t, d)
+		if d.tk[spec.key] != a || !labelled(d, a) || labelled(d, b) {
+			t.Fatalf("tk=%d a=%d b=%d labelled(b)=%v", d.tk[spec.key], a, b, labelled(d, b))
+		}
+	})
+}

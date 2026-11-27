@@ -278,3 +278,19 @@ func TestFakeFailAfterAndCreateSubIssues(t *testing.T) {
 		}
 	}
 }
+
+func TestSubIssueBodyIsWhatCreateSubIssuesMakes(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	made, err := f.CreateSubIssues(ctx, 1, []api.IssueProposal{{Title: "t", Body: "Add <!-- x --> the step. @team Fixes #1", Criteria: []int{1, 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := SubIssueBody("Add <!-- x --> the step. @team Fixes #1", []int{1, 2}, nil)
+	if err != nil || want == "" || want != made[0].Body {
+		t.Fatalf("want %q (%v), host has %q", want, err, made[0].Body)
+	}
+	if d, ok := ParseDeps(want); !ok || len(d.Criteria) != 2 {
+		t.Fatalf("the last line is not the dependency block: %q", want)
+	}
+}

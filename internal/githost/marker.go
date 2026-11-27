@@ -319,3 +319,11 @@ func EndsWithMarker(body string) bool {
 // made inert, then the answer marker as the last line. A caller that looks for
 // an answer it posted before compares the body of a comment with this.
 func AnswerBody(text string) string { return withMarker(text, AnswerMarker()) }
+
+// SubIssueBody returns the exact body CreateSubIssues gives a sub-issue made
+// from this text, criteria and dependencies: the text made inert, then the
+// dependency block as the last line. A caller that looks for an issue it made
+// before compares the body of an issue with this.
+func SubIssueBody(body string, criteria, dependsOn []int) (string, error) {
+	return withDeps(body, Deps{Criteria: criteria, DependsOn: dependsOn})
+}

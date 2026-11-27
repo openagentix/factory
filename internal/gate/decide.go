@@ -170,12 +170,19 @@ func (d Decision) Verify() bool {
 }
 
 // PassFor reports whether the decision is a pass, made by the gate, for
-// exactly this change. It is true only when Verify holds, the outcome is
-// OutcomePass with no exception, the sealed facts say verify held and the
-// review agreed, c is a valid reference, and c equals, field by field, the
-// change the decision was sealed for: ticket, attempt, full commit and
-// builder run. A zero Decision, a zero ChangeRef, a decision built by hand and
-// a decision for another change are all false.
+// exactly this change. A true means all of this: Verify holds (Decide or
+// ApplyPersonDecision made the decision and nothing was edited); the outcome
+// is OutcomePass with no exception; the sealed facts say verify held and a
+// usable review agreed; c is a valid reference; and c equals, field by
+// field, the change the decision was sealed for (ticket, attempt, full commit
+// and builder run). A zero Decision, a zero ChangeRef, a decision built by
+// hand and a decision for another change are all false.
+//
+// A true does not say which task passed, or who passed it. The pass may be
+// for any gated task (implement, fix-ci, acceptance or onboard), and it may
+// be a pass that a person's "yes" gave to a high risk exception. A caller that
+// combines only some tasks, or only automatic passes, must also check
+// VerifiedTask and VerifiedPassedByPerson.
 //
 // The limit: the seal is a digest, not a signature. It stops a caller outside
 // this package from editing or building a decision. It does not say that the
@@ -186,6 +193,22 @@ func (d Decision) PassFor(c ChangeRef) bool {
 		d.Outcome == OutcomePass && d.Exception == "" && d.sealedKind == "" &&
 		d.sealedAgreed && d.sealedVerify &&
 		c.valid() == nil && c == d.change
+}
+
+// VerifiedTask returns the task the decision was made for, or "" when Verify
+// fails. Unlike the exported field Task it is protected by the seal.
+func (d Decision) VerifiedTask() string {
+	if !d.Verify() {
+		return ""
+	}
+	return d.Task
+}
+
+// VerifiedPassedByPerson reports whether a person's "yes" gave this pass. It
+// is false when Verify fails. Unlike the exported field PassedByPerson it is
+// protected by the seal.
+func (d Decision) VerifiedPassedByPerson() bool {
+	return d.Verify() && d.PassedByPerson
 }
 
 // gatedTask reports whether the gate judges changes of the task.

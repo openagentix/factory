@@ -142,3 +142,53 @@ func TestDecisionPassFor_NeedsTheSealedFacts(t *testing.T) {
 		}
 	}
 }
+
+func TestDecisionVerifiedTaskAndPerson(t *testing.T) {
+	// Zero and hand-built decisions say nothing.
+	for name, d := range map[string]Decision{
+		"zero":       {},
+		"hand built": {Outcome: OutcomePass, Task: api.TaskImplement, PassedByPerson: true},
+	} {
+		if d.VerifiedTask() != "" || d.VerifiedPassedByPerson() {
+			t.Errorf("%s: task %q, person %v", name, d.VerifiedTask(), d.VerifiedPassedByPerson())
+		}
+	}
+	// A real pass of each gated task says its task, and not a person.
+	for _, task := range []string{api.TaskImplement, api.TaskFixCI, api.TaskAcceptance, api.TaskOnboard} {
+		f := okFacts(t)
+		f.Task = task
+		rf := rev("agrees")
+		rf.Subject = SubjectFor(task)
+		f.Review = boundReview(t, rf, api.HarnessCodex)
+		d := Decide(f)
+		if !d.PassFor(f.Change) {
+			t.Fatalf("%s: setup: not a pass", task)
+		}
+		if d.VerifiedTask() != task || d.VerifiedPassedByPerson() {
+			t.Errorf("%s: task %q, person %v", task, d.VerifiedTask(), d.VerifiedPassedByPerson())
+		}
+		// An edited copy says nothing, even though the field is still there.
+		e := d
+		e.Task = api.TaskOnboard
+		e.PassedByPerson = true
+		if e.VerifiedTask() != "" || e.VerifiedPassedByPerson() {
+			t.Errorf("%s: an edited copy says task %q, person %v", task, e.VerifiedTask(), e.VerifiedPassedByPerson())
+		}
+	}
+	// A pass that a person's yes gave says so.
+	high := okFacts(t)
+	high.Risk.Level = api.RiskHigh
+	yes, err := ApplyPersonDecision(Decide(high), high.Change, AnswerYes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !yes.PassFor(high.Change) || !yes.VerifiedPassedByPerson() || yes.VerifiedTask() != api.TaskImplement {
+		t.Errorf("person pass: PassFor %v, person %v, task %q", yes.PassFor(high.Change), yes.VerifiedPassedByPerson(), yes.VerifiedTask())
+	}
+	// A decision that is not a pass still reports its task (the facts are
+	// verified), and never a person.
+	no, err := ApplyPersonDecision(Decide(high), high.Change, AnswerNo)
+	if err != nil || no.VerifiedPassedByPerson() || no.VerifiedTask() != api.TaskImplement {
+		t.Errorf("no: %v person %v task %q", err, no.VerifiedPassedByPerson(), no.VerifiedTask())
+	}
+}

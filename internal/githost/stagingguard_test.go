@@ -187,3 +187,63 @@ func TestBranchNamesNeverReachTheStagingBranch(t *testing.T) {
 		}
 	}
 }
+
+// A branch that differs from the default branch only by letter case is the
+// default branch on a host that folds case. The rules compare without case.
+func TestBranchesThatDifferFromTheDefaultOnlyByCaseAreRefused(t *testing.T) {
+	push := []struct {
+		branch, def string
+		wantErr     bool
+	}{
+		{"factory/X", "factory/x", true},
+		{"factory/x", "factory/X", true},
+		{"FACTORY/x", "factory/x", true},
+		{"factory/x", "factory/x", true},
+		{"factory/y", "factory/x", false},
+		{"factory/run-1", "main", false},
+		{"factory/Run-1", "main", false},
+	}
+	for _, tc := range push {
+		err := checkBranchPush(tc.branch, tc.def)
+		if (err != nil) != tc.wantErr || (err != nil && !errors.Is(err, ErrRefused)) {
+			t.Errorf("checkBranchPush(%q, default %q) = %v, wantErr %v", tc.branch, tc.def, err, tc.wantErr)
+		}
+	}
+	pr := []struct {
+		head, base, def string
+		wantErr         bool
+	}{
+		{"factory/X", StagingBranch, "factory/x", true},
+		{"factory/x", StagingBranch, "factory/X", true},
+		{"factory/r1", StagingBranch, "main", false},
+		{StagingBranch, "main", "main", false},
+		{StagingBranch, "Main", "main", true},
+		{StagingBranch, "main", "Main", true},
+	}
+	for _, tc := range pr {
+		err := checkPRBranches(tc.head, tc.base, tc.def)
+		if (err != nil) != tc.wantErr || (err != nil && !errors.Is(err, ErrRefused)) {
+			t.Errorf("checkPRBranches(%q, %q, default %q) = %v, wantErr %v", tc.head, tc.base, tc.def, err, tc.wantErr)
+		}
+	}
+	// Through the hosts.
+	fx := DemoFixture()
+	fx.DefaultBranch = "factory/x"
+	f := NewFake(fx, newTestClock().Now)
+	ctx := context.Background()
+	c := strings.Repeat("2", 40)
+	if err := f.PushBranch(ctx, t.TempDir(), c, "factory/X"); !errors.Is(err, ErrRefused) {
+		t.Errorf("Fake PushBranch = %v", err)
+	}
+	if _, err := f.ManualPullRequestURL(ctx, "factory/X"); !errors.Is(err, ErrRefused) {
+		t.Errorf("Fake ManualPullRequestURL = %v", err)
+	}
+	if _, err := f.OpenPullRequest(ctx, PRSpec{Head: "factory/X", Base: StagingBranch, Title: "x"}); !errors.Is(err, ErrRefused) {
+		t.Errorf("Fake OpenPullRequest = %v", err)
+	}
+	g, _ := testGH(t, ghDefault("factory/x", 0))
+	g.push = nil
+	if err, reached := reachedPush(func() error { return g.PushBranch(ctx, t.TempDir(), c, "factory/X") }); reached || !errors.Is(err, ErrRefused) {
+		t.Errorf("GitHub PushBranch = %v, reached push %v", err, reached)
+	}
+}

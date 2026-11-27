@@ -27,6 +27,28 @@ func checkBranchName(b string) error {
 	return nil
 }
 
+// asciiEqualFold compares two names without regard to ASCII letter case. A
+// host that folds case treats names that differ only so as one branch. Other
+// characters must match exactly.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
+}
+
 // isStagingName reports whether a branch name, as a host or a person might
 // write it, names the staging branch or could be taken for it: the exact name,
 // with refs/heads/, in any letter case, with white space or a trailing slash.
@@ -57,7 +79,7 @@ func checkBranchPush(branch, defaultBranch string) error {
 	if err := checkBranchName(branch); err != nil {
 		return err
 	}
-	if branch == defaultBranch {
+	if asciiEqualFold(branch, defaultBranch) {
 		return refuse("the default branch cannot be pushed")
 	}
 	if !strings.HasPrefix(branch, BranchPrefix) || len(branch) == len(BranchPrefix) {
@@ -84,7 +106,7 @@ func checkPRBranches(head, base, defaultBranch string) error {
 		return refuse("the default branch is not known or is the staging branch")
 	}
 	switch {
-	case strings.HasPrefix(head, BranchPrefix) && head != defaultBranch && base == StagingBranch:
+	case strings.HasPrefix(head, BranchPrefix) && !asciiEqualFold(head, defaultBranch) && base == StagingBranch:
 		return checkBranchName(head)
 	case head == StagingBranch && base == defaultBranch && base != StagingBranch:
 		return nil

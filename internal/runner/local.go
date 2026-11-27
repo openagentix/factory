@@ -34,6 +34,10 @@ var _ Runner = (*Local)(nil)
 // production.
 var beforeImport func(*run)
 
+// beforeKeep is called before the paths of a kept run are checked. Tests use
+// it. It is nil in production.
+var beforeKeep func(*run)
+
 type run struct {
 	spec Spec
 	lim  Limits
@@ -201,6 +205,19 @@ func (r *run) checkHeld() error {
 func plainSame(dir *os.Root, name string, want fs.FileInfo) bool {
 	fi, err := dir.Lstat(name)
 	return err == nil && fi.IsDir() && fi.Mode()&fs.ModeSymlink == 0 && os.SameFile(fi, want)
+}
+
+// keptLogNotes says which of the kept log files is no longer a regular file
+// of the run directory. The agent can replace them with a link. The runner
+// never reads them back, and says so that a later reader does not follow one.
+func (r *run) keptLogNotes() (notes []string) {
+	for _, name := range []string{"events.jsonl", "stderr.log"} {
+		fi, err := r.root.Lstat(name)
+		if err != nil || !fi.Mode().IsRegular() {
+			notes = append(notes, "the kept file "+name+" is missing or not a regular file: the agent replaced it. Do not open it by following links")
+		}
+	}
+	return notes
 }
 
 // keptAtPath says whether the path of a kept run directory still names it.
@@ -422,8 +439,11 @@ func (r *run) supervise(ctx context.Context) {
 		<-readersDone
 		r.note("a process outside the process group still held the output pipes after the run; it may still be running. The runner cannot reach it without an operating system sandbox")
 	}
-	r.evFile.Close()
-	r.errFile.Close()
+	// The readers are done, so nothing uses these any more.
+	closeFile(r.stdout)
+	closeFile(r.stderr)
+	closeFile(r.evFile)
+	closeFile(r.errFile)
 	r.finishCallback(o)
 	r.lookForStrays(o)
 	r.finish(ctx, o)
@@ -622,6 +642,10 @@ func (r *run) finish(ctx context.Context, o *Outcome) {
 			if !r.keptAtPath() {
 				o.Notes = append(o.Notes, "the kept run directory is not at its path any more: the agent moved or replaced it")
 			}
+			if beforeKeep != nil {
+				beforeKeep(r)
+			}
+			o.Notes = append(o.Notes, r.keptLogNotes()...)
 			r.closeRoots()
 			return
 		}
@@ -655,7 +679,22 @@ func (r *run) importWorkspace(ctx context.Context, in *verdictInput) (commit str
 	return commit, changed, ""
 }
 
+// closeFile closes f if there is one. A second close is harmless.
+func closeFile(f *os.File) {
+	if f != nil {
+		f.Close()
+	}
+}
+
+// closeRoots closes everything the run holds open: the handles, and the
+// runner's own files. It is safe to call twice. It is called only when no
+// reader goroutine is running: after supervise has waited for them, or when
+// the run never started.
 func (r *run) closeRoots() {
+	closeFile(r.evFile)
+	closeFile(r.errFile)
+	closeFile(r.stdout)
+	closeFile(r.stderr)
 	if r.wsRoot != nil {
 		r.wsRoot.Close()
 	}

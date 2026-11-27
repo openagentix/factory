@@ -79,6 +79,12 @@
 //     removes a link left at the name and a moved copy in the runs folder, and
 //     reports a copy it cannot find. The only paths the runner still looks at
 //     after the agent starts are named under Limits;
+//   - the kept events and stderr paths of a failed run (Outcome.EventsPath and
+//     Outcome.StderrPath) are untrusted: the agent can replace them with a
+//     link. The runner never reads them back and adds a note when one is not
+//     a regular file. A caller must open them without following links;
+//   - every file and handle a run opens is closed when the run ends, on
+//     every path, without waiting for the garbage collector;
 //   - a callback that panics fails the run and ends the group, and a slow
 //     one loses events instead of holding up the reading.
 //
@@ -102,6 +108,13 @@
 //     resolved path. Both feed notes and decide nothing. A swap can make a
 //     note wrong. The agent's own working directory and the paths in its
 //     arguments are names given to it at the start.
+//   - A file with more than one hard link is refused at import. A hard link
+//     whose other name was removed before the import is imported like any
+//     file. The agent could copy the file anyway, because it runs as the same
+//     user.
+//   - The read-only modes on the input directory are advice. The same user
+//     can change them and root ignores them. The runner never reads the
+//     inputs back.
 //   - The runs folder keeps other users out. The same user, so the agent,
 //     can still list it.
 //   - Files the agent writes under the run directory are not limited in

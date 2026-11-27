@@ -149,6 +149,13 @@ func newCtx(in Inputs) *ctx {
 		}
 		if seen[t.Number] {
 			c.ticketDup[t.Number] = true
+			if t.Open { // the listed ticket stays open if any copy is open, so it cannot vanish
+				for i := range c.tickets {
+					if c.tickets[i].Number == t.Number {
+						c.tickets[i].Open = true
+					}
+				}
+			}
 			continue
 		}
 		seen[t.Number] = true

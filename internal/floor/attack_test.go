@@ -696,6 +696,27 @@ func checkInvariants(t *testing.T, i int, in Inputs, f Floor) {
 	if !f.Sources[SourceTeam].ok() && s.MovingElsewhere != nil || f.Sources[SourceTeam].ok() && s.MovingElsewhere == nil {
 		fail("movingElsewhere %v with team %s", s.MovingElsewhere, f.Sources[SourceTeam])
 	}
+	renderAll(t, i, f)
+	// Every open ticket with at least one run, and no accept, has exactly one piece.
+	if in.Tickets.Known && in.Runs.Known {
+		count := map[string]int{}
+		for _, p := range f.Pieces {
+			count[p.ID]++
+		}
+		accepted := map[int]bool{}
+		for _, a := range in.Accepted.Val {
+			accepted[a.Ticket] = true
+		}
+		hasRun := map[int]bool{}
+		for _, r := range in.Runs.Val {
+			hasRun[r.Ticket] = true
+		}
+		for _, tk := range in.Tickets.Val {
+			if tk.Open && tk.Number > 0 && hasRun[tk.Number] && !accepted[tk.Number] && count["t"+itoa(tk.Number)] != 1 {
+				fail("open ticket %d with a run has %d pieces", tk.Number, count["t"+itoa(tk.Number)])
+			}
+		}
+	}
 	if b2, _ := json.Marshal(Project(in)); string(b2) != string(b) {
 		fail("two calls differ")
 	}

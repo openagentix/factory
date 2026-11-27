@@ -202,13 +202,9 @@ func notBuilt() Inputs {
 	return Inputs{Now: t0, Mode: ModeLive, Repository: "acme/booking", Machine: me, Sources: src}
 }
 
-// pausedLine is the demo story with the line paused.
+// pausedLine is a quiet live project, with one ticket ready and the line paused.
 func pausedLine() Inputs {
-	in := demoInputs()
-	in.Mode = ModeLive
-	in.DemoStory = ""
-	in.ScriptedStations, in.PartlyRealStations = nil, nil
-	in.Repository = "acme/booking"
+	in := withTickets(healthy(), ticket(7))
 	in.Paused = Some(true)
 	return in
 }

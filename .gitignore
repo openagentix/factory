@@ -19,3 +19,10 @@ CLAUDE.local.md
 
 # Local working copies for builders. Never commit.
 .worktrees/
+
+# Web app: dependencies and build output. Never commit.
+web/node_modules/
+web/dist-app/
+web/.svelte-kit/
+web/static/fonts/
+web/test-results/

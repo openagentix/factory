@@ -415,7 +415,7 @@ The aim is WCAG 2.2 AA.
 
 ## Designed, not built
 
-Beyond the screens above: listening on another address, with encryption; Plant and Record with data; Try it; planning (Keep planning, Plan a new goal); Undo after Accept; the goal's course; the attention gauge; a stored journal; Settings and Tasks screens, which the approved design leaves out. Another machine is shown from its claim only, such as "claimed by laptop-b since 12:40", with no progress notes on tickets. **(call)**
+Beyond the screens above: listening on another address, with encryption; Plant and Record with data; Try it; planning (Keep planning, Plan a new goal); Undo after Accept; the goal's course; the attention gauge; a stored journal; Settings and Tasks screens, which the approved design leaves out. Notifications for what needs a person: off by default, a browser notification first, only a count and no ticket text. The live activity line on Live: a short plain status from the agent's own event stream, with agent text only in its own quoted place. Another machine is shown from its claim only, such as "claimed by laptop-b since 12:40", with no progress notes on tickets. **(call)**
 
 ## Changes to records 0001, 0002 and 0003
 

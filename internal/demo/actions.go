@@ -31,6 +31,9 @@ var (
 
 const stepPost = "post"
 
+func checksKey(goal int) string   { return "checks-" + strconv.Itoa(goal) }
+func ticketKey(key string) string { return "ticket-" + key }
+
 func parseID(id, prefix string, n int) ([]string, bool) {
 	rest, ok := strings.CutPrefix(id, prefix)
 	if !ok {
@@ -461,12 +464,21 @@ func (d *Demo) Approve(ctx context.Context, r server.ApproveRequest) (server.Act
 		d.led.with(func(lf *collect.LedgerFacts) {
 			lf.GoalTimings = append(lf.GoalTimings, floor.GoalTimingIn{Goal: goal, ApprovedAt: floor.Some(now)})
 		})
-		d.enqueue(followup{kind: fuChecks, j: job{goal: goal}})
+		// Only what has not been queued yet is queued: a person who took the label
+		// off by hand and approved again gets no second build.
+		if !d.queued[checksKey(goal)] {
+			d.queued[checksKey(goal)] = true
+			d.enqueue(followup{kind: fuChecks, j: job{goal: goal}})
+		}
 		for _, s := range specs {
+			if d.queued[ticketKey(s.key)] {
+				continue
+			}
 			j, err := d.ticketJob(s.key, 0)
 			if err != nil {
 				return server.ErrStale
 			}
+			d.queued[ticketKey(s.key)] = true
 			d.enqueue(followup{kind: fuTicket, j: j})
 		}
 		journal("plan_approved", goal, 0)
@@ -481,6 +493,12 @@ func (d *Demo) Approve(ctx context.Context, r server.ApproveRequest) (server.Act
 func (d *Demo) ticketOnHost(ctx context.Context, goal int, s ticketSpec) (int, error) {
 	if n, ok := d.findChild(ctx, goal, s); ok {
 		return n, nil
+	}
+	// A ticket the factory made, whose body a person then edited, is never
+	// adopted. It is not ours any more, and a third ticket beside it would leave
+	// it waiting for ever. The press is refused until the person has dealt with it.
+	if d.editedChild(ctx, goal, s) {
+		return 0, server.ErrStale
 	}
 	issues, err := d.host.CreateSubIssues(ctx, goal, []api.IssueProposal{{Title: s.title, Body: s.body, Criteria: s.served}})
 	if err != nil {
@@ -514,6 +532,20 @@ func (d *Demo) findChild(ctx context.Context, goal int, s ticketSpec) (int, bool
 		}
 		if d.isOurs(iss, goal, s) {
 			return n, true
+		}
+	}
+}
+
+// editedChild says whether a ticket of the factory's own login stands under the
+// goal with this spec's title and another body than the factory wrote.
+func (d *Demo) editedChild(ctx context.Context, goal int, s ticketSpec) bool {
+	for n := 1; ; n++ {
+		iss, err := d.host.GetIssue(ctx, n)
+		if err != nil {
+			return false // past the last issue
+		}
+		if d.host.Parent(n) == goal && iss.Title == s.title && iss.Author == factoryLogin && !d.isOurs(iss, goal, s) {
+			return true
 		}
 	}
 }

@@ -112,6 +112,9 @@ func (d *Demo) Drain(ctx context.Context) error {
 			return errors.Join(errs...)
 		}
 		err := d.runFollowup(ctx, f)
+		if err != nil {
+			d.unqueue(f) // a task that did not finish may be asked for again
+		}
 		d.stepMu.Unlock()
 		if err != nil {
 			// A stop the person asked for ends the task, and is not a failure.
@@ -190,6 +193,17 @@ func (d *Demo) addAnswered(ctx context.Context, f followup) error {
 		return nil
 	})
 	return err
+}
+
+// unqueue forgets that a build was queued, so that a later approval may queue it
+// again. The caller holds the step lock.
+func (d *Demo) unqueue(f followup) {
+	switch f.kind {
+	case fuChecks:
+		delete(d.queued, checksKey(f.j.goal))
+	case fuTicket:
+		delete(d.queued, ticketKey(f.j.key))
+	}
 }
 
 // followupJob builds the job of the next try of a ticket.

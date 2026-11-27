@@ -1156,29 +1156,40 @@ func TestApproveAdoptsOnlyItsOwnTickets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approve := func(t *testing.T, d *Demo) {
-		t.Helper()
+	approve := func(d *Demo) error {
 		c := mustCall(t, d, "p-2")
-		if _, err := d.Approve(context.Background(), server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := d.Approve(context.Background(), server.ApproveRequest{Call: c.ID, Version: c.Version, Steps: &memSteps{}})
+		return err
 	}
 	labelled := func(d *Demo, n int) bool {
 		iss, _ := d.host.GetIssue(context.Background(), n)
 		return iss.HasLabel(githost.LabelPlanned) || iss.HasLabel(githost.LabelReady)
 	}
-	for name, seed := range map[string]struct{ author, body string }{
-		"another author, other text":          {"repo-owner", "Something else entirely."},
-		"the factory login, another body":     {"factory-bot", "Something else entirely."},
-		"another author, the identical body":  {"repo-owner", own},
-		"the factory login, body plus a line": {"factory-bot", own + "\nmore"},
+	for name, seed := range map[string]struct {
+		author, body string
+		stale        bool // by the factory's login: a ticket that looks edited, so the press is refused
+	}{
+		"another author, other text":          {"repo-owner", "Something else entirely.", false},
+		"the factory login, another body":     {"factory-bot", "Something else entirely.", true},
+		"another author, the identical body":  {"repo-owner", own, false},
+		"the factory login, body plus a line": {"factory-bot", own + "\nmore", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := newDemo(t)
 			n := d.host.SeedSubIssue(2, spec.title, seed.body, seed.author, "OWNER")
-			approve(t, d)
+			err := approve(d)
 			if labelled(d, n) {
 				t.Fatalf("issue %d is not ours and was labelled", n)
+			}
+			if seed.stale {
+				// It is never adopted, and no duplicate is made beside it.
+				if !errors.Is(err, server.ErrStale) || d.tk[spec.key] != 0 {
+					t.Fatalf("err=%v tk=%d", err, d.tk[spec.key])
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
 			}
 			if d.tk[spec.key] == n || d.tk[spec.key] == 0 {
 				t.Fatalf("tk = %d, the other issue is %d", d.tk[spec.key], n)
@@ -1192,7 +1203,9 @@ func TestApproveAdoptsOnlyItsOwnTickets(t *testing.T) {
 		d := newDemo(t)
 		a := d.host.SeedSubIssue(2, spec.title, own, "factory-bot", "NONE")
 		b := d.host.SeedSubIssue(2, spec.title, own, "factory-bot", "NONE")
-		approve(t, d)
+		if err := approve(d); err != nil {
+			t.Fatal(err)
+		}
 		if d.tk[spec.key] != a || !labelled(d, a) || labelled(d, b) {
 			t.Fatalf("tk=%d a=%d b=%d labelled(b)=%v", d.tk[spec.key], a, b, labelled(d, b))
 		}

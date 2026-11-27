@@ -570,7 +570,7 @@ func (g *GitHub) PostComment(ctx context.Context, n int, runID, body string) err
 }
 
 func (g *GitHub) PostAnswer(ctx context.Context, n int, body string) (int64, error) {
-	return g.postRaw(ctx, n, withMarker(body, AnswerMarker()))
+	return g.postRaw(ctx, n, AnswerBody(body))
 }
 
 func (g *GitHub) PostConsequenceAnswer(ctx context.Context, n int, m ConsequenceMarker) (int64, error) {

@@ -361,7 +361,7 @@ func (f *Fake) PostComment(_ context.Context, n int, runID, body string) error {
 }
 
 func (f *Fake) PostAnswer(_ context.Context, n int, body string) (int64, error) {
-	return f.post("PostAnswer", n, body, AnswerMarker())
+	return f.postRaw("PostAnswer", n, AnswerBody(body))
 }
 
 func (f *Fake) PostConsequenceAnswer(_ context.Context, n int, m ConsequenceMarker) (int64, error) {

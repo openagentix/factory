@@ -314,3 +314,8 @@ func EndsWithMarker(body string) bool {
 	line := lastLine(body)
 	return strings.HasPrefix(line, "<!-- oxf:") && strings.HasSuffix(line, "-->")
 }
+
+// AnswerBody returns the exact body PostAnswer posts for a text: the text
+// made inert, then the answer marker as the last line. A caller that looks for
+// an answer it posted before compares the body of a comment with this.
+func AnswerBody(text string) string { return withMarker(text, AnswerMarker()) }

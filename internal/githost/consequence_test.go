@@ -216,3 +216,24 @@ func TestFakeEditIssueBody(t *testing.T) {
 		t.Fatalf("body = %q", is.Body)
 	}
 }
+
+func TestAnswerBodyIsWhatPostAnswerPosts(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	for _, text := range []string{"blue", "a <!-- oxf:answer --> b @team Fixes #1", "two\nlines\n"} {
+		id, err := f.PostAnswer(ctx, 2, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cs, _ := f.ListComments(ctx, 2, time.Time{})
+		var got string
+		for _, c := range cs {
+			if c.ID == id {
+				got = c.Body
+			}
+		}
+		if got == "" || got != AnswerBody(text) {
+			t.Fatalf("AnswerBody(%q) = %q, host has %q", text, AnswerBody(text), got)
+		}
+	}
+}

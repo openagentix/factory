@@ -169,6 +169,25 @@ func (d Decision) Verify() bool {
 	return d.sealed && d.digest == d.sum()
 }
 
+// PassFor reports whether the decision is a pass, made by the gate, for
+// exactly this change. It is true only when Verify holds, the outcome is
+// OutcomePass with no exception, the sealed facts say verify held and the
+// review agreed, c is a valid reference, and c equals, field by field, the
+// change the decision was sealed for: ticket, attempt, full commit and
+// builder run. A zero Decision, a zero ChangeRef, a decision built by hand and
+// a decision for another change are all false.
+//
+// The limit: the seal is a digest, not a signature. It stops a caller outside
+// this package from editing or building a decision. It does not say that the
+// commit exists, and it does not remember that a pass was used: the caller
+// records that.
+func (d Decision) PassFor(c ChangeRef) bool {
+	return d.Verify() &&
+		d.Outcome == OutcomePass && d.Exception == "" && d.sealedKind == "" &&
+		d.sealedAgreed && d.sealedVerify &&
+		c.valid() == nil && c == d.change
+}
+
 // gatedTask reports whether the gate judges changes of the task.
 func gatedTask(task string) bool {
 	switch task {

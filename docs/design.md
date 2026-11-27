@@ -4,7 +4,7 @@ Date: 2026-11-26. Revision 7: agrees with decision record 0001. Planning is inte
 
 Lines marked **(owner)** were decided by the owner. Lines marked **(call)** are the assistant's choices and can be changed.
 
-Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/0002-threat-model.md`.
+Related: `docs/decisions/0001-core-contracts.md` (contracts), `docs/decisions/0002-threat-model.md`, `docs/decisions/0003-run-and-team.md` (running on one machine and in a team).
 
 ## 1. Intent
 

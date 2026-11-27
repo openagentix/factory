@@ -11,7 +11,7 @@ Status: design drafted, eight Go packages under `internal/` built and tested (`a
 ## Where things are
 
 - Design: `docs/design.md`
-- Decision records: `docs/decisions/` (0001 core contracts, 0002 threat model)
+- Decision records: `docs/decisions/` (0001 core contracts, 0002 threat model, 0003 running on one machine and in a team)
 - Plans: `ROADMAP.md`. History: `CHANGELOG.md`.
 - Rules for people: `CONTRIBUTING.md`, `GOVERNANCE.md`, `SECURITY.md`
 

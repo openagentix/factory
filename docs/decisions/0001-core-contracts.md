@@ -85,7 +85,7 @@ Durable state lives in the git host and the orchestrator's store. An unattended 
 | `fix-ci` | A required check on the git host failed on an open agent pull request | A fix commit on that pull request's branch | The machine gate, again | Per ticket, shared with `implement` |
 | `review` | A spec, plan, set of checks or change is ready | `review.json` | Never gated. It is the opinion others use | None |
 
-- `maxAttempts` (default 3: one first try and two rework rounds) is one setting. It counts work-stage starts, including a person's take-the-wheel submission. A run cut off by sleep or a restart does not use up an attempt.
+- `maxAttempts` (default 3: one first try and two rework rounds) is one setting. It counts work-stage starts, including a person's take-the-wheel submission. A run cut off by sleep or a restart does not use up an attempt. Three cut-offs on one ticket stop it until a person acts (record 0003).
 - A ticket becomes `factory:ready` when the acceptance manifest of its goal is in staging (with or without a check for every criterion), every ticket it depends on is in staging, and the cap on open agent pull requests (`maxOpenAgentPullRequests`) allows it. Otherwise it stays `factory:planned` and the web app shows why.
 - At dial level 1 a person also approves each output before it is combined (see The dial).
 - When both harnesses are installed, `review` uses the one that did not write the subject.
@@ -103,7 +103,7 @@ The **unattended contract** is a fixed text placed before any method in every ru
 
 **Take the wheel.** A person can do a work stage, or a planning session, in their own session. `oxf` serves a Model Context Protocol endpoint with four tools, a public contract: `factory_list` (goals to plan and ready tickets), `factory_claim` (claims a goal or ticket, makes the workspace directory, returns the brief and paths), `factory_ask` (posts a question through the publish step), `factory_submit` (hands back a spec, a plan or a change). Verify, review, the machine gate and publish are unchanged.
 
-**Claims across machines.** A run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The earliest marker wins and the other run ends with no change. A claim expires after a set time, so a crashed machine does not hold a ticket for ever. The time is a setting with no default yet.
+**Claims across machines.** A run claims its ticket with the label `factory:claimed` and a marker comment with its machine id and run id, then reads the comments back. The live claim with the lowest comment id wins and the other run releases its claim and ends with no change. A claim expires after `claimExpiry` in `factory.yaml`, default 2 hours, so a crashed machine does not hold a ticket for ever. Detail in record 0003.
 
 **Team work** is part of the core. Designed, not built, beyond the claims above:
 
@@ -111,7 +111,7 @@ The **unattended contract** is a fixed text placed before any method in every ru
 - A list of trusted logins in `factory.yaml` says whose machines act for the factory. A claim, an answer or an approval from any other login is ignored.
 - A `review` is preferred on a different teammate's machine and harness than the one that built the subject.
 
-**Triggers** act only on events from a user with write access, or from the factory itself. Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer or approval given in the web app is posted with an answer marker and counts as the person's. Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
+**Triggers** act only on events from a trusted person (on the list of trusted logins, with write access), or from the factory itself. An answer or approval from a writer who is not on the list is shown as context and does not count (record 0003). Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer or approval given in the web app is posted with an answer marker and counts as the person's. Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
 
 ## The factory's own repository
 
@@ -149,7 +149,7 @@ The factory never gives a worker a credential for the git host. The publish step
 
 | Key | Granted | Used for | Never used for |
 |---|---|---|---|
-| Propose token | At setup, required | Push branches under `factory/`; write `factory-staging` through the combine action; open and update draft pull requests and the one staging pull request; comment; add or remove labels from a fixed list; create at most twelve issues per run as sub-issues of the goal; set a commit status | Any write to the default branch |
+| Propose token | At setup, required | Push branches under `factory/`; write `factory-staging` through the combine action; open and update draft pull requests and the one staging pull request; comment; update its own comments; lock the conversation of a ticket it created; add or remove labels from a fixed list; create at most twelve issues per run as sub-issues of the goal; set a commit status | Any write to the default branch |
 | Accept token | Separately by the person, optional | Merge staging into the default branch on a person's Accept; merge a revert on Undo after Accept; an earned automatic Accept | Anything else |
 
 The git host must enforce the split. On GitHub a token that can push a branch can also merge, so the propose token's user must be one that branch protection does not allow to update the default branch. The factory checks the protection rules at start and shows a standing warning when they are missing. For `factory-staging`, restrict who may push to the propose token's user. Do not forbid force pushes: every rebuild needs one.
@@ -191,8 +191,8 @@ The same for every runner and every harness. Paths are shown as in a container. 
 ```
 
 - `status` is one of `succeeded`, `failed`, `needs_human`, `no_change`. `criteria[].opinion` is one of `met`, `not_met`, `unsure`. It is shown in the engineering view only and never sets a criterion's state.
-- A **ruling** is written when the method would have asked a person, the choice can be undone and it is inside the ticket. Otherwise the worker writes a question and ends with `needs_human`. Questions go to the inbox. Nothing waits on them.
-- `usage.billing` is `metered` (an API key or gateway: dollars and tokens), `plan` (a subscription login: tokens, no dollar figure) or `unknown`. `costUSD` is given only for metered usage. No dollar figure is ever estimated for plan usage. `usage.source` and `usage.enforced` are written by the orchestrator; values from the worker are ignored.
+- A **ruling** is written when the method would have asked a person, the choice can be undone and it is inside the ticket. Otherwise the worker writes a question and ends with `needs_human`. Questions go to the inbox. No run waits on them; the ticket stops until a person answers (record 0003).
+- `usage.billing` is `metered` (an API key or gateway: dollars and tokens), `plan` (a subscription login: tokens, no dollar figure) or `unknown`. `costUSD` is given only for metered usage. No dollar figure is ever estimated for plan usage. `usage.source` and `usage.enforced` are written by the orchestrator; values from the worker are ignored. The evidence bundle takes `worker` and `usage` from the adapter the orchestrator started, never from `harness` or `usage` in `result.json` (record 0003).
 
 `/factory/out/issues.json`, from `decompose`:
 
@@ -301,6 +301,7 @@ One level per unattended task sets where the factory stops for a person after th
 | 3 | Automatic Accept | Nothing, for classes of change that earned it. Shown, not active, in the first release |
 
 - Exceptions reach a person at every level.
+- A missing or unreadable level means the task does not run. Until a guided output can be approved, level 1 starts no work (record 0003).
 - `spec.autonomy.ceiling` in the task file sets the highest level. It changes only through the default branch.
 - The current level is stored by the orchestrator and moved in the web app at or below the ceiling. Every change is logged with time and the previous level. On OpenAgentix, platform policy supplies the ceiling and can only lower it.
 
@@ -340,7 +341,7 @@ The **last good point** of a goal is the most recent staging state in which ever
 
 ## The run record and the evidence bundle
 
-The **run record** is stored in SQLite. Its field names follow the planned OpenAgentix `AgentRun`, so that kind can back it later: `id`, `task`, `attempt`, `goal`, `ticket`, `trigger` (kind and reference; the kind is one of the six trigger kinds, `factory` for a run the factory started itself after another run, such as `acceptance`, `review`, `onboard` or a rebuild, or `person` for take the wheel or an action in the web app), `mode` (`unattended` or `wheel`), `method`, `methodUsed`, `input` (resolved task and prompt hash), `limits`, `phase`, `result`, `usage` (with its source), `provenance` (the evidence bundle), `outputs` (branch, commit, pull request), `createdAt`, `startedAt`, `finishedAt`. The phases are `queued`, `held` (waiting for the cap, a throttle or a staging freeze), `working`, `verifying`, `publishing`, `succeeded`, `failed`, `needs_human` and `cancelled`.
+The **run record** is stored in SQLite. Its field names follow the planned OpenAgentix `AgentRun`, so that kind can back it later: `id`, `task`, `attempt`, `goal`, `ticket`, `trigger` (kind and reference; the kind is one of the six trigger kinds, `factory` for a run the factory started itself after another run, such as `acceptance`, `review`, `onboard` or a rebuild, or `person` for take the wheel or an action in the web app), `mode` (`unattended` or `wheel`), `method`, `methodUsed`, `input` (resolved task and prompt hash), `limits`, `phase`, `result`, `usage` (with its source), `provenance` (the evidence bundle), `outputs` (branch, commit, pull request), `createdAt`, `startedAt`, `finishedAt`, and from record 0003 `heldReason`, `concurrencyKey`, `input.base`, `input.subject` and `cutOff`. The phases are `queued`, `held` (waiting, with a reason code from record 0003, such as the cap, a throttle or a staging freeze), `working`, `verifying`, `publishing`, `succeeded`, `failed`, `needs_human` and `cancelled`.
 
 The orchestrator also stores each staging state and the list of passed changes, the dial levels and their log, and the outcome of each accepted change. The trust record is a query over these and outcomes read from the git host, never a second source of truth.
 
@@ -454,7 +455,7 @@ spec:
   concurrencyKey: "issue-{{ .Number }}"
 ```
 
-Machine settings (installed harnesses, the listen address, thresholds, the claim expiry) live in the person's home directory, never in the repository. The two tokens and the login token are kept in the operating system's credential store, never in a task file, never in a plain file, never in the database.
+Machine settings (installed harnesses, the listen address) live in the person's home directory, never in the repository. A value every machine of a team must share, such as the claim expiry, is in `factory.yaml` (record 0003). The two tokens and the login token are kept in the operating system's credential store, never in a task file, never in a plain file, never in the database.
 
 ## Stack
 
@@ -472,7 +473,7 @@ Four trial runs by hand on 2026-11-26 are written up in `docs/trials/2026-11-26-
 
 Left to the first real runs, and not designed further here:
 
-- Every threshold: the trajectory values, the trust count and window, the size limit in the risk rules, the claim expiry.
+- Every threshold: the trajectory values, the trust count and window, the size limit in the risk rules, the claim expiry (default 2 hours, untested).
 - The harness flags for a no-prompt permission policy are known for Claude Code from a trial (deny by default with an allowlist). For Codex only the sandbox setting was tried.
 - Whether to shut a person's global agent instructions and tools out of a run. A trial showed they leak in, cost tokens and change behaviour.
 - How well "exercised" can be computed.
@@ -501,3 +502,5 @@ Left to the first real runs, and not designed further here:
 The sections on the factory's own repository and on how changes are reviewed were added on 2026-11-26 from what the first build showed.
 
 This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for an engineer who should not have to read every change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.
+
+On 2026-11-27 record 0003 changed these rules: triggers count only from trusted persons, claims are ordered by comment id with a 2 hour expiry in `factory.yaml`, cut-offs per ticket are limited, a missing dial level means do not run, questions stop their ticket, the run record has new fields, evidence takes worker and usage from the orchestrator, and the propose token may update its own comments and lock a ticket.

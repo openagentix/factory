@@ -23,7 +23,7 @@ Build order:
 
 **The web app is built alongside these steps.** It starts with a demo line on a made-up project, moved by real factory code. Each backend piece then makes one more station of the line real. Its design is in decision record 0004.
 
-In the quick lane a question stops only its own ticket; other work goes on. When a check fails or the second opinion disagrees, the next attempt starts from exactly what failed. Both are designed, not built.
+A question stops only its own ticket, and a failed check or a disagreeing second opinion goes back to the builder as the next attempt. Both are already in records 0001 and 0003. The build is not done.
 
 Also in v0.1: the dial, the trust and attention records, built-in prompts, use of an installed workflow plugin by name, a demo mode.
 
@@ -31,11 +31,11 @@ There is a useful product after step 2, with the web app's Floor, Accept and Und
 
 ## After the first release works
 
-Designed, not built. These come after the first release works.
+Designed, not built. No order or date is set.
 
 - Notifications for what needs a person, off by default, starting with a browser notification from the open web app.
 - Live activity of the agent on this machine, as a short plain status on the Live screen.
-- Preparing the workspace for the next ready ticket while one job runs.
+- Preparing the workspace early for a ticket this machine could claim.
 
 ## v0.2
 

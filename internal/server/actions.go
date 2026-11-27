@@ -289,7 +289,7 @@ func put(w http.ResponseWriter, o writeOutcome) {
 // of its target. The work runs in a context that does not end with the
 // request. After actionWait the caller gets 202 and the work goes on.
 func (s *Server) write(w http.ResponseWriter, r *http.Request, key, target string, fn func(context.Context, Steps) (ActionResult, error)) {
-	if s.cfg.Actions == nil {
+	if s.cfg.Actions == nil || s.stopping.Load() {
 		WriteError(w, http.StatusServiceUnavailable, CodeUnavailable)
 		return
 	}
@@ -310,7 +310,7 @@ func (s *Server) write(w http.ResponseWriter, r *http.Request, key, target strin
 		put(w, writeOutcome{rec.status, rec.reply})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), actionTimeout)
+	ctx, cancel := context.WithTimeout(s.actCtx, actionTimeout) // not the request's: it outlives the request
 	done := make(chan writeOutcome, 1)
 	s.actWG.Add(1)
 	go func() {
@@ -366,3 +366,23 @@ func (s *Server) runWrite(ctx context.Context, rec *idemRec, fn func(context.Con
 
 // waitActions waits for every write still running. For tests.
 func (s *Server) waitActions() { s.actWG.Wait() }
+
+// beginStop is called when a stop is requested: no new write starts.
+func (s *Server) beginStop() { s.stopping.Store(true) }
+
+// drain waits for the writes in flight up to the limit. When the limit is
+// reached the context of every write ends, so the work stops and its reply is a
+// failure, and drain says false. It never reports a write as done.
+func (s *Server) drain(limit time.Duration) bool {
+	done := make(chan struct{})
+	go func() { s.actWG.Wait(); close(done) }()
+	t := time.NewTimer(limit)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		s.actCancel()
+		return false
+	}
+}

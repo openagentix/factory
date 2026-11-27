@@ -670,3 +670,34 @@ func TestSharedAnswerSamples(t *testing.T) {
 		}
 	}
 }
+
+// N6: after a stop is requested no new write starts, and a write in flight
+// ends as a failure, never as done.
+func TestNoWriteStartsAfterAStopAndAWriteInFlightEndsAsFailure(t *testing.T) {
+	e, fa := actEnv(t)
+	fa.entered = make(chan struct{}, 2)
+	fa.hook = func(ctx context.Context, _ Steps) (ActionResult, error) {
+		<-ctx.Done()
+		return ActionResult{Result: ResultDone, JournalSeq: 9}, ctx.Err() // a write that is cut says so
+	}
+	r := actRoutes()[0]
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- post(e, r.path, key1, r.body) }()
+	<-fa.entered
+	e.s.beginStop()
+	assertErr(t, post(e, actRoutes()[3].path, key2, actRoutes()[3].body), 503, CodeUnavailable, "a write after the stop")
+	if fa.calls() != 1 {
+		t.Fatalf("Actions called %d times", fa.calls())
+	}
+	if e.s.drain(20 * time.Millisecond) { // the write does not end by itself
+		t.Fatal("drain says the write ended")
+	}
+	rec := <-first
+	assertErr(t, rec, 500, CodeInternal, "the write that was cut")
+	if strings.Contains(rec.Body.String(), "done") {
+		t.Fatal("a cut write was reported as done")
+	}
+	if !e.s.drain(time.Second) {
+		t.Fatal("nothing should be in flight now")
+	}
+}

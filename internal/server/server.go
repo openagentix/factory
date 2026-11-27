@@ -79,6 +79,11 @@ type Server struct {
 	// shorten it; nothing outside the package can.
 	actionWait time.Duration
 	actWG      sync.WaitGroup
+	// stopping is set when a stop is requested: no new write starts. actCtx is
+	// the context of every write; it ends when the stop's limit is reached.
+	stopping  atomic.Bool
+	actCtx    context.Context
+	actCancel context.CancelFunc
 	// Timers for the event stream. Real ones by default. Tests replace them
 	// with channels they control. Each returns a channel and a stop function.
 	newTicker func(time.Duration) (<-chan time.Time, func())
@@ -156,6 +161,7 @@ func New(cfg Config) (*Server, error) {
 	s.limiter = newLimiter(cfg.Now, 10, time.Minute, 1024)
 	s.idem = newIdemKeeper(maxIdemKeys)
 	s.actionWait = 8 * time.Second
+	s.actCtx, s.actCancel = context.WithCancel(context.Background())
 	s.registerActions()
 	s.mustHandle(Route{Method: http.MethodGet, Path: "/api/v1/floor", Handler: s.handleFloor})
 	s.mustHandle(Route{Method: http.MethodGet, Path: "/api/v1/events", Handler: s.handleEvents})

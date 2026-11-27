@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const (
@@ -23,6 +24,9 @@ var errBadJSON = errors.New("bad json")
 // An empty body is allowed (the value stays empty), because some actions
 // send nothing. This is a ruling: the record is silent.
 func readBody(w http.ResponseWriter, r *http.Request, rt *route) (any, int, Code) {
+	// A slow sender of a body is cut off. Errors are ignored: some writers
+	// (tests) cannot set deadlines.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(10 * time.Second))
 	if ct := r.Header["Content-Type"]; len(ct) != 1 || ct[0] != "application/json" {
 		return nil, http.StatusUnsupportedMediaType, CodeUnsupportedMedia
 	}

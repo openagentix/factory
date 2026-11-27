@@ -39,6 +39,12 @@ type Config struct {
 	Static fs.FS
 	// Logger takes the package's own log lines. Nil discards them.
 	Logger *slog.Logger
+	// Hub carries events to streams. Nil means a new hub for Mode. Use
+	// Server.Hub to publish.
+	Hub *Hub
+	// PingInterval, StreamMaxAge and WriteDeadline default to 15 seconds, 30
+	// minutes and 10 seconds. Tests may make them shorter.
+	PingInterval, StreamMaxAge, WriteDeadline time.Duration
 	// Now is the clock. Nil means time.Now. For tests.
 	Now func() time.Time
 }
@@ -51,6 +57,7 @@ type Server struct {
 	hosts   map[string]bool
 	origins map[string]bool
 	limiter *limiter
+	hub     *Hub
 
 	mu     sync.RWMutex
 	routes []*route
@@ -64,17 +71,30 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.Hub == nil {
+		cfg.Hub = NewHub(cfg.Mode)
+	}
+	if cfg.PingInterval <= 0 {
+		cfg.PingInterval = 15 * time.Second
+	}
+	if cfg.StreamMaxAge <= 0 {
+		cfg.StreamMaxAge = 30 * time.Minute
+	}
+	if cfg.WriteDeadline <= 0 {
+		cfg.WriteDeadline = 10 * time.Second
+	}
 	key, err := newKey()
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, key: key, log: cfg.Logger, hosts: map[string]bool{}, origins: map[string]bool{}}
+	s := &Server{cfg: cfg, key: key, log: cfg.Logger, hub: cfg.Hub, hosts: map[string]bool{}, origins: map[string]bool{}}
 	for _, h := range []string{"127.0.0.1", "localhost", "[::1]"} {
 		s.hosts[fmt.Sprintf("%s:%d", h, cfg.Port)] = true
 		s.origins[fmt.Sprintf("http://%s:%d", h, cfg.Port)] = true
 	}
 	s.limiter = newLimiter(cfg.Now, 10, time.Minute, 1024)
 	s.mustHandle(Route{Method: http.MethodGet, Path: "/api/v1/floor", Handler: s.handleFloor})
+	s.mustHandle(Route{Method: http.MethodGet, Path: "/api/v1/events", Handler: s.handleEvents})
 	return s, nil
 }
 
@@ -83,6 +103,9 @@ func (s *Server) mustHandle(rt Route) {
 		panic("server: bad built-in route: " + err.Error())
 	}
 }
+
+// Hub is where events are published.
+func (s *Server) Hub() *Hub { return s.hub }
 
 // Link is the address to open, with the key in the fragment. The fragment
 // never goes to the server. Callers must treat the result as secret.

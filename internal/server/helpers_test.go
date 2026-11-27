@@ -101,6 +101,12 @@ func (e *testEnv) do(r req) *httptest.ResponseRecorder {
 	for k, v := range r.hdr {
 		hr.Header.Set(k, v)
 	}
+	if r.path == "/api/v1/events" {
+		// a stream that is let in never ends by itself: stop it soon
+		ctx, cancel := context.WithTimeout(hr.Context(), 30*time.Millisecond)
+		defer cancel()
+		hr = hr.WithContext(ctx)
+	}
 	rec := httptest.NewRecorder()
 	e.s.Handler().ServeHTTP(rec, hr)
 	return rec

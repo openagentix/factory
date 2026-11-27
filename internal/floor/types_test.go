@@ -44,7 +44,7 @@ func TestEveryReasonCodeMapsToItsOneState(t *testing.T) {
 		want[c] = StateWaitingPerson
 	}
 	for _, c := range []ReasonCode{"queued", "cap", "throttle", "key_busy", "staging_frozen", "machine_busy",
-		"waiting_dependency", "waiting_checks", "waiting_combine", "cut_off", "claim_lost", "claim_expired"} {
+		"waiting_dependency", "waiting_checks", "waiting_combine", "cut_off", "claim_lost", "claim_expired", "planned", "waiting_review", "not_built"} {
 		want[c] = StateWaitingMachine
 	}
 	all := AllReasonCodes()
@@ -145,5 +145,22 @@ func TestFactsAreValidatedAndEncodeAsNumberOrString(t *testing.T) {
 	}
 	if _, err := json.Marshal(zero); err == nil {
 		t.Error("zero Fact encoded")
+	}
+}
+
+// Only waiting_dependency and waiting_checks may show another state than the
+// one in the table, and only the state of the piece they wait on.
+func TestOnlyTwoCodesTakeABlockersState(t *testing.T) {
+	for _, c := range AllReasonCodes() {
+		want := c == WaitingDependency || c == WaitingChecks
+		if c.TakesBlockerState() != want {
+			t.Errorf("%s: TakesBlockerState %v", c, c.TakesBlockerState())
+		}
+	}
+	if WaitingDependency.State() != StateWaitingMachine || WaitingChecks.State() != StateWaitingMachine {
+		t.Error("the default state of the two codes is waiting_machine")
+	}
+	if !ModeUnknown.Valid() || Mode("").Valid() {
+		t.Error("mode unknown is valid, a blank mode is not")
 	}
 }

@@ -150,6 +150,8 @@ type RunIn struct {
 	PhaseSince Opt[time.Time]
 	Machine    string
 	HasChange  Opt[bool]
+	// Deadline is the task's own deadline. Zero means unknown.
+	Deadline time.Duration
 }
 
 // ClaimIn is a claim by another machine, as read from the git host. Times are

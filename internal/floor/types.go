@@ -51,9 +51,12 @@ type Mode string
 const (
 	ModeDemo Mode = "demo"
 	ModeLive Mode = "live"
+	// ModeUnknown is shown when the mode could not be read. The Floor never
+	// claims demo or live without knowing.
+	ModeUnknown Mode = "unknown"
 )
 
-func (x Mode) Valid() bool { return x == ModeDemo || x == ModeLive }
+func (x Mode) Valid() bool { return x == ModeDemo || x == ModeLive || x == ModeUnknown }
 
 type SourceKey string
 
@@ -459,6 +462,10 @@ const (
 	CutOff            ReasonCode = "cut_off"
 	ClaimLost         ReasonCode = "claim_lost"
 	ClaimExpired      ReasonCode = "claim_expired"
+	// Added in fix round 1.
+	Planned       ReasonCode = "planned"        // a ticket that is not ready yet and has no run
+	WaitingReview ReasonCode = "waiting_review" // a run succeeded and the second opinion has not come yet
+	NotBuilt      ReasonCode = "not_built"      // the step that comes next is not built yet
 )
 
 // AllReasonCodes lists every code once. A test compares it with the table in
@@ -471,7 +478,7 @@ func AllReasonCodes() []ReasonCode {
 		NeedsHuman, QuestionOpen, ConsequenceOpen, PlanWaits, AcceptPending, ProjectChecksFailing, LevelOff,
 		LevelGuided, LevelUnset, GoalNotApproved, Paused,
 		Queued, Cap, Throttle, KeyBusy, StagingFrozen, MachineBusy, WaitingDependency, WaitingChecks, WaitingCombine,
-		CutOff, ClaimLost, ClaimExpired,
+		CutOff, ClaimLost, ClaimExpired, Planned, WaitingReview, NotBuilt,
 	}
 }
 
@@ -487,11 +494,18 @@ func (c ReasonCode) State() PieceState {
 		LevelGuided, LevelUnset, GoalNotApproved, Paused:
 		return StateWaitingPerson
 	case Queued, Cap, Throttle, KeyBusy, StagingFrozen, MachineBusy, WaitingDependency, WaitingChecks, WaitingCombine,
-		CutOff, ClaimLost, ClaimExpired:
+		CutOff, ClaimLost, ClaimExpired, Planned, WaitingReview, NotBuilt:
 		return StateWaitingMachine
 	}
 	return ""
 }
+
+// TakesBlockerState says whether a piece with this code may show the state of
+// the piece it waits on. State() is the default state. When the blocker is
+// stuck or waits for a person, a piece with one of these two codes is shown
+// in that state and keeps its own code. For every other code the state is
+// fixed.
+func (c ReasonCode) TakesBlockerState() bool { return c == WaitingDependency || c == WaitingChecks }
 
 func (c ReasonCode) Valid() bool { return c.State() != "" }
 
@@ -599,6 +613,7 @@ type Untrusted struct {
 
 type Reason struct {
 	Code        ReasonCode `json:"code"`
+	Count       int        `json:"count,omitempty"` // for too_many_cut_offs and too_many_claim_lost
 	Attempt     int        `json:"attempt,omitempty"`
 	MaxAttempts int        `json:"maxAttempts,omitempty"`
 	Criteria    []int      `json:"criteria,omitempty"`

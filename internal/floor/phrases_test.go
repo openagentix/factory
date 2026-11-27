@@ -43,7 +43,7 @@ func TestEveryCodeKindAndWordHasAPhrase(t *testing.T) {
 }
 
 // extraPhrases are the signal sentence parts: moving and elsewhere.
-const extraPhrases = 2
+const extraPhrases = 2 + 4 // the signal parts and the four one forms
 
 func TestPhrasesCarryOnlyNumericAndCodeSlots(t *testing.T) {
 	slot := regexp.MustCompile(`\{([^}]*)\}`)
@@ -128,5 +128,31 @@ func TestTheRecordSentencesAreWordForWord(t *testing.T) {
 	}
 	if !strings.Contains(p["reason.unknown"], "could not say why") {
 		t.Errorf("unknown reason phrase: %q", p["reason.unknown"])
+	}
+}
+
+func TestOneFormsAreChosenByNumber(t *testing.T) {
+	for _, k := range []PhraseKey{"reason.attempts_used_up", "reason.too_many_cut_offs", "reason.too_many_claim_lost", "call.accept"} {
+		plain, _ := PhraseFor(k, 2)
+		zero, _ := PhraseFor(k, 0)
+		one, ok := PhraseFor(k, 1)
+		if !ok || one == plain || zero != plain || strings.Contains(one, "{") && k != "reason.attempts_used_up" && k != "call.accept" && !strings.Contains(one, "{piece}") {
+			t.Errorf("%s: zero %q one %q two %q", k, zero, one, plain)
+		}
+		if m := forbiddenWords.FindString(one); m != "" {
+			t.Errorf("%s: forbidden word in the one form", k)
+		}
+	}
+	if s, _ := PhraseFor("call.accept", 1); s != "1 change is in the holding area. Accept it, or ask a developer to finish this step." {
+		t.Errorf("%q", s)
+	}
+	if s, _ := PhraseFor("reason.attempts_used_up", 1); s != "{piece}: the 1 try is used." {
+		t.Errorf("%q", s)
+	}
+	// A key with no one form uses the plain phrase for any number.
+	a, _ := PhraseFor("reason.queued", 1)
+	b, _ := PhraseFor("reason.queued", 2)
+	if a != b || a == "" {
+		t.Error("queued")
 	}
 }

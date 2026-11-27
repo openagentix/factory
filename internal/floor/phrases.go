@@ -69,6 +69,9 @@ func Phrases() map[PhraseKey]string {
 		"reason.cut_off":            "{piece}: the factory stopped while it worked. It will start again.",
 		"reason.claim_lost":         "{piece}: another machine took it. This machine stopped.",
 		"reason.claim_expired":      "{piece}: the claim by {machine} ran out. It waits for a machine.",
+		"reason.planned":            "{piece} is planned. It starts when it is ready.",
+		"reason.waiting_review":     "{piece} waits for a second opinion.",
+		"reason.not_built":          "{piece} stops here. This step is not built yet.",
 		// the shift log
 		"journal.plan_approved":        "Goal {goal}: the plan was approved.",
 		"journal.checks_written":       "Goal {goal}: the checks were written.",
@@ -106,7 +109,28 @@ func Phrases() map[PhraseKey]string {
 		"honest.read_failed":    "Could not read",
 		"honest.not_enough_yet": "Not enough yet",
 		// the signal sentence
-		"signal.moving":    "{moving} moving.",
-		"signal.elsewhere": "{elsewhere} claimed by another machine.",
+		// One forms. PhraseFor picks them when the number is 1.
+		"reason.attempts_used_up.one":    "{piece}: the 1 try is used.",
+		"reason.too_many_cut_offs.one":   "{piece}: it was cut off 1 time.",
+		"reason.too_many_claim_lost.one": "{piece}: another machine took it 1 time.",
+		"call.accept.one":                "1 change is in the holding area. Accept it, or ask a developer to finish this step.",
+		"signal.moving":                  "{moving} moving.",
+		"signal.elsewhere":               "{elsewhere} claimed by another machine.",
 	}
+}
+
+// PhraseFor returns the phrase for the key. When n is 1 and the key has a
+// ".one" form, the one form is returned. A number of 0 or 2 or more uses the
+// plain form. The number is the one the phrase counts: maxAttempts for
+// attempts_used_up, count for too_many_cut_offs, too_many_claim_lost and the
+// Accept call.
+func PhraseFor(key PhraseKey, n int) (string, bool) {
+	t := Phrases()
+	if n == 1 {
+		if s, ok := t[key+".one"]; ok {
+			return s, true
+		}
+	}
+	s, ok := t[key]
+	return s, ok
 }

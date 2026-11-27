@@ -11,7 +11,7 @@ Status: design drafted, nine Go packages under `internal/` built and tested (`ap
 ## Where things are
 
 - Design: `docs/design.md`
-- Decision records: `docs/decisions/` (0001 core contracts, 0002 threat model, 0003 running on one machine and in a team)
+- Decision records: `docs/decisions/` (0001 core contracts, 0002 threat model, 0003 running on one machine and in a team, 0004 the web app and its read model)
 - Plans: `ROADMAP.md`. History: `CHANGELOG.md`.
 - Rules for people: `CONTRIBUTING.md`, `GOVERNANCE.md`, `SECURITY.md`
 
@@ -42,7 +42,7 @@ Read the design and the decision records before you change a contract.
 
 ## Licence rule
 
-Embed only MIT and Apache-2.0 code. Never embed AGPL, PolyForm, FSL or Elastic licensed code. BSD and public domain code are accepted for underlying modules of the Go ecosystem and for SQLite. Every module is listed in `THIRD-PARTY.md`. Ask before adding a dependency, and write a decision record for it.
+Embed only MIT and Apache-2.0 code. Never embed AGPL, PolyForm, FSL or Elastic licensed code. BSD and public domain code are accepted for underlying modules of the Go ecosystem and for SQLite. Fonts are the one exception: font files may ship as data under the SIL Open Font Licence 1.1 (record 0004). Every module is listed in `THIRD-PARTY.md`. Ask before adding a dependency, and write a decision record for it.
 
 ## Commit rules
 

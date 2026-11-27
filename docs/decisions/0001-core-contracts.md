@@ -35,7 +35,7 @@ After the plan is approved, at the default dial level, nothing else reaches the 
 
 **Try it** starts the project's start command the same way the checks are run (see the verify stage). The person is told that it runs code the factory wrote and no person has read.
 
-**Outcome view**, what the whole team watches: goals, the acceptance list with its three states, plain questions waiting for a person, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. **Engineering view**: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. The outcome view opens first for everyone, and a person can set the engineering view as their own start page. An engineer who wants control takes it on purpose: opens the engineering view, sets a task's dial to guided, or takes the wheel on a ticket. The factory builds the rest.
+**Outcome view**, what the whole team watches: goals, the acceptance list with its three states, plain questions waiting for a person, Try it, Accept, Undo for each change, and the trajectory of each goal. It never uses the words pull request, merge, diff, review, branch or commit, so a product owner or a teammate from another discipline can also read it. **Engineering view**: runs, evidence bundles, decision cards, pull requests, the builder's and reviewer's opinions. In the web app the outcome view is the Floor, Needs you and Goals screens, and the engineering view is Runs and changes and Autonomy (record 0004). The outcome view opens first for everyone, and a person can set the engineering view as their own start page. An engineer who wants control takes it on purpose: opens the engineering view, sets a task's dial to guided, or takes the wheel on a ticket. The factory builds the rest.
 
 ## Lanes and planning
 
@@ -111,7 +111,7 @@ The **unattended contract** is a fixed text placed before any method in every ru
 - A list of trusted logins in `factory.yaml` says whose machines act for the factory. A claim, an answer or an approval from any other login is ignored.
 - A `review` is preferred on a different teammate's machine and harness than the one that built the subject.
 
-**Triggers** act only on events from a trusted person (on the list of trusted logins, with write access), or from the factory itself. An answer or approval from a writer who is not on the list is shown as context and does not count (record 0003). Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer or approval given in the web app is posted with an answer marker and counts as the person's. Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
+**Triggers** act only on events from a trusted person (on the list of trusted logins, with write access), or from the factory itself. An answer or approval from a writer who is not on the list is shown as context and does not count (record 0003). Every comment the factory writes carries a hidden marker with the run id and never triggers a run. An answer given in the web app is posted with an answer marker, and an approval as the label of record 0003. Both count as the person's (record 0004). Kinds: `issueLabeled`, `issueCommented`, `pullRequestOpened`, `pullRequestMerged`, `checkFailed`, `schedule`. On one machine triggers are polled, so no public endpoint is needed.
 
 ## The factory's own repository
 
@@ -303,7 +303,7 @@ One level per unattended task sets where the factory stops for a person after th
 - Exceptions reach a person at every level.
 - The first level of each task is written by `oxf init`, never by `oxf run`. A missing or unreadable level means the task is held (record 0003).
 - `spec.autonomy.ceiling` in the task file sets the highest level. It changes only through the default branch.
-- The current level is stored by the orchestrator and moved in the web app at or below the ceiling. Every change is logged with time and the previous level. On OpenAgentix, platform policy supplies the ceiling and can only lower it.
+- The current level is stored by the orchestrator, per machine, and moved in the web app at or below the ceiling (record 0004). Every change is logged with time and the previous level. On OpenAgentix, platform policy supplies the ceiling and can only lower it.
 
 ## Trust and the attention record
 
@@ -405,8 +405,8 @@ type GitHost interface { /* poll events, read tickets, the fixed publish actions
 - It uses the strictest sandbox setting of the harness that still lets the task run. A deadline always applies, and the process group is killed at it. Runs are designed to be safe to repeat. No trial has cut a run off part way to show it.
 - A cost limit applies only to metered usage. The orchestrator reads usage from the event stream and cancels the run past the limit. This lags, so the web app says "best effort".
 - **Toolchain.** Locally the stages use the compilers on the machine. The container runner names a base image in `factory.yaml` (`image:`). Outbound network is open in both stages.
-- **Demo mode.** A fake git host with a seeded repository and a scripted story, a fake runner and the stub harness. No login, no token. Every screen says it is a demo.
-- **Listening.** On a laptop, localhost. On a dedicated machine `oxf` runs as a service and may listen on the local network. The web app has no user accounts: a login token is needed on any address other than localhost, and always for Accept and Undo.
+- **Demo mode.** A fake git host with a seeded, made-up project and a story that waits for the person, the local runner and the stub harness. No login, no token. Every screen says it is a demo (record 0004).
+- **Listening.** On a laptop, localhost. On a dedicated machine `oxf` runs as a service and may listen on the local network. The web app has no user accounts: every data route needs the login token, on every address, localhost included (record 0004).
 
 ## Configuration
 
@@ -459,11 +459,11 @@ spec:
   concurrencyKey: "issue-{{ .Number }}"
 ```
 
-Machine settings (installed harnesses, the listen address) live in the person's home directory, never in the repository. A value every machine of a team must share, such as the claim expiry, is in `factory.yaml` (record 0003). The two tokens and the login token are kept in the operating system's credential store, never in a task file, never in a plain file, never in the database.
+Machine settings (installed harnesses, the listen address) live in the person's home directory, never in the repository. A value every machine of a team must share, such as the claim expiry, is in `factory.yaml` (record 0003). The two tokens are kept in the operating system's credential store, never in a task file, never in a plain file, never in the database. On localhost the login token is made fresh at each start and never stored; for a service on another address it is kept in the credential store (record 0004).
 
 ## Stack
 
-Go, one binary, with the web app embedded through `go:embed`. SQLite through a pure Go driver, so no C toolchain is needed. The web app is Svelte 5 with runes, SvelteKit as a single-page app, Tailwind 4 with theme tokens, no component kit, a strict content security policy, and live events by server-sent events. The container runner's worker image is built on the person's machine, so the Claude Code binary is never shipped in a public image. Dependencies are MIT or Apache-2.0 only.
+Go, one binary, with the web app embedded through `go:embed`. SQLite through a pure Go driver, so no C toolchain is needed. The web app is Svelte 5 with runes, SvelteKit as a static single-page app, no utility style framework for now with the approved design's CSS variables as the tokens, no component kit, a strict content security policy, and live events by server-sent events read with `fetch` (record 0004). The container runner's worker image is built on the person's machine, so the Claude Code binary is never shipped in a public image. Dependencies are MIT or Apache-2.0 only. Bundled fonts may be under the SIL Open Font Licence 1.1 (record 0004).
 
 ## Name
 
@@ -508,3 +508,5 @@ The sections on the factory's own repository and on how changes are reviewed wer
 This record was consolidated on 2026-11-26, after three independent reviews in a row found contradictions between decisions that had been stacked on each other during one day. Two changes were merged unread on the first day, which showed that a merge button is one more "yes" and led to the design for an engineer who should not have to read every change. Each time, an independent reviewer found the real problems before a person did, which led to the machine gate and the acceptance checks.
 
 On 2026-11-27 record 0003 changed these rules: triggers count only from trusted persons, claims are ordered by comment id with a 2 hour expiry in `factory.yaml`, cut-offs per ticket are limited, a missing dial level means do not run, questions stop their ticket, the run record has new fields, evidence takes worker and usage from the orchestrator, and the propose token may update its own comments and lock a ticket. After a review the same day: `oxf init` writes the first dial levels, claims must name their own machine and run and are always released, `factory:claimed` is a hint only, task files never come from the binary, and `onboard` may not change the team fields of `factory.yaml`.
+
+On 2026-11-27 record 0004 changed these rules: the outcome and engineering views are named screens of the approved design, demo mode uses the local runner and waits for the person, every data route needs the login token on every address, the login token is made fresh at each start on localhost, the dial level is per machine, an approval in the web app is the label of record 0003, and the Stack drops the utility style framework, reads live events with `fetch` and allows bundled fonts under the SIL Open Font Licence 1.1.

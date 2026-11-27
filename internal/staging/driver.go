@@ -124,9 +124,6 @@ func (s *Staging) Rebuild(ctx context.Context) (State, error) {
 func (s *Staging) Undo(ctx context.Context, id string) (State, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.gate(ctx, ""); err != nil {
-		return State{}, nil, err
-	}
 	if frozen, err := s.frozen(ctx); err != nil {
 		return State{}, nil, err
 	} else if frozen {
@@ -136,6 +133,9 @@ func (s *Staging) Undo(ctx context.Context, id string) (State, []string, error) 
 		return State{}, nil, err
 	} else if done {
 		return State{}, nil, ErrNotBuilt
+	}
+	if err := s.gate(ctx, ""); err != nil {
+		return State{}, nil, err
 	}
 	if err := s.cfg.Store.Promote(ctx); err != nil {
 		return State{}, nil, err

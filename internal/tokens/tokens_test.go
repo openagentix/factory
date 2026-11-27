@@ -13,6 +13,7 @@ import (
 )
 
 const goodToken = "ghp_abcdefghijklmnopqrstuvwx"
+const otherToken = "ghp_zyxwvutsrqponmlkjihgfedc"
 const canary = "CANARYtoken0123456789"
 
 type rig struct {
@@ -49,6 +50,12 @@ func (r *rig) read(name string) string {
 	return string(b)
 }
 
+// byRole prints one token for the propose account and another for the accept
+// account, as a real credential store would.
+func byRole(propose, accept string) string {
+	return "touch \"$D/ran\"\ncase \"$*\" in\n*/accept*) printf '%b' '" + accept + "';;\n*) printf '%b' '" + propose + "';;\nesac\n"
+}
+
 func printTok(s string) string { return "touch \"$D/ran\"\nprintf '%b' '" + s + "'\n" }
 
 func TestProposeReadsToken(t *testing.T) {
@@ -80,11 +87,11 @@ func TestArgumentListPerTool(t *testing.T) {
 			t.Error("token in the argument list")
 		}
 	}
-	r := newRig(t, kindSecurity, "echo \"$*\" > \"$D/args\"\n"+printTok(goodToken+`\n`))
+	r := newRig(t, kindSecurity, "echo \"$*\" >> \"$D/args\"\n"+byRole(goodToken+`\n`, otherToken+`\n`))
 	if _, found, err := r.src.Accept(context.Background(), "example/repo"); err != nil || !found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
-	if got := strings.TrimSpace(r.read("args")); !strings.Contains(got, "-a example/repo/accept ") {
+	if got := strings.TrimSpace(r.read("args")); !strings.HasPrefix(got, "find-generic-password -s oxf -a example/repo/accept ") {
 		t.Errorf("args %q", got)
 	}
 }
@@ -313,7 +320,7 @@ func TestAcceptNotFoundRulePerTool(t *testing.T) {
 		{"security 1", kindSecurity, "exit 1", false, true},
 		{"security 45", kindSecurity, "exit 45", false, true},
 		{"security 128", kindSecurity, "exit 128", false, true},
-		{"security found", kindSecurity, printTok(goodToken + `\n`), true, false},
+		{"security found", kindSecurity, byRole(goodToken+`\n`, otherToken+`\n`), true, false},
 		{"security 0 empty", kindSecurity, "exit 0", false, true},
 		{"secret-tool 1 silent", kindSecretTool, "exit 1", false, false},
 		{"secret-tool 1 with stderr", kindSecretTool, "echo 'cannot connect to dbus' >&2\nexit 1", false, true},
@@ -321,7 +328,7 @@ func TestAcceptNotFoundRulePerTool(t *testing.T) {
 		{"secret-tool 2", kindSecretTool, "exit 2", false, true},
 		{"secret-tool 44", kindSecretTool, "exit 44", false, true},
 		{"secret-tool 0 empty", kindSecretTool, "exit 0", false, true},
-		{"secret-tool found", kindSecretTool, printTok(goodToken + `\n`), true, false},
+		{"secret-tool found", kindSecretTool, byRole(goodToken+`\n`, otherToken+`\n`), true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -440,5 +447,62 @@ func TestNothingShowsTheToken(t *testing.T) {
 				t.Errorf("%s: the token shows in %q", name, s)
 			}
 		}
+	}
+}
+
+// Deny by default: one value must never serve as both tokens.
+func TestAcceptRefusesTheProposeToken(t *testing.T) {
+	for _, kind := range []toolKind{kindSecurity, kindSecretTool} {
+		r := newRig(t, kind, printTok(canary+`\n`)) // the same value for both accounts
+		tok, found, err := r.src.Accept(context.Background(), "example/repo")
+		if err == nil || found {
+			t.Fatalf("kind %d: found=%v err=%v", kind, found, err)
+		}
+		for e := error(err); e != nil; e = errors.Unwrap(e) {
+			if strings.Contains(e.Error(), canary) {
+				t.Fatalf("the error shows the token: %v", e)
+			}
+		}
+		if strings.Contains(fmt.Sprintf("%v", tok), canary) {
+			t.Fatal("a token was returned")
+		}
+		// The value is still reported, so that a redact filter holds it.
+		if len(r.secrets) != 1 || r.secrets[0] != canary {
+			t.Fatalf("reported %d secrets", len(r.secrets))
+		}
+	}
+}
+
+// An accept token cannot be checked against a propose token that is missing,
+// so it is not given out.
+func TestAcceptNeedsAReadableProposeToken(t *testing.T) {
+	body := "case \"$*\" in\n*/accept*) printf '%s\\n' '" + otherToken + "';;\n*) exit 44;;\nesac\n"
+	r := newRig(t, kindSecurity, body)
+	_, found, err := r.src.Accept(context.Background(), "example/repo")
+	if err == nil || found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if len(r.secrets) != 0 {
+		t.Fatal("a secret was reported")
+	}
+}
+
+// On macOS only exit status 44 with nothing on standard output is "not found".
+func TestSecurityOnlyStatus44IsNotFound(t *testing.T) {
+	s := newSource("/x", kindSecurity, nil)
+	for code := -1; code <= 255; code++ {
+		want := code == 44
+		if got := s.isNotFound(result{code: code}); got != want {
+			t.Errorf("code %d: isNotFound = %v", code, got)
+		}
+	}
+	for _, code := range []int{1, 36, 45, 51, 128} {
+		r := newRig(t, kindSecurity, fmt.Sprintf("exit %d", code))
+		if _, found, err := r.src.Accept(context.Background(), "example/repo"); err == nil || found {
+			t.Errorf("exit %d: found=%v err=%v", code, found, err)
+		}
+	}
+	if s.isNotFound(result{code: 44, stdout: []byte("x")}) {
+		t.Error("44 with output is not a clean not-found")
 	}
 }

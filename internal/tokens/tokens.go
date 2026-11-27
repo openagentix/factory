@@ -10,6 +10,7 @@ package tokens
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"os"
@@ -177,7 +178,13 @@ func (s *system) isNotFound(r result) bool {
 	case kindSecurity:
 		return r.code == 44 // errSecItemNotFound
 	default:
-		return r.code == 1 && r.stderrBytes == 0 // secret-tool says nothing when it finds nothing
+		// UNVERIFIED: secret-tool exits 1 with no output when nothing matches.
+		// It has not been checked that a dismissed unlock prompt gives
+		// something else. If it also gives exit 1 with no output, it is read
+		// as "no accept token". That fails toward less power: the run has no
+		// accept token and cannot accept anything. For the propose token the
+		// same result is an error.
+		return r.code == 1 && r.stderrBytes == 0
 	}
 }
 
@@ -253,11 +260,24 @@ func (s *system) Propose(ctx context.Context, repository string) (githost.Propos
 	return t, nil
 }
 
-// Accept implements Source.
+// Accept implements Source. It is the only way to read the accept token, and
+// it reads the propose token too: one value must never serve as both, because
+// then a run that may only propose would hold the power to accept. When the
+// propose token cannot be read, or equals the accept token, the accept token is
+// refused. Callers must not add another way around this check.
 func (s *system) Accept(ctx context.Context, repository string) (githost.AcceptToken, bool, error) {
 	tok, found, err := s.fetch(ctx, repository, "accept")
 	if err != nil || !found {
 		return githost.AcceptToken{}, false, err
+	}
+	ptok, pfound, err := s.fetch(ctx, repository, "propose")
+	if err != nil || !pfound {
+		return githost.AcceptToken{}, false, fmt.Errorf("tokens: the accept token of %s is refused because the propose token cannot be read to check that they differ", repository)
+	}
+	s.report(ptok)
+	if subtle.ConstantTimeCompare([]byte(tok), []byte(ptok)) == 1 {
+		// The value was reported above, so a redact filter holds it.
+		return githost.AcceptToken{}, false, fmt.Errorf("tokens: the accept token of %s is refused because it is the same value as the propose token", repository)
 	}
 	t, err := githost.NewAcceptToken(tok)
 	if err != nil {

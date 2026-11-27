@@ -8,8 +8,10 @@ import (
 
 	"github.com/openagentix/factory/internal/acceptance"
 	"github.com/openagentix/factory/internal/api"
+	"github.com/openagentix/factory/internal/floor"
 	"github.com/openagentix/factory/internal/floor/collect"
 	"github.com/openagentix/factory/internal/repo"
+	"github.com/openagentix/factory/internal/runner"
 	"github.com/openagentix/factory/internal/staging"
 	"github.com/openagentix/factory/internal/verify"
 )
@@ -18,18 +20,47 @@ import (
 // What is scripted is the second opinion (see secondOpinion) and the seeded
 // approval of goal 1. The story ends at a waiting point. It never answers a
 // question, says yes or no, approves goal 2 or presses Accept.
+//
+// Each beat that does work says the outcome it expects from the real code,
+// the failing beats too. When the real outcome differs, the story stops with
+// a DivergedError: it never reports a good end for work that did not happen.
 func storyBeats() []beat {
 	return []beat{
 		{"write_checks", beatWriteChecks},
-		{"build_move", ticketBeat("move", 0)},
-		{"checks_fail", ticketBeat("confirm", 0)},
-		{"second_try", ticketBeat("confirm", 1)},
-		{"question", ticketBeat("ask", 0)},
+		{"build_move", ticketBeat("move", 0, OutcomeAdmitted)},
+		{"checks_fail", ticketBeat("confirm", 0, OutcomeCheckFailed)},
+		{"second_try", ticketBeat("confirm", 1, OutcomeAdmitted)},
+		{"question", ticketBeat("ask", 0, OutcomeQuestion)},
 		{"unconfirmed", beatUnconfirmed},
-		{"risk", ticketBeat("staff", 0)},
-		{"taken_out", ticketBeat("ahead", 0)},
+		{"risk", ticketBeat("staff", 0, OutcomeConsequence)},
+		{"taken_out", ticketBeat("ahead", 0, OutcomeTakenOut)},
 		{"offer_accept", beatOfferAccept},
 	}
+}
+
+// Outcome is what the real code did with one job.
+type Outcome string
+
+// The outcomes a beat can expect.
+const (
+	OutcomeAdmitted     Outcome = "admitted"     // passed every stage and is in the holding area
+	OutcomeCheckFailed  Outcome = "check_failed" // the project's checks failed on the change
+	OutcomeQuestion     Outcome = "question"     // the agent asked a person
+	OutcomeConsequence  Outcome = "consequence"  // the gate holds the change for a person
+	OutcomeTakenOut     Outcome = "taken_out"    // added, then taken out by the rebuild
+	OutcomeNotApplied   Outcome = "not_applied"  // passed the gate and is not in the holding area
+	OutcomeNoChange     Outcome = "no_change"
+	OutcomeFailedPrefix Outcome = "failed:" // followed by the end code
+)
+
+// DivergedError says the real outcome of a beat is not the one the story
+// expects.
+type DivergedError struct {
+	Want, Got Outcome
+}
+
+func (e *DivergedError) Error() string {
+	return fmt.Sprintf("the real outcome was %q and the story expects %q", e.Got, e.Want)
 }
 
 func (d *Demo) ticketJob(key string, try int) (job, error) {
@@ -50,22 +81,47 @@ func (d *Demo) ticketJob(key string, try int) (job, error) {
 	return job{}, fmt.Errorf("no ticket %s", key)
 }
 
-func ticketBeat(key string, try int) func(context.Context, *Demo) error {
+func ticketBeat(key string, try int, want Outcome) func(context.Context, *Demo) error {
 	return func(ctx context.Context, d *Demo) error {
 		j, err := d.ticketJob(key, try)
 		if err != nil {
 			return err
 		}
 		res, err := d.work(ctx, j)
-		if err != nil || !res.ok {
-			return err // a failed try, or a question, is a result of the story, not an error
-		}
-		dec, _, err := d.decide(ctx, j, res)
 		if err != nil {
 			return err
 		}
-		return d.admit(ctx, j, res, dec)
+		got, err := d.finish(ctx, j, res)
+		if err != nil {
+			return err
+		}
+		if got != want {
+			return &DivergedError{Want: want, Got: got}
+		}
+		return nil
 	}
+}
+
+// finish takes a job that has run through the gate and into the holding area
+// when it passed, and says what happened.
+func (d *Demo) finish(ctx context.Context, j job, res *result) (Outcome, error) {
+	if res.outcome.Status == runner.StatusNeedsHuman {
+		return OutcomeQuestion, nil
+	}
+	if !res.ok {
+		switch {
+		case res.endCode == floor.CheckFailed:
+			return OutcomeCheckFailed, nil
+		case res.endCode != "":
+			return OutcomeFailedPrefix + Outcome(res.endCode), nil
+		}
+		return OutcomeNoChange, nil
+	}
+	dec, _, err := d.decide(ctx, j, res)
+	if err != nil {
+		return "", err
+	}
+	return d.admit(ctx, j, res, dec)
 }
 
 func beatWriteChecks(ctx context.Context, d *Demo) error {
@@ -91,15 +147,24 @@ func beatWriteChecks(ctx context.Context, d *Demo) error {
 	if err != nil {
 		return err
 	}
-	if err := d.mutate(ctx, func() error {
+	// The facts about the checks are written only after the holding area has
+	// taken them. Until then the staging step reads the source from d.pending.
+	d.mu.Lock()
+	d.pendingSource = map[int]string{goalMove: res.commit}
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); d.pendingSource = nil; d.mu.Unlock() }()
+	got, err := d.admitThen(ctx, j, res, dec, func() {
 		d.led.goal(goalMove, func(g *collect.GoalFacts) {
 			g.AcceptanceSource, g.Baseline, g.ManifestEntry = res.commit, states, res.runID
 		})
-		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
-	return d.admit(ctx, j, res, dec)
+	if got != OutcomeAdmitted {
+		return &DivergedError{Want: OutcomeAdmitted, Got: got}
+	}
+	return nil
 }
 
 // beatUnconfirmed tells the journal about a line the checks could not

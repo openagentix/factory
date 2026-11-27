@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -54,6 +55,29 @@ type Config struct {
 	Hub *server.Hub
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
+	// Deadline is how long one stub run may take. Zero means two minutes.
+	Deadline time.Duration
+}
+
+func (d *Demo) deadline() time.Duration {
+	if d.cfg.Deadline > 0 {
+		return d.cfg.Deadline
+	}
+	return 2 * time.Minute
+}
+
+// stagingHost is the host as staging sees it. A test can make the push of the
+// staging state fail.
+type stagingHost struct {
+	githost.Proposer
+	failPush *atomic.Bool
+}
+
+func (h stagingHost) PushStaging(ctx context.Context, dir, commit string) error {
+	if h.failPush.Load() {
+		return errors.New("demo: the push of the staging state failed")
+	}
+	return h.Proposer.PushStaging(ctx, dir, commit)
 }
 
 // Demo is one running demo.
@@ -82,6 +106,14 @@ type Demo struct {
 	beats    []beat
 	closed   bool
 	reported map[int]bool
+	// pendingSource is the acceptance source of a goal whose checks are being
+	// added to staging. The ledger does not hold it until the add succeeds.
+	// It is read and written under mu.
+	pendingSource map[int]string
+	// jobHook may change a job before it runs. Tests only.
+	jobHook func(*job)
+	// failPush makes the push of the staging state fail. Tests only.
+	failPush atomic.Bool
 }
 
 type beat struct {
@@ -190,10 +222,13 @@ func (d *Demo) setup(ctx context.Context) error {
 		tasks[n] = taskFor(n)
 	}
 	d.stg, err = staging.New(staging.Config{
-		Repo: r, Host: d.host, Accept: d.host, Store: d.stgSt, Factory: d.factory, Tasks: tasks,
+		Repo: r, Host: stagingHost{Proposer: d.host, failPush: &d.failPush}, Accept: d.host, Store: d.stgSt, Factory: d.factory, Tasks: tasks,
 		AllowedTasks: []string{api.TaskImplement, api.TaskFixCI, api.TaskAcceptance},
 		Checks:       taskChecks(),
 		AcceptanceSource: func(_ context.Context, goal int) (string, error) {
+			if src, ok := d.pendingSource[goal]; ok {
+				return src, nil
+			}
 			return d.led.goalFacts(goal).AcceptanceSource, nil
 		},
 		DefaultBranch: "main", Author: author,

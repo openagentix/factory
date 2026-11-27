@@ -59,7 +59,6 @@ func (d *Demo) createRun(ctx context.Context, j job) (string, int, error) {
 	if j.ticket == 0 {
 		n = 1
 	}
-	d.attempt[j.ticket] = n
 	ref := fmt.Sprintf("#%d", j.goal)
 	if j.ticket > 0 {
 		ref = fmt.Sprintf("#%d", j.ticket)
@@ -72,6 +71,7 @@ func (d *Demo) createRun(ctx context.Context, j job) (string, int, error) {
 		if err := d.st.CreateRun(ctx, run); err != nil {
 			return err
 		}
+		d.attempt[j.ticket] = n // counted only once the record exists
 		d.led.run(id, func(r *collect.RunFacts) { r.PhaseSince, r.Deadline = now, 5*time.Minute })
 		return nil
 	})
@@ -133,7 +133,7 @@ func (d *Demo) runAgent(ctx context.Context, id, task string, parent string, scr
 		Harness:     harness.Spec{StubScript: sp},
 		Environ:     d.env,
 		Author:      author,
-		Deadline:    2 * time.Minute,
+		Deadline:    d.deadline(),
 		Grace:       500 * time.Millisecond,
 		Limits:      runner.Limits{PipeWait: 2 * time.Second},
 	}
@@ -153,6 +153,9 @@ func (d *Demo) runAgent(ctx context.Context, id, task string, parent string, scr
 // record follows the real phases. Nothing the agent wrote is trusted: the
 // outcome type decides, and the checks run on the commit the runner made.
 func (d *Demo) work(ctx context.Context, j job) (*result, error) {
+	if d.jobHook != nil {
+		d.jobHook(&j)
+	}
 	id, n, err := d.createRun(ctx, j)
 	if err != nil {
 		return nil, err
@@ -190,9 +193,12 @@ func (d *Demo) work(ctx context.Context, j job) (*result, error) {
 			return d.movePhase(ctx, id, api.PhaseNeedsHuman, nil)
 		})
 	case runner.StatusSucceeded, runner.StatusSucceededNoChange:
+	case runner.StatusTimedOut:
+		res.endCode = floor.Deadline
+		return res, d.setPhase(ctx, id, api.PhaseFailed, func(r *collect.RunFacts) { r.EndReason = floor.Deadline })
 	default:
-		// Failed, timed out, cancelled or unknown: the run failed. The agent's
-		// own words decide nothing.
+		// Failed, cancelled or unknown: the run failed. The agent's own words
+		// decide nothing.
 		res.endCode = floor.BadResult
 		return res, d.setPhase(ctx, id, api.PhaseFailed, func(r *collect.RunFacts) { r.EndReason = floor.BadResult })
 	}
@@ -414,7 +420,15 @@ func (d *Demo) riskReason(cs *verify.ChangeSet) floor.RiskReason {
 // admit records the gate's answer and, for a pass, adds the change to staging
 // and rebuilds it. All of it happens in one change of facts, so no snapshot
 // shows a pass that is not yet applied and has no gate fact, or the reverse.
-func (d *Demo) admit(ctx context.Context, j job, res *result, dec gate.Decision) error {
+// A fact is written only after the call it describes has succeeded. It says
+// what the real code did with the change.
+func (d *Demo) admit(ctx context.Context, j job, res *result, dec gate.Decision) (Outcome, error) {
+	return d.admitThen(ctx, j, res, dec, nil)
+}
+
+// admitThen is admit with facts to write once the holding area has taken the
+// change. They are written in the same change of facts.
+func (d *Demo) admitThen(ctx context.Context, j job, res *result, dec gate.Decision, after func()) (Outcome, error) {
 	ticket := max(j.ticket, j.goal)
 	now := d.now()
 	gi := floor.GateIn{Ticket: ticket, Since: floor.Some(now), Run: res.runID, Attempt: res.attempt, Commit: res.commit, Machine: machineName}
@@ -424,34 +438,55 @@ func (d *Demo) admit(ctx context.Context, j job, res *result, dec gate.Decision)
 	case gate.OutcomeException:
 		gi.Status = floor.GateConsequenceOpen
 		gi.Risk = d.riskReason(res.changed)
-		return d.mutate(ctx, func() error {
+		return OutcomeConsequence, d.mutate(ctx, func() error {
 			d.led.setGate(gi)
 			return nil
 		})
 	default:
-		return fmt.Errorf("the gate said %q", dec.Outcome)
+		return "", fmt.Errorf("the gate said %q", dec.Outcome)
 	}
 	e := staging.Entry{ID: res.runID, Ticket: ticket, Goal: j.goal, Attempt: res.attempt, Task: j.task,
 		Commit: res.commit, Parent: d.def, DependsOn: j.deps, Title: j.title}
-	return d.mutate(ctx, func() error {
+	out := OutcomeNotApplied
+	err := d.mutate(ctx, func() error {
+		st, err := d.stg.Add(ctx, e, dec)
+		if err != nil {
+			return err
+		}
+		// The change is in the holding area. Now the facts about it are true.
 		if j.ticket > 0 {
 			d.led.setGate(gi)
 		}
-		st, err := d.stg.Add(ctx, e, dec)
-		if err != nil {
-			if j.ticket > 0 {
-				d.led.dropGate(j.ticket)
-			}
-			return err
+		if after != nil {
+			after()
 		}
 		d.observe(st, j)
+		for _, a := range st.Applied {
+			if a.EntryID == res.runID {
+				out = OutcomeAdmitted
+			}
+		}
+		for _, r := range st.Removed {
+			if r.EntryID == res.runID {
+				out = OutcomeTakenOut
+			}
+		}
 		return nil
 	})
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 // observe stamps the ledger from a new staging state: when each change was
 // first seen applied or taken out, and the journal. Call it under the write lock.
 func (d *Demo) observe(st staging.State, j job) {
+	if !st.Published {
+		// A state that was recorded but not pushed is not the holding area
+		// yet. Nothing in it counts: not an entry, not a removal.
+		return
+	}
 	now := d.now()
 	for _, a := range st.Applied {
 		if d.led.stampApplied(a.EntryID, now) {

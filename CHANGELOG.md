@@ -8,6 +8,7 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ### Changed
 
+- Decision record 0004 now fixes the replies, the refusal codes and sentences, the idempotency key, the undo preview and the answer text rules for the actions. Design only: the actions are not built.
 - The audience is now small engineering teams first, then larger organisations. Solo founders who are not engineers are not the audience.
 - Team work is part of the core design, and the v0.1 build order has a team basics step.
 - The outcome view opens first for everyone. The engineering view is one deliberate step away.

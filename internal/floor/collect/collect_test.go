@@ -119,3 +119,25 @@ func TestQuestionsOfTakesTheSlotFormOfTheRunMarkerAndOnlyTheFirst(t *testing.T) 
 		t.Fatalf("questions %+v, %v", qs, err)
 	}
 }
+
+// A look-alike run id with the LOWEST comment id is judged first. It must not be
+// the question of run1, and run1's real question is still shown.
+func TestALookAlikeRunMarkerWithTheLowestIDIsNotTheQuestion(t *testing.T) {
+	ctx := context.Background()
+	for _, fake := range []string{"run10", "run1x", "run1.", "run1..", "run1.1.2", "run11"} {
+		h, tk := hostWithTicket(t)
+		if err := h.PostComment(ctx, tk, fake, "Not the question of run1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.PostComment(ctx, tk, "run1", "The real question"); err != nil {
+			t.Fatal(err)
+		}
+		qs, err := questionsOf(ctx, h, tk, 1, "run1", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(qs) != 1 || qs[0].Text != "The real question" {
+			t.Errorf("%s first: questions %+v", fake, qs)
+		}
+	}
+}

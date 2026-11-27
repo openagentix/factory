@@ -51,7 +51,7 @@
                 <button class="btn sm" type="button" aria-expanded={open} onclick={() => app.toggleGoal(g.goal)}>{open ? 'Hide lines' : 'Show lines'}</button>
             {/if}
         </div>
-        {#if open && g.lines !== null}<GoalLines {g} />{/if}
+        {#if open && g.lines !== null}<GoalLines {g} pieces={f.pieces} />{/if}
     </div>
 {/each}
 {#if f.goals.length === 0}

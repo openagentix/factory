@@ -250,3 +250,7 @@ td.num{font-family:var(--f-data);text-align:right} th.num{text-align:right}
 .dreason{font-weight:600}
 .ttl.h2t{font-family:var(--f-sign);font-size:16px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--ink)}
 .box>h2 .ttl{display:inline}
+.bstat .top{flex-wrap:wrap}
+.bstat .cnt,.bstat .top .muted{white-space:nowrap}
+.tag .id span:last-child{white-space:nowrap}
+.small .ttl,.acc-goals .ttl{display:inline}

@@ -1,13 +1,16 @@
 <script lang="ts">
     import Chip from './Chip.svelte';
-    import type { Goal } from './floor';
-    import { sentence } from './text';
+    import type { Goal, Piece } from './floor';
+    import { reasonText, sentence } from './text';
     import { LINE_LOOK } from './view';
 
-    let { g, flat = false }: { g: Goal; flat?: boolean } = $props();
+    let { g, pieces, flat = false }: { g: Goal; pieces: Piece[]; flat?: boolean } = $props();
     // A line's note is a fixed phrase for its code. It needs a ticket to name; without one there is no note.
     function note(l: NonNullable<Goal['lines']>[number]): string | null {
         if (!l.note || l.note.ticket === undefined) return null;
+        // A phrase with try numbers needs the piece itself, which holds them.
+        const p = pieces.find((x) => x.ticket === l.note!.ticket && x.reason?.code === l.note!.code);
+        if (p) return reasonText(p);
         return sentence('reason.' + l.note.code, { piece: 't' + l.note.ticket });
     }
 </script>

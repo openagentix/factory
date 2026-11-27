@@ -35,7 +35,7 @@
             <Pending label="Try it" kind="sm" />
             <Pending label="Undo a change" kind="sm" />
         </div>
-        {#if counts !== null}<div class="pad nopt"><GoalLines {g} flat /></div>{/if}
+        {#if counts !== null}<div class="pad nopt"><GoalLines {g} pieces={f.pieces} flat /></div>{/if}
     </section>
 {/each}
 {#if f.goals.length === 0}

@@ -1,8 +1,11 @@
+//go:build !webapp
+
 // Package web holds the files of the web app that go into the binary.
 //
 // A plain go build embeds only the placeholder page in dist/index.html. The
-// real web app is built into dist by make web (record 0004). The built files
-// are not committed. The API works with the placeholder.
+// real web app is built into dist-app by make web (record 0004) and is embedded
+// instead under the build tag webapp (embed_app.go). The built files are not
+// committed. The API works with the placeholder.
 package web
 
 import (

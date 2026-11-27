@@ -33,33 +33,34 @@ const UI = {
     holding: '{count} in the holding area, ready for you to accept.',
 };
 
-export type SignalView = { lamp: string; word: string; parts: string[]; tone: 'bad' | 'wait' | 'ok' | 'idle' | 'unk' };
+export type Part = { text: string; cls: '' | 'c-bad' | 'c-wait'; bold: boolean };
+export type SignalView = { lamp: string; word: string; parts: Part[]; tone: 'bad' | 'wait' | 'ok' | 'idle' | 'unk' };
 
 /** The words of the status header. Unknown and not-built values are left out, never shown as a number. */
 export function signalView(f: Floor, nowMs: number, stale: boolean): SignalView {
     if (stale || f.signal.lamp === 'unknown') {
         const bad = f.signal.inputs.unknownSources.map((k) => SOURCE_LABEL[k] ?? k);
-        const parts = stale ? [] : bad.length ? [`The factory could not read ${bad.join(', ')}.`] : [];
+        const parts: Part[] = stale ? [] : bad.length ? [{ text: `The factory could not read ${bad.join(', ')}.`, cls: '', bold: false }] : [];
         return { lamp: 'unknown', word: 'could_not_read', parts, tone: 'unk' };
     }
     const i = f.signal.inputs;
-    const parts: string[] = [];
+    const parts: Part[] = [];
     const mv = sentence('signal.moving', { moving: i.moving });
-    if (mv) parts.push(mv);
+    if (mv) parts.push({ text: mv, cls: '', bold: true });
     if (i.movingElsewhere !== null && i.movingElsewhere > 0) {
         const s = sentence('signal.elsewhere', { elsewhere: i.movingElsewhere });
-        if (s) parts.push(s);
+        if (s) parts.push({ text: s, cls: '', bold: false });
     }
     if (i.stuck > 0 && i.oldestStuck) {
         const since = Date.parse(i.oldestStuck.since);
         const s = Number.isNaN(since) ? null : fillUi(UI.stuck, { count: i.stuck, age: nowMs - since, station: i.oldestStuck.station });
-        if (s) parts.push(s);
+        if (s) parts.push({ text: s, cls: 'c-bad', bold: true });
     }
     if (i.waitingForPerson > 0) {
         const s = i.waitingForPerson === 1 ? UI.waits1 : fillUi(UI.waits, { count: i.waitingForPerson });
-        parts.push(s);
+        parts.push({ text: s, cls: 'c-wait', bold: true });
     }
-    if (i.inHoldingArea !== null && i.inHoldingArea > 0) parts.push(fillUi(UI.holding, { count: i.inHoldingArea }));
+    if (i.inHoldingArea !== null && i.inHoldingArea > 0) parts.push({ text: fillUi(UI.holding, { count: i.inHoldingArea }), cls: '', bold: false });
     const tone = f.signal.lamp === 'red' ? 'bad' : f.signal.lamp === 'amber' ? 'wait' : f.signal.lamp === 'green' ? 'ok' : 'idle';
     return { lamp: f.signal.lamp, word: f.signal.word, parts, tone };
 }

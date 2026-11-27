@@ -25,7 +25,7 @@
         {#if app.failed}
             <p>The page could not reach the factory. What follows is the last good snapshot, as of {asOf}.</p>
         {:else if sv.parts.length}
-            <p>{#each sv.parts as part, i (i)}{i ? ' ' : ''}<span class="part">{part}</span>{/each}</p>
+            <p>{#each sv.parts as part, i (i)}{i ? ' ' : ''}{#if part.bold}<b class={part.cls}>{part.text}</b>{:else}<span class={part.cls}>{part.text}</span>{/if}{/each}</p>
         {/if}
         {#if f.signal.inputs.paused && !app.failed}<p class="small muted">The line is paused on this machine.</p>{/if}
     </div>

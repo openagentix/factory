@@ -109,7 +109,7 @@ export class AppState {
         const k = sv.lamp + '|' + sv.word;
         if (k !== this.lastSignal) {
             this.lastSignal = k;
-            this.announce = [lampWord(sv.word) + '.', ...sv.parts].join(' ');
+            this.announce = [lampWord(sv.word) + '.', ...sv.parts.map((p) => p.text)].join(' ');
         }
     }
 

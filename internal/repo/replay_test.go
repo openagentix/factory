@@ -554,3 +554,96 @@ func TestIsAncestorCommitParentsTreeOf(t *testing.T) {
 		}
 	}
 }
+
+// rawCommit writes a commit object with exactly these header lines, in this
+// order, as git hash-object --literally does. It is how a hostile or buggy
+// writer could make a commit that git reads differently from a naive parser.
+func (p *rp) rawCommit(headers ...string) string {
+	p.t.Helper()
+	body := strings.Join(headers, "\n") + "\n\nmessage\n"
+	return p.plumb(body, "hash-object", "-t", "commit", "-w", "--literally", "--stdin")
+}
+
+const (
+	hdrAuthor    = "author A <a@example.invalid> 1 +0000"
+	hdrCommitter = "committer A <a@example.invalid> 1 +0000"
+)
+
+func TestCommitHeadersAreReadInGitsOwnOrder(t *testing.T) {
+	p := newRP(t)
+	ctx := context.Background()
+	base := p.commit("", f("f", lines3))
+	other := p.commit("", f("o", "o\n"))
+	tree := p.tree(base)
+	onto := p.commit(base, f("g", "g\n"))
+
+	// What git itself says about the crafted commit: no parent.
+	crafted := p.rawCommit("tree "+tree, hdrAuthor, hdrCommitter, "parent "+base)
+	if got := p.plumb("", "rev-list", "--parents", "-n1", crafted); got != crafted {
+		t.Fatalf("setup: git says %q", got)
+	}
+	bad := map[string]string{
+		"parent after committer":  crafted,
+		"parent after author":     p.rawCommit("tree "+tree, hdrAuthor, "parent "+base, hdrCommitter),
+		"duplicate tree":          p.rawCommit("tree "+tree, "tree "+tree, hdrAuthor, hdrCommitter),
+		"duplicate author":        p.rawCommit("tree "+tree, hdrAuthor, hdrAuthor, hdrCommitter),
+		"duplicate committer":     p.rawCommit("tree "+tree, hdrAuthor, hdrCommitter, hdrCommitter),
+		"tree not first":          p.rawCommit(hdrAuthor, "tree "+tree, hdrCommitter),
+		"unknown header early":    p.rawCommit("tree "+tree, "x-evil foo", hdrAuthor, hdrCommitter),
+		"unknown header late":     p.rawCommit("tree "+tree, hdrAuthor, hdrCommitter, "x-evil foo"),
+		"no author":               p.rawCommit("tree "+tree, hdrCommitter),
+		"no committer":            p.rawCommit("tree "+tree, hdrAuthor),
+		"committer before author": p.rawCommit("tree "+tree, hdrCommitter, hdrAuthor),
+		"parent is not an id":     p.rawCommit("tree "+tree, "parent HEAD", hdrAuthor, hdrCommitter),
+	}
+	for name, c := range bad {
+		if got, err := p.r.CommitParents(ctx, c); err == nil {
+			t.Errorf("%s: CommitParents = %v, want an error", name, got)
+		}
+		if got, err := p.r.TreeOf(ctx, c); err == nil {
+			t.Errorf("%s: TreeOf = %q, want an error", name, got)
+		}
+	}
+	// As the change of a replay the crafted commit is refused, not replayed
+	// as a child of base.
+	if got, out, err := replay(t, p, onto, crafted, base); err == nil || got != "" || out != ReplayUnknown {
+		t.Errorf("Replay of the crafted commit: %q %v %v", got, out, err)
+	}
+
+	// Normal, root and merge commits read as before.
+	if ps, err := p.r.CommitParents(ctx, onto); err != nil || len(ps) != 1 || ps[0] != base {
+		t.Errorf("normal: %v %v", ps, err)
+	}
+	if ps, err := p.r.CommitParents(ctx, base); err != nil || len(ps) != 0 {
+		t.Errorf("root: %v %v", ps, err)
+	}
+	m := p.commitMerge(base, other, f("m", "m\n"))
+	if ps, err := p.r.CommitParents(ctx, m); err != nil || len(ps) != 2 || ps[0] != base || ps[1] != other {
+		t.Errorf("merge: %v %v", ps, err)
+	}
+
+	// Headers after the committer that git itself writes: a signed commit.
+	// They do not change what git calls a parent, so a signed onto or a signed
+	// commit can be read. A change with one is refused: the factory's own
+	// import never writes one.
+	sig := "gpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----"
+	signed := p.rawCommit("tree "+tree, "parent "+other, hdrAuthor, hdrCommitter, sig)
+	if ps, err := p.r.CommitParents(ctx, signed); err != nil || len(ps) != 1 || ps[0] != other {
+		t.Errorf("signed: %v %v", ps, err)
+	}
+	if tr, err := p.r.TreeOf(ctx, signed); err != nil || tr != tree {
+		t.Errorf("signed TreeOf: %q %v", tr, err)
+	}
+	for _, extra := range []string{sig, "encoding ISO-8859-1", "mergetag object " + base + "\n type commit"} {
+		c := p.rawCommit("tree "+p.tree(onto), "parent "+base, hdrAuthor, hdrCommitter, extra)
+		if got, out, err := replay(t, p, onto, c, base); err == nil || got != "" || out != ReplayUnknown {
+			t.Errorf("Replay of a change with %.12q: %q %v %v", extra, got, out, err)
+		}
+	}
+	// A signed onto is fine as the base to replay on.
+	signedOnto := p.rawCommit("tree "+p.tree(onto), "parent "+base, hdrAuthor, hdrCommitter, sig)
+	change := p.commit(base, f("h", "h\n"))
+	if _, out, err := replay(t, p, signedOnto, change, base); err != nil || out != ReplayApplied {
+		t.Errorf("signed onto: %v %v", out, err)
+	}
+}

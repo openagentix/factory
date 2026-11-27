@@ -59,7 +59,9 @@ const emptyTreeID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // Replay applies one change onto another base, with no working directory and
 // no index, and returns the id of a new commit whose only parent is onto.
 // change is a commit with exactly one parent, and that parent must be
-// wantParent: the merge base is wantParent, so the diff that is applied is
+// wantParent. Its headers must be tree, parent, author and committer in that
+// order and nothing else (a signed change is refused, as the factory's own
+// import writes no signature; onto may be signed): the merge base is wantParent, so the diff that is applied is
 // the diff from wantParent to change and no other. onto, change and
 // wantParent must be full lower case hex ids of commits that exist. A ref
 // name, an abbreviation or a revision expression is refused before git sees
@@ -122,7 +124,7 @@ func (r *Repo) Replay(ctx context.Context, onto, change, wantParent string, auth
 			return "", ReplayUnknown, err
 		}
 	}
-	_, parents, err := r.readCommit(ctx, change)
+	_, parents, err := r.readCommit(ctx, change, false)
 	if err != nil {
 		return "", ReplayUnknown, err
 	}
@@ -150,7 +152,7 @@ func (r *Repo) Replay(ctx context.Context, onto, change, wantParent string, auth
 	if !isFullID(tree) || string(out) != tree+"\n" {
 		return "", ReplayUnknown, errors.New("git merge-tree did not answer with one tree id")
 	}
-	ontoTree, _, err := r.readCommit(ctx, onto)
+	ontoTree, _, err := r.readCommit(ctx, onto, true)
 	if err != nil {
 		return "", ReplayUnknown, err
 	}
@@ -206,31 +208,61 @@ func (r *Repo) mustBeCommit(ctx context.Context, id string) error {
 	return nil
 }
 
+// extraHeaders are the headers git itself may write after the committer line.
+var extraHeaders = map[string]bool{"gpgsig": true, "gpgsig-sha256": true, "encoding": true, "mergetag": true}
+
 // readCommit returns the tree and the parents of a commit that mustBeCommit
-// accepted, from the headers of the commit object.
-func (r *Repo) readCommit(ctx context.Context, id string) (tree string, parents []string, err error) {
+// accepted, from the headers of the commit object. The headers are read in the
+// order git reads them, and only in that order: one tree line, then any number
+// of parent lines, then one author line, then one committer line. Git counts
+// only the parent lines that directly follow the tree, so a parent line in
+// another place is an error here, never a parent. After the committer line
+// only the headers git itself writes are allowed (gpgsig, gpgsig-sha256,
+// encoding, mergetag, with their continuation lines), and only if allowExtra
+// is true. Anything else is an error.
+func (r *Repo) readCommit(ctx context.Context, id string, allowExtra bool) (tree string, parents []string, err error) {
 	out, err := runGit(ctx, r.dir, "cat-file", "commit", id)
 	if err != nil {
 		return "", nil, err
 	}
 	head, _, _ := strings.Cut(string(out), "\n\n")
-	for _, line := range strings.Split(head, "\n") {
-		key, val, _ := strings.Cut(line, " ")
-		switch key {
-		case "tree":
-			if tree != "" || !isFullID(val) {
-				return "", nil, errors.New("the commit object has a bad tree header")
+	bad := func(what string) (string, []string, error) {
+		return "", nil, fmt.Errorf("the commit object has %s", what)
+	}
+	// stage: 0 want tree, 1 parents or author, 2 want committer, 3 extras.
+	stage := 0
+	inExtra := false
+	for _, line := range strings.Split(strings.TrimSuffix(head, "\n"), "\n") {
+		if strings.HasPrefix(line, " ") {
+			if stage == 3 && inExtra {
+				continue
 			}
-			tree = val
-		case "parent":
+			return bad("a continuation line in a place git does not allow it")
+		}
+		key, val, _ := strings.Cut(line, " ")
+		switch {
+		case stage == 0 && key == "tree":
 			if !isFullID(val) {
-				return "", nil, errors.New("the commit object has a bad parent header")
+				return bad("a bad tree header")
+			}
+			tree, stage = val, 1
+		case stage == 1 && key == "parent":
+			if !isFullID(val) {
+				return bad("a bad parent header")
 			}
 			parents = append(parents, val)
+		case stage == 1 && key == "author":
+			stage = 2
+		case stage == 2 && key == "committer":
+			stage = 3
+		case stage == 3 && allowExtra && extraHeaders[key]:
+			inExtra = true
+		default:
+			return bad(fmt.Sprintf("the header %q where git does not allow it", Visible(key, 40)))
 		}
 	}
-	if tree == "" {
-		return "", nil, errors.New("the commit object has no tree header")
+	if stage < 3 {
+		return bad("no tree, author and committer headers in order")
 	}
 	return tree, parents, nil
 }
@@ -295,7 +327,7 @@ func (r *Repo) CommitParents(ctx context.Context, commit string) ([]string, erro
 	if err := r.mustBeCommit(ctx, commit); err != nil {
 		return nil, err
 	}
-	_, parents, err := r.readCommit(ctx, commit)
+	_, parents, err := r.readCommit(ctx, commit, true)
 	return parents, err
 }
 
@@ -308,6 +340,6 @@ func (r *Repo) TreeOf(ctx context.Context, commit string) (string, error) {
 	if err := r.mustBeCommit(ctx, commit); err != nil {
 		return "", err
 	}
-	tree, _, err := r.readCommit(ctx, commit)
+	tree, _, err := r.readCommit(ctx, commit, true)
 	return tree, err
 }

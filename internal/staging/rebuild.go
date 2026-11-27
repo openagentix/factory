@@ -51,22 +51,6 @@ func (s *Staging) readDefault(ctx context.Context) (string, error) {
 	return c, nil
 }
 
-// readStagingRef reads the staging ref of the factory repository. A ref that
-// does not exist is ZeroID. A repository that is not trusted is an error.
-func (s *Staging) readStagingRef(ctx context.Context) (string, error) {
-	c, err := s.cfg.Repo.Resolve(ctx, repo.StagingRef)
-	if err != nil {
-		if s.infra(ctx, err) {
-			return "", err
-		}
-		return repo.ZeroID, nil
-	}
-	if !commitRE.MatchString(c) {
-		return "", errors.New("staging: the staging ref does not name a commit by its full id")
-	}
-	return c, nil
-}
-
 // runState is what one rebuild knows while it runs.
 type runState struct {
 	def        string
@@ -438,7 +422,7 @@ func (s *Staging) record(ctx context.Context, st State, oldRef, def string) (Sta
 		return State{}, false, err
 	}
 	if cur != oldRef {
-		return State{}, false, &repo.RefConflictError{Ref: repo.StagingRef, Expected: oldRef, Actual: cur}
+		return State{}, false, stagingConflict(oldRef, cur)
 	}
 	seq, err := s.cfg.Store.SaveState(ctx, st)
 	if err != nil {

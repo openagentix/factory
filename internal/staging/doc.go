@@ -48,7 +48,23 @@
 //   - After an Accept the caller must fetch the default branch into the mirror
 //     ref before the next rebuild. Until then Rebuild returns ErrMirrorBehind.
 //   - Undo after Accept is not built (ErrNotBuilt).
-//   - A change whose commit cannot be read for a reason that is not the
-//     repository guard or the context is taken out as bad, also when the cause
-//     was a passing fault of git.
+//   - A change is taken out as bad only for the two definite answers of
+//     package repo (repo.ErrReplayParent and repo.ErrReplayGitlink). Any other
+//     error is returned and nothing is recorded. Add tries the change once on
+//     the default commit first, so a commit that is missing or that Replay
+//     refuses without a typed error is refused at Add and never stored.
+//   - Each Add costs one rebuild of the whole list: every change is replayed
+//     and checked again. Config.MaxEntries (default 50) limits the list.
+//     Batching is a later change.
+//   - When a step cannot be exported for the task checks (too many entries,
+//     too large, a name collision), package repo and package verify give no
+//     typed error, so it is a machine fault: the rebuild fails and records
+//     nothing. Undo of a change is the way out.
+//   - A merge of the staging pull request that the factory did not start is
+//     noticed by Resolve, which always reads the remembered pull request. At
+//     the commit of a published state it accepts that state. Anywhere else it
+//     is an exception: Add, Rebuild, Undo and Accept return ErrMergedUnseen
+//     until a person calls ClearException.
+//   - A process of the same user can still move the mirror ref to a descendant
+//     of the default commit during a rebuild, and the rebuild will follow it.
 package staging

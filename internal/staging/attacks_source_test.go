@@ -14,7 +14,7 @@ import (
 	"github.com/openagentix/factory/internal/api"
 )
 
-// Attack 29: only the publish step of this package writes staging. The test
+// Attack 29, strengthened by fix 10: only the publish step of this package writes staging. The test
 // parses every non-test source file of the module. Nothing outside
 // internal/staging/publish.go calls PushStaging or hands the staging ref to
 // SetRef, and publish.go does both, so the test cannot pass by finding
@@ -28,9 +28,7 @@ func TestAttack29_OnlyPublishWritesStaging(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Fatalf("not the module root: %v", err)
 	}
-	stagingNames := map[string]bool{"StagingRef": true, "StagingBranch": true}
-	stagingStrings := []string{"factory-staging"}
-	type hit struct{ file, what string }
+	type hit = stagingHit
 	var hits []hit
 	files := 0
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -47,55 +45,15 @@ func TestAttack29_OnlyPublishWritesStaging(t *testing.T) {
 		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			return nil
 		}
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, p, nil, 0)
+		src, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
 		files++
 		rel, _ := filepath.Rel(root, p)
-		rel = filepath.ToSlash(rel)
-		ast.Inspect(f, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			var name string
-			switch fn := call.Fun.(type) {
-			case *ast.SelectorExpr:
-				name = fn.Sel.Name
-			case *ast.Ident:
-				name = fn.Name
-			}
-			switch name {
-			case "PushStaging":
-				hits = append(hits, hit{rel, "PushStaging"})
-			case "SetRef":
-				for _, a := range call.Args {
-					ast.Inspect(a, func(m ast.Node) bool {
-						switch v := m.(type) {
-						case *ast.SelectorExpr:
-							if stagingNames[v.Sel.Name] {
-								hits = append(hits, hit{rel, "SetRef(" + v.Sel.Name + ")"})
-							}
-						case *ast.Ident:
-							if stagingNames[v.Name] {
-								hits = append(hits, hit{rel, "SetRef(" + v.Name + ")"})
-							}
-						case *ast.BasicLit:
-							for _, s := range stagingStrings {
-								if strings.Contains(v.Value, s) {
-									hits = append(hits, hit{rel, "SetRef(" + v.Value + ")"})
-								}
-							}
-						}
-						return true
-					})
-				}
-			}
-			return true
-		})
-		return nil
+		found, err := scanStagingUse(filepath.ToSlash(rel), src)
+		hits = append(hits, found...)
+		return err
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,12 +63,13 @@ func TestAttack29_OnlyPublishWritesStaging(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, h := range hits {
-		if h.file != "internal/staging/publish.go" {
-			t.Errorf("%s calls %s", h.file, h.what)
+		// Package repo defines the staging ref and checks it in SetRef.
+		if h.file != "internal/staging/publish.go" && !(h.what == "StagingRef" && strings.HasPrefix(h.file, "internal/repo/")) {
+			t.Errorf("%s uses %s", h.file, h.what)
 		}
 		seen[h.what] = true
 	}
-	if !seen["PushStaging"] || !seen["SetRef(StagingRef)"] {
+	if !seen["PushStaging"] || !seen["StagingRef"] {
 		t.Errorf("the publish step was not found, so this test proves nothing: %v", hits)
 	}
 }
@@ -160,5 +119,69 @@ func TestImplementChangeMayNotTouchAcceptancePath(t *testing.T) {
 	st := f.rebuild()
 	if len(st.Applied) != 0 || removedIDs(st.Removed)["run-1"] != RemovedProtectedPath {
 		t.Fatalf("%+v", st)
+	}
+}
+
+type stagingHit struct{ file, what string }
+
+// scanStagingUse finds every use of the identifier PushStaging and of the
+// identifier StagingRef in one source file: a call, a method value, a value
+// held in a variable, a slice or an alias. The names that declare them (a
+// function, an interface method, a constant) are not uses.
+func scanStagingUse(rel string, src []byte) ([]stagingHit, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, rel, src, 0)
+	if err != nil {
+		return nil, err
+	}
+	declared := map[*ast.Ident]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.FuncDecl:
+			declared[v.Name] = true
+		case *ast.ValueSpec:
+			for _, id := range v.Names {
+				declared[id] = true
+			}
+		case *ast.InterfaceType:
+			for _, m := range v.Methods.List {
+				for _, id := range m.Names {
+					declared[id] = true
+				}
+			}
+		}
+		return true
+	})
+	var hits []stagingHit
+	ast.Inspect(f, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && !declared[id] && (id.Name == "PushStaging" || id.Name == "StagingRef") {
+			hits = append(hits, stagingHit{rel, id.Name})
+		}
+		return true
+	})
+	return hits, nil
+}
+
+// Fix 10: the scan sees a method value, the staging ref held in a variable and
+// an alias, and does not see a declaration. A staging ref name built from
+// pieces of string ("factory-" + "staging") cannot be caught this way: only
+// the guard in package repo and the host stand behind that.
+func TestFix10_ScanSeesMethodValuesAndVariables(t *testing.T) {
+	t.Parallel()
+	bad := map[string]string{
+		"method value":   "package x\nfunc f(h interface{ PushStaging() }) { g := h.PushStaging; g() }\n",
+		"ref variable":   "package x\nimport \"github.com/openagentix/factory/internal/repo\"\nvar ref = repo.StagingRef\n",
+		"ref in a slice": "package x\nimport \"github.com/openagentix/factory/internal/repo\"\nvar refs = []string{repo.StagingRef}\n",
+		"function value": "package x\nfunc f(h interface{ PushStaging() }) { _ = h.PushStaging }\n",
+	}
+	for name, src := range bad {
+		hits, err := scanStagingUse("x/x.go", []byte(src))
+		if err != nil || len(hits) == 0 {
+			t.Errorf("%s: not seen: %v %v", name, hits, err)
+		}
+	}
+	fine := "package x\ntype H interface{ PushStaging() }\ntype T struct{}\nfunc (T) PushStaging() {}\nconst StagingRef = \"x\"\n"
+	if hits, err := scanStagingUse("x/x.go", []byte(fine)); err != nil || len(hits) != 0 {
+		t.Errorf("declarations were taken for uses: %v %v", hits, err)
 	}
 }

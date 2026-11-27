@@ -60,7 +60,7 @@ From the operating system's own credential tool, behind one interface, with no n
 - The tool gets a fixed, small environment. On Linux it gets no `HOME`.
 - On macOS only exit status 44 with no output means "not stored". On Linux exit status 1 with no output and no error text means "not stored". Anything else is a failure.
 
-**Directories.** Every directory above the config directory and the data directory is checked. It must belong to the user or to root. One that the group or others can write to is refused unless it has the sticky bit. A symbolic link is refused unless root owns it. The config directory and the data directory are never links. `webPort` is written as a plain decimal number with no leading zero.
+**Directories.** Every directory above the config directory and the data directory is checked. It must belong to the user or to root. One that others can write to is refused unless it has the sticky bit. One that its group can write to is also refused, with two exceptions: it has the sticky bit, or it belongs to the user and the group is the user's own private group, which has the same name as the user. A symbolic link is refused unless root owns it. The config directory and the data directory are never links. `webPort` is written as a plain decimal number with no leading zero.
 
 **Redaction.** The filter knows the token values read at start. It replaces them in text and in streams, also when a value is split across writes. It does not know encoded forms of a token, such as base64. A token read later is not known to a stream that was opened earlier, so streams are opened after the tokens are read.
 
@@ -286,7 +286,7 @@ A commit a teammate's machine makes is signed off in that teammate's own name, f
 
 - Designed. Built and tested so far: the machine settings file with its locks, the token source and the redaction filter. Nothing uses them yet, and no rule here is tested by a run on a real repository. The token source has been tested with a fake tool only, never with the real credential tool.
 - On Linux, "not stored" is told from a failure only by exit status 1 with no output. Whether a dismissed unlock prompt looks the same is not checked. If it does, it reads as "no accept token", which gives less power.
-- A home directory that its group can write to is refused. The message names the directory.
+- A directory above the settings or the data that a shared group can write to is refused. The message names the directory.
 - One `oxf` per user and one run at a time: work is serial, one repository per machine.
 - **A hostile agent running as the same user can read the propose token through the credential tool.** With it, it can do anything the token's trusted login can do on the host: approve, answer, claim, release, add or remove a label. It could also run `oxf init` itself. Running `oxf` under its own operating system user, or on a dedicated machine, narrows this. Neither is built. Later **(call)**: a dedicated factory account for the token, which is not itself trusted for approvals and answers.
 - The cut-off limit holds against an agent that stops the factory. It does not hold against one that also takes the token, because it can remove the label as the token's user. Deleting the store also loses the count.

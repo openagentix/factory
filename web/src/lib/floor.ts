@@ -165,3 +165,29 @@ export type Floor = {
     calls: Call[];
     log: JournalEntry[];
 };
+
+// ---- GET /api/v1/pieces/{id} and GET /api/v1/changes/{id}/undo-preview ----
+
+/** The change a person may take back, and the state the offer was made on. `change` is an entry id: it is never shown. */
+export type UndoRef = { change: string; stagingSeq: number; commit: string };
+
+export type PieceDetail = {
+    schemaVersion: 1;
+    mode: Mode;
+    generatedAt: string;
+    piece: Piece;
+    route: { station: StationNo; at: string | null }[];
+    rulings: Untrusted[];
+    unconfirmed: Untrusted[];
+    undo: UndoRef | null;
+};
+
+/** What leaves with one change. `alsoRemoved` holds entry ids and is sent back as it is; the person sees only ticket numbers. */
+export type UndoPreview = {
+    mode: Mode;
+    change: string;
+    stagingSeq: number;
+    commit: string;
+    alsoRemoved: string[];
+    tickets: { change: string; ticket: number }[];
+};

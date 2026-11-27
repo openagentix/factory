@@ -7,7 +7,7 @@ const LAMPS = ['red', 'amber', 'green', 'off', 'unknown'] as const;
 const WORD_OF: Record<string, readonly string[]> = {
     unknown: ['could_not_read'], red: ['stuck'], amber: ['needs_a_person'], green: ['running'], off: ['paused', 'idle'],
 };
-const MODES = ['demo', 'live', 'unknown'];
+export const MODES = ['demo', 'live', 'unknown'];
 const SOURCES = ['host', 'store', 'staging', 'gate', 'acceptance', 'trajectory', 'team', 'config'];
 const SOURCE_STATES = ['ok', 'not_built', 'read_failed'];
 const STATION_KEYS = ['plan', 'write_checks', 'build', 'check', 'second_opinion', 'holding_area', 'accepted'];
@@ -17,8 +17,8 @@ const BAY_STATES = ['stuck', 'waiting_person', 'working', 'waiting_machine', 're
 const GAUGE_KEYS = ['in_work', 'accepted_today', 'right_first_time', 'goal_to_holding', 'attention'];
 const GAUGE_STATES = ['ok', 'not_enough_yet', 'not_built', 'read_failed'];
 const WINDOWS = ['now', 'today', '7d', '30d'];
-const PIECE_KINDS = ['plan', 'checks', 'ticket'];
-const PIECE_STATES = ['working', 'waiting_machine', 'waiting_person', 'stuck', 'ready'];
+export const PIECE_KINDS = ['plan', 'checks', 'ticket'];
+export const PIECE_STATES = ['working', 'waiting_machine', 'waiting_person', 'stuck', 'ready'];
 const LANES = ['quick', 'standard'];
 const COURSES = ['on_course', 'drifting', 'off_course', 'not_started'];
 const LINE_STATES = ['working', 'not_working', 'could_not_confirm'];
@@ -27,46 +27,46 @@ const CALL_WHO = ['anyone_trusted', 'this_machine', 'a_developer'];
 const ACTIONS = ['answer', 'yes', 'no', 'approve', 'accept', 'cancel'];
 
 const MAX_PIECES = 2000, MAX_CALLS = 500, MAX_GOALS = 200, MAX_LOG = 200, MAX_LINES = 100, MAX_SERIES = 31;
-const MAX_TITLE = 600, MAX_QUESTION = 20000, MAX_INT = 1_000_000_000;
+export const MAX_TITLE = 600, MAX_QUESTION = 20000, MAX_INT = 1_000_000_000;
 // internal/floor/fact.go: maxFactNumber is 1 << 31, and a number up to it is allowed.
 const MAX_FACT = 2 ** 31;
 const MAX_STATION_COUNT = 1_000_000; // station 07 counts a day's changes
 const MIN_TIME = Date.UTC(2020, 0, 1), MAX_TIME = Date.UTC(2100, 0, 1);
 const FUTURE_SLACK = 60_000;
 
-const PIECE_ID = /^[tpk][0-9]{1,9}$/;
-const CALL_ID = /^[A-Za-z0-9_-]{1,80}$/;
-const RUN_ID = /^[A-Za-z0-9_]{1,64}$/;
+export const PIECE_ID = /^[tpk][0-9]{1,9}$/;
+export const CALL_ID = /^[A-Za-z0-9_-]{1,80}$/;
+export const RUN_ID = /^[A-Za-z0-9_]{1,64}$/;
 const CODE = /^[a-z_]{1,40}$/;
-const MACHINE = /^[A-Za-z0-9._-]{1,64}$/;
+export const MACHINE = /^[A-Za-z0-9._-]{1,64}$/;
 const REPO = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
 const STORY = /^[a-z0-9_]{0,40}$/;
 const COMMIT = /^[0-9a-f]{7,64}$/;
 const FACT_KEY = /^[a-z][A-Za-z]{0,19}$/;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
-class Bad extends Error {}
+export class Bad extends Error {}
 const fail = (): never => {
     throw new Bad();
 };
-const ok = (c: boolean): void => {
+export const ok = (c: boolean): void => {
     if (!c) fail();
 };
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const obj = (v: unknown): Obj => (isObj(v) ? v : (fail() as never));
+export const obj = (v: unknown): Obj => (isObj(v) ? v : (fail() as never));
 const has = (o: Obj, k: string): boolean => Object.hasOwn(o, k);
 const get = (o: Obj, k: string): unknown => (has(o, k) ? o[k] : undefined);
-const arr = (v: unknown, max: number): unknown[] => {
+export const arr = (v: unknown, max: number): unknown[] => {
     ok(Array.isArray(v) && v.length <= max);
     return v as unknown[];
 };
-const oneOf = (v: unknown, set: readonly string[]): string => {
+export const oneOf = (v: unknown, set: readonly string[]): string => {
     ok(typeof v === 'string' && set.includes(v));
     return v as string;
 };
-const int = (v: unknown, max = MAX_INT): number => {
+export const int = (v: unknown, max = MAX_INT): number => {
     ok(typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= max);
     return v as number;
 };
@@ -74,29 +74,29 @@ const bool = (v: unknown): boolean => {
     ok(typeof v === 'boolean');
     return v as boolean;
 };
-const str = (v: unknown, re: RegExp): string => {
+export const str = (v: unknown, re: RegExp): string => {
     ok(typeof v === 'string' && re.test(v));
     return v as string;
 };
-const nullable = <T,>(v: unknown, f: (x: unknown) => T): T | null => (v === null ? null : f(v));
+export const nullable = <T,>(v: unknown, f: (x: unknown) => T): T | null => (v === null ? null : f(v));
 const optional = <T,>(o: Obj, k: string, f: (x: unknown) => T): void => {
     if (has(o, k)) f(o[k]);
 };
 
-function time(v: unknown): number {
+export function time(v: unknown): number {
     ok(typeof v === 'string' && v.length <= 40 && RFC3339.test(v));
     const t = Date.parse(v as string);
     ok(!Number.isNaN(t) && t >= MIN_TIME && t <= MAX_TIME);
     return t;
 }
 
-function untrusted(v: unknown, max: number): void {
+export function untrusted(v: unknown, max: number): void {
     const o = obj(v);
     ok(typeof o.text === 'string' && (o.text as string).length <= max);
     bool(o.truncated);
 }
 
-function reason(v: unknown): void {
+export function reason(v: unknown): void {
     const o = obj(v);
     str(o.code, CODE);
     for (const k of ['count', 'attempt', 'maxAttempts']) optional(o, k, (x) => int(x, 1000));

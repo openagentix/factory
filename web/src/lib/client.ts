@@ -71,7 +71,15 @@ export type ClientOptions = {
 /** How a write ended. A 200 or a 202 is "ok"; anything else carries the server's fixed code. Status 0 means no answer. */
 export type WriteResult = { ok: true; status: number; result: 'done' | 'pending' | 'running' } | { ok: false; status: number; code: string };
 
-export type Client = { stop(): void; refresh(): void; write(path: string, body: unknown, idemKey: string): Promise<WriteResult> };
+/** How a read ended: the parsed body of a 200, or the server's fixed code. Status 0 means no answer. */
+export type ReadResult = { ok: true; body: unknown } | { ok: false; status: number; code: string };
+
+export type Client = {
+    stop(): void;
+    refresh(): void;
+    write(path: string, body: unknown, idemKey: string): Promise<WriteResult>;
+    read(path: string): Promise<ReadResult>;
+};
 
 const BACKOFF_START = 1000;
 const BACKOFF_MAX = 30000;
@@ -245,7 +253,32 @@ export function startClient(o: ClientOptions): Client {
         return out;
     }
 
+    // A read of one thing, like a piece or an undo preview. It changes nothing on the screen by itself.
+    async function read(path: string): Promise<ReadResult> {
+        try {
+            const r = await o.fetch(path, { headers: authHeaders(o.key), cache: 'no-store', credentials: 'omit', redirect: 'error' });
+            if (stopped) return { ok: false, status: 0, code: 'unreachable' };
+            if (r.status === 401) {
+                stop();
+                o.onFailure('denied');
+                return { ok: false, status: 401, code: 'unauthorized' };
+            }
+            let j: unknown = null;
+            try {
+                j = await r.json();
+            } catch {
+                /* a reply with no body */
+            }
+            if (r.status === 200) return { ok: true, body: j };
+            const rec = j !== null && typeof j === 'object' ? (j as Record<string, unknown>) : {};
+            const code = typeof rec.error === 'string' && /^[a-z_]{1,40}$/.test(rec.error) ? rec.error : 'internal';
+            return { ok: false, status: r.status, code };
+        } catch {
+            return { ok: false, status: 0, code: 'unreachable' };
+        }
+    }
+
     refresh();
     void stream();
-    return { stop, refresh, write };
+    return { stop, refresh, write, read };
 }

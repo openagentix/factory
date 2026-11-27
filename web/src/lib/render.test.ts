@@ -163,12 +163,12 @@ describe('demo marking', () => {
 });
 
 describe('screens', () => {
-    it('Needs you lists every call. The three built actions are live when the call lists them, the rest say Not built yet', async () => {
+    it('Needs you lists every call. The built actions are live when the call lists them, the rest say Not built yet', async () => {
         const { container } = await mount(FIXTURES.demo, 'needs-you');
         expect(container.querySelectorAll('.call')).toHaveLength(4);
         const buttons = [...container.querySelectorAll<HTMLButtonElement>('.call button')];
-        expect(buttons.map(text)).toEqual(expect.arrayContaining(['Approve the plan', 'Keep planning', 'Send answer', 'Accept', 'Try it', 'Undo a change', 'Yes, that is what I want', 'No, send it back']));
-        const live = ['Approve the plan', 'Send answer', 'Yes, that is what I want', 'No, send it back'];
+        expect(buttons.map(text)).toEqual(expect.arrayContaining(['Approve the plan', 'Keep planning', 'Send answer', 'Accept', 'Try it', 'Yes, that is what I want', 'No, send it back']));
+        const live = ['Approve the plan', 'Send answer', 'Yes, that is what I want', 'No, send it back', 'Accept'];
         for (const b of buttons) {
             if (live.includes(text(b))) {
                 expect(b.disabled, text(b)).toBe(false);
@@ -340,7 +340,7 @@ describe('keyboard and the drawer', () => {
         expect(dlg.contains(document.activeElement)).toBe(true);
         expect(text(dlg.querySelector('h2')!)).toBe('Lowest claim wins');
         expect(text(dlg)).toContain('Ticket 57: the checks failed. Try 2 of 3.');
-        expect(text(dlg)).toContain('Not built yet');
+        await vi.waitFor(() => expect(text(dlg)).toContain('Could not read')); // this test serves no piece detail
         for (let i = 0; i < 5; i++) {
             await user.tab();
             expect(dlg.contains(document.activeElement), `tab ${i}`).toBe(true);
@@ -352,13 +352,14 @@ describe('keyboard and the drawer', () => {
         await vi.waitFor(() => expect(document.activeElement).toBe(tag));
     });
 
-    it('says Not built yet for route, decided for you and could not be confirmed', async () => {
+    it('says Could not read for route, decided for you and could not be confirmed when the piece cannot be read', async () => {
         const { container } = await mount(FIXTURES.demo);
         await fireEvent.click(container.querySelector('.tag')!);
         const dlg = await vi.waitFor(() => document.querySelector('[role="dialog"]') as HTMLElement);
         const heads = [...dlg.querySelectorAll('h3')].map(text);
         expect(heads).toEqual(['Its route so far', 'Decided for you', 'Could not be confirmed']);
-        expect(dlg.textContent!.match(/Not built yet/g)!.length).toBe(3);
+        await vi.waitFor(() => expect(dlg.textContent!.match(/Could not read/g)!.length).toBe(3));
+        expect(dlg.textContent).not.toContain('Not built yet');
     });
 });
 

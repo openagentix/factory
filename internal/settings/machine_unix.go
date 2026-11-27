@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -191,11 +194,51 @@ func checkParent(dir string, uid int) error {
 	if !ok || (o != uid && o != 0) {
 		return fmt.Errorf("settings: %s belongs to neither the current user nor root", dir)
 	}
-	if fi.Mode().Perm()&0o022 != 0 && fi.Mode()&os.ModeSticky == 0 {
+	g := -1
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		g = int(st.Gid)
+	}
+	if !parentAllowed(uid, o, g, os.Getgid(), fi.Mode(), uid == os.Getuid() && ownGroupIsPrivate()) {
 		return fmt.Errorf("settings: %s is writable by group or others", dir)
 	}
 	return nil
 }
+
+// parentAllowed says whether a directory above ours may have this mode. The
+// owner is the user or root already.
+//
+//   - Writable by others: only with the sticky bit.
+//   - Writable by its group: only with the sticky bit, or when the directory
+//     is the user's own, its group is the user's primary group, and that group
+//     is private, with the same name as the user. Then umask 002 and a mode
+//     of 0775 on ~/.config is normal. A shared primary group (staff on macOS,
+//     users on some Linux systems) would trust every local user, so it is not
+//     enough. A directory of root keeps the strict rule.
+func parentAllowed(me, owner, gid, myGid int, mode os.FileMode, privateGroup bool) bool {
+	if mode&os.ModeSticky != 0 {
+		return true
+	}
+	if mode.Perm()&0o002 != 0 {
+		return false
+	}
+	if mode.Perm()&0o020 != 0 {
+		return owner == me && me != 0 && gid == myGid && privateGroup
+	}
+	return true
+}
+
+var privateGroupOnce = sync.OnceValue(func() bool {
+	u, err := user.LookupId(strconv.Itoa(os.Getuid()))
+	if err != nil {
+		return false
+	}
+	g, err := user.LookupGroupId(strconv.Itoa(os.Getgid()))
+	return err == nil && u.Username != "" && u.Username == g.Name
+})
+
+// ownGroupIsPrivate says whether the primary group of this process has the
+// name of the user. It is false on any lookup error.
+func ownGroupIsPrivate() bool { return privateGroupOnce() }
 
 // openChecked opens a directory that was checked by Lstat, and checks it again
 // on the open handle. A link is not followed: the handle must be the very
@@ -260,7 +303,10 @@ func lockIn(root *os.Root, name, shown string, uid int) (*os.File, error) {
 	}
 	f, err := root.OpenFile(name, syscall.O_RDWR|syscall.O_CREAT|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("settings: cannot open the lock file %s (a link is refused): %w", shown, err)
+		if fi, lerr := root.Lstat(name); lerr == nil && !fi.Mode().IsRegular() {
+			return nil, fmt.Errorf("settings: the lock file %s must be a regular file", shown)
+		}
+		return nil, fmt.Errorf("settings: cannot open the lock file %s: %w", shown, err)
 	}
 	fi, err := f.Stat()
 	if err != nil {

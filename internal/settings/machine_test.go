@@ -643,3 +643,87 @@ func TestLockFileThatIsALinkInsideTheDirectoryIsRefused(t *testing.T) {
 		t.Fatal("started over a lock file that is a link inside the directory")
 	}
 }
+
+func TestParentAllowedTable(t *testing.T) {
+	const me, myGid = 1000, 1000
+	cases := []struct {
+		name    string
+		owner   int
+		gid     int
+		mode    os.FileMode
+		private bool
+		want    bool
+	}{
+		{"0755", me, myGid, 0o755, false, true},
+		{"0700", me, myGid, 0o700, false, true},
+		{"0775 private own group", me, myGid, 0o775, true, true},
+		{"0775 shared group", me, myGid, 0o775, false, false},
+		{"0775 private but another group", me, 20, 0o775, true, false},
+		{"0770 private own group", me, myGid, 0o770, true, true},
+		{"0777 private own group", me, myGid, 0o777, true, false},
+		{"0757 private own group", me, myGid, 0o757, true, false},
+		{"0777 sticky", me, myGid, os.ModeSticky | 0o777, false, true},
+		{"0775 sticky", me, myGid, os.ModeSticky | 0o775, false, true},
+		{"root 0775 private gid", 0, myGid, 0o775, true, false},
+		{"root 0775 sticky", 0, 0, os.ModeSticky | 0o775, false, true},
+		{"root 0755", 0, 0, 0o755, false, true},
+	}
+	for _, c := range cases {
+		if got := parentAllowed(me, c.owner, c.gid, myGid, c.mode, c.private); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+	// Root as the user never gets the group exception.
+	if parentAllowed(0, 0, 0, 0, 0o775, true) {
+		t.Error("root's own group-writable directory was allowed")
+	}
+}
+
+// Through the real path: where the primary group of the test user is shared,
+// a group-writable parent is refused.
+func TestGroupWritableParentRefusedWithSharedPrimaryGroup(t *testing.T) {
+	if ownGroupIsPrivate() {
+		t.Skip("the primary group of this user is private")
+	}
+	f := newFixture(t)
+	shared := filepath.Join(filepath.Dir(f.cfg), "shared")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	f.data = filepath.Join(shared, "oxf")
+	f.write(settingsFor(f.data), 0o600)
+	if m, err := f.open(); err == nil {
+		m.Close()
+		t.Fatal("started below a group-writable directory")
+	}
+}
+
+// The directory itself keeps its strict rule, whatever the group.
+func TestOxfDirKeepsStrictModeWithPrivateGroupRule(t *testing.T) {
+	f := newFixture(t)
+	if err := os.Chmod(f.oxf, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := f.open(); err == nil {
+		m.Close()
+		t.Fatal("started with a group-writable oxf directory")
+	}
+}
+
+// A lock file that is a directory is not a link. The message must say so.
+func TestLockFileThatIsADirectoryGetsTheRightWords(t *testing.T) {
+	f := newFixture(t)
+	if err := os.Mkdir(filepath.Join(f.oxf, "oxf.lock"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := f.open()
+	if err == nil {
+		t.Fatal("started")
+	}
+	if strings.Contains(err.Error(), "link is refused") || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("wrong words: %v", err)
+	}
+}

@@ -198,6 +198,8 @@ type EntryIn struct {
 	Ticket int
 	Goal   int
 	At     Opt[time.Time]
+	// EntryID is the staging entry id of the change. Empty means unknown.
+	EntryID string
 }
 
 type RemovedIn struct {

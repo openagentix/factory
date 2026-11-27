@@ -157,6 +157,11 @@ func (s *Staging) Accept(ctx context.Context, seq int64, commit string) (AcceptR
 	} else if frozen {
 		return AcceptResult{}, ErrFrozen
 	}
+	if last, ok, err := s.cfg.Store.LastAccepted(ctx); err != nil {
+		return AcceptResult{}, err
+	} else if ok && last.Seq >= seq {
+		return AcceptResult{}, fmt.Errorf("%w: this state, or a later one, was accepted already", ErrStale)
+	}
 	latest, ok, err := s.cfg.Store.Latest(ctx)
 	if err != nil {
 		return AcceptResult{}, err
@@ -321,15 +326,7 @@ func (s *Staging) Resolve(ctx context.Context) (Resolution, error) {
 		if err != nil {
 			return res, err
 		}
-		if cur == latest.Commit {
-			// The ref is right already: push and mark only.
-			if err := s.cfg.Host.PushStaging(ctx, s.cfg.Repo.Dir(), latest.Commit); err != nil {
-				return res, err
-			}
-			if err := s.cfg.Store.MarkPublished(ctx, latest.Seq); err != nil {
-				return res, err
-			}
-		} else if err := s.publish(ctx, latest, cur); err != nil {
+		if err := s.publish(ctx, latest, cur); err != nil {
 			return res, err
 		}
 		res.Republished = true

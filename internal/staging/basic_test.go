@@ -13,6 +13,7 @@ import (
 // The ordinary case: two passed changes are replayed one commit each on top of
 // the default commit, recorded, and pushed.
 func TestAddReplaysEachChangeOnTheDefaultCommit(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	_, st1 := f.addFile(1, "a.txt")
 	if !st1.Published || len(st1.Applied) != 1 || st1.Default != f.def {
@@ -56,9 +57,11 @@ func TestAddReplaysEachChangeOnTheDefaultCommit(t *testing.T) {
 // Never patched: every rebuild starts from the default commit and the stored
 // list, so a second rebuild makes new commits, not a continuation.
 func TestRebuildStartsFromTheDefaultCommit(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
-	f.addFile(1, "a.txt")
-	_, st := f.addFile(2, "b.txt")
+	f.queueFile(1, "a.txt")
+	f.queueFile(2, "b.txt")
+	st := f.rebuild()
 	again, err := f.s.Rebuild(f.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +94,7 @@ func TestRebuildStartsFromTheDefaultCommit(t *testing.T) {
 
 // Without a list nothing is combined and the state is the default commit.
 func TestRebuildWithNoEntries(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	st, err := f.s.Rebuild(f.ctx)
 	if err != nil || st.Commit != f.def || len(st.Applied) != 0 || st.DefaultRed {
@@ -103,6 +107,7 @@ func TestRebuildWithNoEntries(t *testing.T) {
 }
 
 func TestNewRefusesBlankConfiguration(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	cases := map[string]func(*Config){
 		"no repo":         func(c *Config) { c.Repo = nil },

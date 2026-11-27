@@ -41,6 +41,28 @@ type flakyHost struct {
 	failMerge error
 	merges    int
 	mergeHook func()
+	// prHead, when set, is the head the host reports for every pull request.
+	prHead string
+}
+
+func (h *flakyHost) OpenPullRequest(ctx context.Context, spec githost.PRSpec) (githost.PullRequest, error) {
+	pr, err := h.Fake.OpenPullRequest(ctx, spec)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err == nil && h.prHead != "" {
+		pr.HeadSHA = h.prHead
+	}
+	return pr, err
+}
+
+func (h *flakyHost) GetPullRequest(ctx context.Context, n int) (githost.PullRequest, error) {
+	pr, err := h.Fake.GetPullRequest(ctx, n)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err == nil && h.prHead != "" {
+		pr.HeadSHA = h.prHead
+	}
+	return pr, err
 }
 
 func (h *flakyHost) PushStaging(ctx context.Context, dir, commit string) error {
@@ -316,4 +338,29 @@ func manifestFile(goal int, criteria ...api.ManifestCriterion) ent {
 
 func crit(id int, run string) api.ManifestCriterion {
 	return api.ManifestCriterion{ID: id, Text: "criterion " + strconv.Itoa(id), Run: run}
+}
+
+// queue stores an entry as live without a rebuild, so a test pays for one
+// rebuild and not one for each change. The gate and admission are covered by
+// the tests that call Add.
+func (f *fx) queue(e Entry) Entry {
+	f.t.Helper()
+	if err := f.store.AddEntry(f.ctx, e, false); err != nil {
+		f.t.Fatal(err)
+	}
+	return e
+}
+
+func (f *fx) queueFile(ticket int, name string, deps ...int) Entry {
+	f.t.Helper()
+	return f.queue(f.entry(ticket, f.commit(f.def, put(name, name+"\n")), f.def, deps...))
+}
+
+func (f *fx) rebuild() State {
+	f.t.Helper()
+	st, err := f.s.Rebuild(f.ctx)
+	if err != nil {
+		f.t.Fatalf("Rebuild: %v", err)
+	}
+	return st
 }

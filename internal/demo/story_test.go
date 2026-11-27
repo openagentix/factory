@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/openagentix/factory/internal/floor"
-	"github.com/openagentix/factory/internal/staging"
+	"github.com/openagentix/factory/internal/server"
 )
 
 type want struct {
@@ -170,15 +170,19 @@ func TestStoryBeatByBeat(t *testing.T) {
 		t.Error("a step after the end must stay done")
 	}
 
-	// The person's actions are driver methods for now. Undo takes the second
-	// change and what depends on it out of the holding area.
+	// The person's actions. Undo takes the second change out of the holding
+	// area, with what depends on it.
 	runID := ""
 	if p := piece(f, "t4"); p != nil && p.Run != nil {
 		runID = *p.Run
 	}
-	ids, err := d.Undo(ctx, runID)
-	if err != nil || len(ids) == 0 || ids[0] != runID {
-		t.Fatalf("Undo(%s) = %v, %v", runID, ids, err)
+	pv, err := d.UndoPreview(ctx, runID)
+	if err != nil || pv.Change != runID || len(pv.AlsoRemoved) != 0 || len(pv.Tickets) != 1 || pv.Tickets[0].Ticket != 4 {
+		t.Fatalf("UndoPreview(%s) = %+v, %v", runID, pv, err)
+	}
+	ures, err := d.Undo(ctx, server.UndoRequest{Change: runID, StagingSeq: pv.StagingSeq, Commit: pv.Commit, AlsoRemoved: pv.AlsoRemoved, Steps: &memSteps{}})
+	if err != nil || ures.Result != server.ResultDone || ures.JournalSeq <= 0 {
+		t.Fatalf("Undo(%s) = %+v, %v", runID, ures, err)
 	}
 	f = snap(t, d)
 	if err := invariants(f); err != nil {
@@ -188,8 +192,8 @@ func TestStoryBeatByBeat(t *testing.T) {
 		t.Errorf("t4 is still in the holding area: %+v", p)
 	}
 	// Accept takes what is left. t3 is accepted today, so it is at 07.
-	res, err := d.Accept(ctx)
-	if err != nil || res.Outcome != staging.OutcomeAccepted {
+	res, err := d.Accept(ctx, acceptReq(t, d))
+	if err != nil || res.Result != server.ResultDone {
 		t.Fatalf("Accept = %+v, %v", res, err)
 	}
 	f = snap(t, d)

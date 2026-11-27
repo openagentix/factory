@@ -343,6 +343,8 @@ func TestPieceRoute(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "secret") || strings.Contains(e.logs.String(), "secret") {
 		t.Error("error text leaked")
 	}
+	fd.err = ErrUnavailable // the demo is not ready yet
+	assertErr(t, get(e, "/api/v1/pieces/t57"), 503, CodeUnavailable, "not ready")
 	fd.err, fd.body = nil, []byte(`not json`)
 	assertErr(t, get(e, "/api/v1/pieces/t57"), 500, CodeReadFailed, "not json")
 	assertErr(t, get(newEnv(t), "/api/v1/pieces/t57"), 503, CodeUnavailable, "no detail")

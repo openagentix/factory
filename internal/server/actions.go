@@ -592,6 +592,10 @@ func (s *Server) handlePiece(w http.ResponseWriter, r *http.Request, _ any) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	b, ok, err := s.cfg.Detail.Piece(ctx, id)
+	if errors.Is(err, ErrUnavailable) {
+		WriteError(w, http.StatusServiceUnavailable, CodeUnavailable)
+		return
+	}
 	if err != nil || (ok && !json.Valid(b)) {
 		// The error text is not logged or sent. It could hold anything.
 		s.log.Warn("server: piece read failed")

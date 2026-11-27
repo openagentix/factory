@@ -228,6 +228,51 @@ func (l *lazyActions) Approve(ctx context.Context, r server.ApproveRequest) (ser
 	return server.ActionResult{}, server.ErrUnavailable
 }
 
+func (l *lazyActions) Accept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
+	if a := l.get(); a != nil {
+		return a.Accept(ctx, r)
+	}
+	return server.ActionResult{}, server.ErrUnavailable
+}
+
+func (l *lazyActions) CancelAccept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
+	if a := l.get(); a != nil {
+		return a.CancelAccept(ctx, r)
+	}
+	return server.ActionResult{}, server.ErrUnavailable
+}
+
+func (l *lazyActions) Undo(ctx context.Context, r server.UndoRequest) (server.ActionResult, error) {
+	if a := l.get(); a != nil {
+		return a.Undo(ctx, r)
+	}
+	return server.ActionResult{}, server.ErrUnavailable
+}
+
+func (l *lazyActions) UndoPreview(ctx context.Context, change string) (server.UndoPreviewView, error) {
+	if a := l.get(); a != nil {
+		return a.UndoPreview(ctx, change)
+	}
+	return server.UndoPreviewView{}, server.ErrUnavailable
+}
+
+// lazyDetail answers "not ready" until the demo is ready, like lazyActions.
+type lazyDetail struct {
+	mu sync.RWMutex
+	d  server.Detailer
+}
+
+func (l *lazyDetail) set(d server.Detailer) { l.mu.Lock(); l.d = d; l.mu.Unlock() }
+func (l *lazyDetail) Piece(ctx context.Context, id string) ([]byte, bool, error) {
+	l.mu.RLock()
+	d := l.d
+	l.mu.RUnlock()
+	if d == nil {
+		return nil, false, server.ErrUnavailable
+	}
+	return d.Piece(ctx, id)
+}
+
 // removeAll removes a directory tree, also when a run left read-only folders.
 func removeAll(dir string) {
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -326,7 +371,8 @@ func runDemo(parent context.Context, o demoOptions) (code int) {
 	hub := server.NewHub("demo")
 	lazy := &lazySource{}
 	acts := &lazyActions{}
-	srv, err := server.New(server.Config{Port: o.Port, Mode: "demo", Source: lazy, Actions: acts, Static: web.FS, Hub: hub})
+	detail := &lazyDetail{}
+	srv, err := server.New(server.Config{Port: o.Port, Mode: "demo", Source: lazy, Actions: acts, Detail: detail, Static: web.FS, Hub: hub})
 	if err != nil {
 		say("Cannot start the web server: %v", err)
 		return 1
@@ -373,6 +419,7 @@ func runDemo(parent context.Context, o demoOptions) (code int) {
 	}
 	lazy.set(d)
 	acts.set(d)
+	detail.set(d)
 	// The work that follows an action (a try, the checks, the holding area)
 	// is done here, one task at a time, beside the story.
 	play.Add(1)

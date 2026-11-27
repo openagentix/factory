@@ -16,7 +16,10 @@ import (
 	"github.com/openagentix/factory/internal/server"
 )
 
-var _ server.Actions = (*Demo)(nil)
+var (
+	_ server.Actions  = (*Demo)(nil)
+	_ server.Detailer = (*Demo)(nil)
+)
 
 // The three actions of the Floor. Each one decides again, under the write
 // lock that carries it out, from a snapshot made now and from what the git
@@ -546,4 +549,22 @@ func (d *Demo) checkPlan(ctx context.Context, goal int, call, version string, ma
 		return server.ErrStale
 	}
 	return nil
+}
+
+func (d *Demo) Accept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
+	return server.ActionResult{}, server.ErrUnavailable
+}
+func (d *Demo) CancelAccept(ctx context.Context, r server.HoldingRequest) (server.ActionResult, error) {
+	return server.ActionResult{}, server.ErrUnavailable
+}
+func (d *Demo) Undo(ctx context.Context, r server.UndoRequest) (server.ActionResult, error) {
+	return server.ActionResult{}, server.ErrUnavailable
+}
+func (d *Demo) UndoPreview(ctx context.Context, change string) (server.UndoPreviewView, error) {
+	return server.UndoPreviewView{}, server.ErrUnavailable
+}
+
+// Piece gives the detail of one piece.
+func (d *Demo) Piece(ctx context.Context, id string) ([]byte, bool, error) {
+	return nil, false, server.ErrUnavailable
 }

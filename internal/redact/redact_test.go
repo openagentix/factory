@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -386,5 +387,113 @@ func TestWriterCloseMarksSecretPrefix(t *testing.T) {
 	f := mustNew(t, canary)
 	if got := writeAll(t, f, "x ", canary[:9]); got != "x "+Mark {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Two separate matches can both start inside the bytes that already have a
+// mark. They must all join, and nothing may panic.
+func TestWriterNestedSecretsDoNotPanic(t *testing.T) {
+	f := mustNew(t, "abcdefgh", "XabcdefghYab", "XXXXXXXXXXXX")
+	for nx := 0; nx < 60; nx++ {
+		text := strings.Repeat("X", nx) + "abcdefghYabcdefgh tail"
+		for size := 1; size < 30; size++ {
+			var chunks []string
+			for rest := text; rest != ""; {
+				k := min(size, len(rest))
+				chunks = append(chunks, rest[:k])
+				rest = rest[k:]
+			}
+			got := writeAll(t, f, chunks...)
+			for _, sec := range []string{"abcdefgh", "XabcdefghYab", "XXXXXXXXXXXX"} {
+				if strings.Contains(got, sec) {
+					t.Fatalf("nx %d size %d leaked %q", nx, size, sec)
+				}
+			}
+		}
+	}
+}
+
+// An impossible span order must over-redact and never panic.
+func TestRenderToleratesBadSpans(t *testing.T) {
+	s := "0123456789abcdefghij"
+	for _, c := range []struct {
+		spans []span
+		want  string
+	}{
+		{[]span{{5, 9}, {2, 4}}, "014" + Mark + "9abcdefghij"},
+		{[]span{{0, 11}, {9, 12}, {3, 5}}, "cdefghij"},
+		{[]span{{8, 30}}, "01234567"},
+		{[]span{{-3, 4}}, "456789abcdefghij"},
+		{[]span{{7, 3}}, s},
+	} {
+		if got := renderFrom(s, c.spans, true); got != c.want {
+			t.Errorf("%v: got %q want %q", c.spans, got, c.want)
+		}
+	}
+}
+
+// Nested secrets, shared prefixes and suffixes, repeated characters, every
+// chunk size from 1 to twice the longest secret.
+func TestWriterNestedProperty(t *testing.T) {
+	sets := [][]string{
+		{"abcdefgh", "XabcdefghYab", "XXXXXXXXXXXX"},
+		{"abababab", "xabababab", "ababababy", "bababababa"},
+		{"aaaaaaaa", "baaaaaaaab", "aaaaaaaaaaaaaaaa"},
+		{"abcdefgh", "defghijk", "ghijklmn", "abcdefghijklmn"},
+		{"abcabcabc", "bcabcabca", "cabcabcab", "abcabcabcabc"},
+	}
+	rng := rand.New(rand.NewSource(23))
+	for si, secrets := range sets {
+		f := mustNew(t, secrets...)
+		alphabet := map[byte]bool{}
+		for _, s := range secrets {
+			for i := 0; i < len(s); i++ {
+				alphabet[s[i]] = true
+			}
+		}
+		var letters []byte
+		for c := range alphabet {
+			letters = append(letters, c)
+		}
+		sort.Slice(letters, func(i, j int) bool { return letters[i] < letters[j] })
+		for round := 0; round < 700; round++ {
+			var in strings.Builder
+			for in.Len() < 20+rng.Intn(150) {
+				switch rng.Intn(6) {
+				case 0, 1:
+					in.WriteString(secrets[rng.Intn(len(secrets))])
+				case 2:
+					in.WriteString(strings.Repeat(string(secrets[rng.Intn(len(secrets))][0]), rng.Intn(30)))
+				default:
+					in.WriteByte(letters[rng.Intn(len(letters))])
+				}
+			}
+			text := in.String() + "\n"
+			maxChunk := 1 + rng.Intn(2*f.maxLen)
+			var out bytes.Buffer
+			w := f.NewWriter(&out)
+			for rest := text; rest != ""; {
+				k := min(1+rng.Intn(maxChunk), len(rest))
+				if _, err := w.Write([]byte(rest[:k])); err != nil {
+					t.Fatal(err)
+				}
+				rest = rest[k:]
+				if n := len(w.s.pending); n > 2*f.maxLen {
+					t.Fatalf("set %d round %d: %d bytes held", si, round, n)
+				}
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got := out.String()
+			if want := f.Redact(text); got != want {
+				t.Fatalf("set %d round %d\ninput %q\ngot   %q\nwant  %q", si, round, text, got, want)
+			}
+			for _, s := range secrets {
+				if strings.Contains(got, s) {
+					t.Fatalf("set %d round %d leaked %q", si, round, s)
+				}
+			}
+		}
 	}
 }

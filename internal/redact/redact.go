@@ -101,14 +101,17 @@ func (f *Filter) matchesMasked(s string, masked int) []span {
 	if masked == 0 {
 		return spans
 	}
-	if len(spans) > 0 && spans[0].start < masked {
-		spans[0].start = 0
-		if spans[0].end < masked {
-			spans[0].end = masked
+	// Every match that starts inside the masked bytes, or inside a match that
+	// has been joined to them, becomes part of the first span.
+	first := span{0, masked}
+	rest := spans
+	for len(rest) > 0 && rest[0].start < first.end {
+		if rest[0].end > first.end {
+			first.end = rest[0].end
 		}
-		return spans
+		rest = rest[1:]
 	}
-	return append([]span{{0, masked}}, spans...)
+	return append([]span{first}, rest...)
 }
 
 // Redact replaces every secret in s with Mark.
@@ -124,6 +127,7 @@ func renderFrom(s string, spans []span, skipFirst bool) string {
 	if len(spans) == 0 {
 		return s
 	}
+	spans = tidy(spans, len(s))
 	var b strings.Builder
 	last := 0
 	for i, m := range spans {
@@ -135,6 +139,42 @@ func renderFrom(s string, spans []span, skipFirst bool) string {
 	}
 	b.WriteString(s[last:])
 	return b.String()
+}
+
+// tidy makes spans safe to render: inside [0, n], in order, and joined where
+// they touch or overlap. Spans from matches are already like this. A span that
+// is not (a bug elsewhere) is joined, so the filter over-redacts and never
+// panics. An empty or inverted span is dropped.
+func tidy(spans []span, n int) []span {
+	ok := true
+	prev := 0
+	for _, m := range spans {
+		if m.start < prev || m.end <= m.start || m.end > n {
+			ok = false
+			break
+		}
+		prev = m.end
+	}
+	if ok {
+		return spans
+	}
+	var in []span
+	for _, m := range spans {
+		m.start, m.end = max(m.start, 0), min(m.end, n)
+		if m.end > m.start {
+			in = append(in, m)
+		}
+	}
+	sort.Slice(in, func(i, j int) bool { return in[i].start < in[j].start })
+	var out []span
+	for _, m := range in {
+		if k := len(out); k > 0 && m.start < out[k-1].end {
+			out[k-1].end = max(out[k-1].end, m.end)
+		} else {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // partialStart returns the smallest i such that s[i:] is a proper prefix of

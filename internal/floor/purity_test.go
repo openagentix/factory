@@ -17,7 +17,7 @@ import (
 // package's own code.
 func TestPackageIsPure(t *testing.T) {
 	allowed := map[string]bool{
-		"crypto/sha256": true, "encoding/hex": true, "encoding/json": true, "errors": true, "fmt": true,
+		"crypto/sha256": true, "encoding/hex": true, "errors": true, "fmt": true,
 		"regexp": true, "sort": true, "strconv": true, "strings": true, "time": true, "unicode": true, "unicode/utf8": true,
 		"github.com/openagentix/factory/internal/api": true,
 	}

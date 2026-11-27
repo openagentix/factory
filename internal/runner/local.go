@@ -34,25 +34,22 @@ var _ Runner = (*Local)(nil)
 // production.
 var beforeImport func(*run)
 
-// named is a directory and what it was when the run began.
-type named struct {
-	path string
-	info fs.FileInfo
-}
-
 type run struct {
 	spec Spec
 	lim  Limits
 
-	// The run directory is held by handle, not by name. The agent runs as the
-	// same user and can rename its run directory and put a link in its place,
-	// so everything the runner reads, writes and removes goes through root.
-	// dir is the name, used for the paths the agent and the repository see.
+	// The run directory and the workspace are held by handle, not by name.
+	// Both are opened before the agent starts. The agent runs as the same
+	// user and can rename them and put a link in their place, so everything
+	// the runner reads, writes, imports and removes goes through root,
+	// wsRoot and runsRoot. dir, ws, in and out are names. They are given to
+	// the agent, and used for notes. The runner opens none of them.
 	dir      string
-	root     *os.Root
+	root     *os.Root // the run directory
 	rootInfo fs.FileInfo
-	runsRoot *os.Root
-	parents  []named // the runs folder and the data directory
+	runsRoot *os.Root // the runs folder
+	wsRoot   *os.Root // the workspace
+	wsInfo   fs.FileInfo
 	ws       string
 	in       string
 	out      string
@@ -140,10 +137,6 @@ func (r *run) makeRunDir() error {
 	if err := os.Chmod(runs, 0o700); err != nil {
 		return err
 	}
-	dataInfo, err := os.Stat(data)
-	if err != nil {
-		return err
-	}
 	runsInfo, err := os.Lstat(runs)
 	if err != nil {
 		return err
@@ -151,7 +144,6 @@ func (r *run) makeRunDir() error {
 	if !runsInfo.IsDir() || runsInfo.Mode()&fs.ModeSymlink != 0 {
 		return fmt.Errorf("runner: %s is not a plain directory", runs)
 	}
-	r.parents = []named{{runs, runsInfo}, {data, dataInfo}}
 	if r.runsRoot, err = os.OpenRoot(runs); err != nil {
 		return err
 	}
@@ -177,35 +169,46 @@ func (r *run) makeRunDir() error {
 	return errors.New("runner: could not make a run directory")
 }
 
-// sameDir checks that the run directory's name still names the directory
-// that was made, and that its parents are unchanged.
+// checkHeld checks, through handles only, that what the runner holds is still
+// what the names say. The run directory's name must still name the run
+// directory, and the workspace's name inside it must still name the workspace
+// that was opened before the agent started. A closed or missing handle, a
+// directory that was removed, moved or replaced, all fail. Nothing here opens
+// a path.
 //
-// This narrows the window and does not close it. repo.Export and repo.Import
-// take a path, not an opened directory, so a swap between this check and the
-// moment the repository package opens the path is still possible for the
-// same user. What internal/repo should offer to close it: an Import (and
-// Export) that takes an opened directory (an *os.Root or a file descriptor)
-// and reads only through it.
-func (r *run) sameDir() error {
-	li, err := os.Lstat(r.dir)
-	if err != nil || !li.IsDir() || li.Mode()&fs.ModeSymlink != 0 || !os.SameFile(li, r.rootInfo) {
+// This does not make the import safe: the import reads through wsRoot, so a
+// swap of a name changes nothing it reads. The check makes the run fail when
+// the agent has plainly tampered, and when its workspace is gone, which would
+// otherwise read as an empty directory and a run with no change.
+func (r *run) checkHeld() error {
+	if r.wsRoot == nil || r.wsInfo == nil || r.root == nil || r.runsRoot == nil || r.rootInfo == nil || r.dir == "" {
+		return errors.New("the workspace is not held")
+	}
+	if cur, err := r.wsRoot.Stat("."); err != nil || !os.SameFile(cur, r.wsInfo) {
+		return errors.New("the workspace handle is closed or unusable")
+	}
+	if !plainSame(r.runsRoot, filepath.Base(r.dir), r.rootInfo) {
 		return errors.New("the run directory was moved or replaced")
 	}
-	for _, p := range r.parents {
-		var fi fs.FileInfo
-		if p.path == r.parents[0].path {
-			fi, err = os.Lstat(p.path)
-			if err == nil && (!fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0) {
-				err = errors.New("not a plain directory")
-			}
-		} else {
-			fi, err = os.Stat(p.path)
-		}
-		if err != nil || !os.SameFile(fi, p.info) {
-			return fmt.Errorf("a parent of the run directory changed: %s", filepath.Base(p.path))
-		}
+	if !plainSame(r.root, "workspace", r.wsInfo) {
+		return errors.New("the workspace was moved, replaced or removed")
 	}
 	return nil
+}
+
+// plainSame says whether name, looked up through dir, is a real directory
+// (not a link) and the same one as want.
+func plainSame(dir *os.Root, name string, want fs.FileInfo) bool {
+	fi, err := dir.Lstat(name)
+	return err == nil && fi.IsDir() && fi.Mode()&fs.ModeSymlink == 0 && os.SameFile(fi, want)
+}
+
+// keptAtPath says whether the path of a kept run directory still names it.
+// It is for a note to the caller, after the agent has ended, and decides
+// nothing.
+func (r *run) keptAtPath() bool {
+	fi, err := os.Lstat(r.dir)
+	return err == nil && fi.IsDir() && fi.Mode()&fs.ModeSymlink == 0 && os.SameFile(fi, r.rootInfo)
 }
 
 // prepare makes the directories and writes the workspace and the inputs.
@@ -214,16 +217,24 @@ func (r *run) prepare(ctx context.Context) error {
 		return err
 	}
 	r.ws, r.in, r.out = filepath.Join(r.dir, "workspace"), filepath.Join(r.dir, "in"), filepath.Join(r.dir, "out")
-	for _, d := range []string{"in", "out", "tmp"} {
+	for _, d := range []string{"workspace", "in", "out", "tmp"} {
 		if err := r.root.Mkdir(d, 0o700); err != nil {
 			return err
 		}
 	}
+	// The workspace is opened once, here, before the agent exists, and kept.
+	// The export and the import both go through it.
 	var err error
+	if r.wsRoot, err = r.root.OpenRoot("workspace"); err != nil {
+		return err
+	}
+	if r.wsInfo, err = r.wsRoot.Stat("."); err != nil {
+		return err
+	}
 	if r.sha, err = r.spec.Repo.Resolve(ctx, r.spec.Commit); err != nil {
 		return fmt.Errorf("runner: resolve commit: %w", err)
 	}
-	notes, err := r.spec.Repo.Export(ctx, r.sha, r.ws, r.spec.RepoLimits)
+	notes, err := r.spec.Repo.ExportRoot(ctx, r.sha, r.wsRoot, r.spec.RepoLimits)
 	if err != nil {
 		return fmt.Errorf("runner: export: %w", err)
 	}
@@ -608,8 +619,8 @@ func (r *run) finish(ctx context.Context, o *Outcome) {
 	if o.Status == StatusFailed || o.Status == StatusTimedOut || o.Status == StatusCancelled {
 		if r.spec.KeepFailed {
 			o.RunDir, o.EventsPath, o.StderrPath = r.dir, r.eventsPath(), r.stderrPath()
-			if err := r.sameDir(); err != nil {
-				o.Notes = append(o.Notes, "the kept run directory may not be at its path: "+err.Error())
+			if !r.keptAtPath() {
+				o.Notes = append(o.Notes, "the kept run directory is not at its path any more: the agent moved or replaced it")
 			}
 			r.closeRoots()
 			return
@@ -618,10 +629,11 @@ func (r *run) finish(ctx context.Context, o *Outcome) {
 	o.Notes = append(o.Notes, r.cleanup()...)
 }
 
-// importWorkspace imports the workspace and checks, before and after, that
-// the run directory's name still names the directory that was made.
+// importWorkspace imports the workspace through the handle that was opened
+// before the agent started. The handles are checked before and after, and a
+// run whose workspace is gone, moved or replaced fails.
 func (r *run) importWorkspace(ctx context.Context, in *verdictInput) (commit string, changed bool, early string) {
-	if err := r.sameDir(); err != nil {
+	if err := r.checkHeld(); err != nil {
 		return "", false, err.Error()
 	}
 	if beforeImport != nil {
@@ -631,19 +643,22 @@ func (r *run) importWorkspace(ctx context.Context, in *verdictInput) (commit str
 	if msg == "" {
 		msg = "factory: work stage of a run"
 	}
-	commit, changed, err := r.spec.Repo.Import(ctx, r.ws, r.sha, msg, r.spec.Author,
+	commit, changed, err := r.spec.Repo.ImportRoot(ctx, r.wsRoot, r.sha, msg, r.spec.Author,
 		repo.ImportOptions{Limits: r.spec.RepoLimits, Exclude: r.spec.ImportExclude})
 	in.ImportErr, in.Changed = err, changed
 	if err != nil {
 		return "", false, ""
 	}
-	if err := r.sameDir(); err != nil {
+	if err := r.checkHeld(); err != nil {
 		return "", false, err.Error()
 	}
 	return commit, changed, ""
 }
 
 func (r *run) closeRoots() {
+	if r.wsRoot != nil {
+		r.wsRoot.Close()
+	}
 	if r.root != nil {
 		r.root.Close()
 	}

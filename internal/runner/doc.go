@@ -6,10 +6,12 @@
 //
 //   - makes a fresh run directory (mode 0700) in DataDir/runs, a folder of
 //     mode 0700, under a long random name, with the subdirectories
-//     workspace, in, out and tmp. It opens the directory once, as a handle,
-//     and reads, writes and removes only through that handle;
-//   - writes the files of the commit into workspace with repo.Export. The
-//     workspace is a plain directory with no .git;
+//     workspace, in, out and tmp. It opens the run directory, and then the
+//     workspace, once each, as handles, before the agent starts. It reads,
+//     writes, imports and removes only through those handles;
+//   - writes the files of the commit into the workspace with repo.ExportRoot,
+//     through the workspace handle. The workspace is a plain directory with
+//     no .git;
 //   - writes task.json, prompt.md and trigger.json into in, read-only;
 //   - starts the agent with no shell, in its own process group, with the
 //     workspace as working directory and an environment built from an
@@ -22,8 +24,8 @@
 //     the agent started in the group keeps running;
 //   - reads out/result.json only through api.ParseResult. A missing,
 //     unreadable or invalid result fails the run. Free text decides nothing;
-//   - imports the workspace with repo.Import as one commit on the same
-//     parent, and reports the commit and whether anything changed;
+//   - imports the workspace with repo.ImportRoot, through the workspace
+//     handle, as one commit on the same parent, and reports the commit and whether anything changed;
 //   - returns one Outcome, then removes the run directory, unless the caller
 //     asked to keep failed runs. The Outcome has one Status, decided from the
 //     result, the exit code, the import and the flags together. Its zero
@@ -55,15 +57,28 @@
 //     line is dropped by the stream reader, standard error is cut at a limit,
 //     and the events file is cut at a limit. Memory and disk use of the
 //     runner stay bounded;
-//   - a workspace that was removed or swapped for a link fails the import,
-//     and the run fails with no commit;
+//   - the import reads only through the workspace handle, opened before the
+//     agent started. The agent can rename its run directory or its workspace
+//     and put a link or another directory at the name, in a loop, during the
+//     import. What the runner reads does not change: it is the directory it
+//     opened, never what the name points to now. Files of another run, or of
+//     any other directory, cannot get into the commit this way. The tests
+//     race such swaps hundreds of times and count the leaks;
+//   - the runner also checks, through handles and never through a path, that
+//     the run directory's name still names the run directory and the
+//     workspace's name still names the held workspace, before and after the
+//     import. A workspace that was removed, moved or replaced, or a handle
+//     that is closed or missing, fails the run with no commit. An agent that
+//     renames its workspace away and back during the import is not stopped:
+//     the import is still of the held directory, so it is still the agent's
+//     own files;
+//   - links inside the workspace are never followed by the import;
 //   - inputs are read-only and the runner never reads them back;
-//   - the agent can rename its run directory and put a link in its place.
-//     The result is read through the handle, and the name is checked before
-//     and after the import: it must still name the directory that was made,
-//     with its parents unchanged. Cleanup empties the directory through the
-//     handle, removes a link left at the name and a moved copy in the runs
-//     folder, and reports a copy it cannot find;
+//   - result.json and the runner's own files are reached through the run
+//     directory handle. Cleanup empties the directory through the handle,
+//     removes a link left at the name and a moved copy in the runs folder, and
+//     reports a copy it cannot find. The only paths the runner still looks at
+//     after the agent starts are named under Limits;
 //   - a callback that panics fails the run and ends the group, and a slow
 //     one loses events instead of holding up the reading.
 //
@@ -81,9 +96,12 @@
 //     for processes that use the run directory, and lists them without
 //     stopping them. On other systems it cannot look, and every outcome says
 //     so in a note.
-//   - repo.Import takes a path. A swap between the runner's check and the
-//     moment the repository package opens the path is narrowed, not ruled
-//     out. An import that takes an opened directory would close it.
+//   - After the agent starts, the runner looks at two paths only. It looks at
+//     the run directory's path once, for the note that says where a kept run
+//     is. On Linux it also looks in /proc for strays, by the run directory's
+//     resolved path. Both feed notes and decide nothing. A swap can make a
+//     note wrong. The agent's own working directory and the paths in its
+//     arguments are names given to it at the start.
 //   - The runs folder keeps other users out. The same user, so the agent,
 //     can still list it.
 //   - Files the agent writes under the run directory are not limited in

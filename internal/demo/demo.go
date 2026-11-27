@@ -115,9 +115,9 @@ type Demo struct {
 	// are one step with respect to the story) and, to change facts, mu (so no
 	// snapshot sees half of it). Lock order: stepMu, then mu. The queue has
 	// its own lock.
-	sealed  map[int]sealedChange // the gate's sealed decision of a change held for a yes or no
-	jobs    map[string]job       // run id to the job it runs
-	latest  map[int]string       // ticket to the id of its latest run
+	sealed map[int]sealedChange // the gate's sealed decision of a change held for a yes or no
+	jobs   map[string]job       // run id to the job it runs
+	latest map[int]string       // ticket to the id of its latest run
 	// noAnswer holds the runs whose fixed "no answer" line is posted and whose
 	// label is not yet back.
 	noAnswer map[string]bool

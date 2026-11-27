@@ -39,6 +39,62 @@ type StubScript struct {
 	TouchProtected string `json:"touchProtected,omitempty"`
 	// ExitCode is the exit code, returned after all outputs are written.
 	ExitCode int `json:"exitCode,omitempty"`
+
+	// The fields below act as a hostile worker would. They exist so the
+	// runner can be tested against each behaviour with a real process.
+	// IgnoreSignals makes the stub ignore the terminating signals, so only a
+	// kill ends it.
+	IgnoreSignals bool `json:"ignoreSignals,omitempty"`
+	// Child starts a background process that outlives the stub.
+	Child *StubChild `json:"child,omitempty"`
+	// FloodStdout and FloodStderr are byte counts of junk to print. LongLine
+	// is the size of one single line on standard output.
+	FloodStdout int `json:"floodStdout,omitempty"`
+	FloodStderr int `json:"floodStderr,omitempty"`
+	LongLine    int `json:"longLine,omitempty"`
+	// ResultAs makes result.json something else than a plain file: link,
+	// hardlink (both to ResultTarget, an absolute path), dir, fifo or huge
+	// (a sparse file of ResultSize bytes, 500 MiB when zero).
+	ResultAs     string `json:"resultAs,omitempty"`
+	ResultTarget string `json:"resultTarget,omitempty"`
+	ResultSize   int64  `json:"resultSize,omitempty"`
+	// OutAsLink replaces the out directory by a link to this directory,
+	// after everything is written.
+	OutAsLink string `json:"outAsLink,omitempty"`
+	// ForgeEvents replaces events.jsonl with this text. EventsLink replaces
+	// it with a link to this absolute path.
+	ForgeEvents string `json:"forgeEvents,omitempty"`
+	EventsLink  string `json:"eventsLink,omitempty"`
+	// ReplaceWorkspace removes the workspace directory ("remove") or swaps
+	// it for a link to WorkspaceTarget ("link"), after everything is written.
+	ReplaceWorkspace string `json:"replaceWorkspace,omitempty"`
+	WorkspaceTarget  string `json:"workspaceTarget,omitempty"`
+	// WriteIn tries to write in FACTORY_IN and reports what happened.
+	WriteIn bool `json:"writeIn,omitempty"`
+	// DumpEnv reports every environment variable the stub saw.
+	DumpEnv bool `json:"dumpEnv,omitempty"`
+	// SwapRunDir moves the run directory (the parent of the workspace) away
+	// and puts a link in its place. Mode "link" keeps the real directory
+	// beside it as <run>.moved and leaves the link. Mode "away" moves it to
+	// MoveTo. Mode "loop" swaps and restores it again and again for LoopMs
+	// milliseconds and ends with the real directory back in place.
+	SwapRunDir *StubSwap `json:"swapRunDir,omitempty"`
+}
+
+// StubSwap is the swap of the run directory.
+type StubSwap struct {
+	Mode   string `json:"mode"`
+	Target string `json:"target"`
+	MoveTo string `json:"moveTo,omitempty"`
+	LoopMS int    `json:"loopMs,omitempty"`
+}
+
+// StubChild is a background process the stub leaves behind.
+type StubChild struct {
+	// SleepSeconds is how long it sleeps.
+	SleepSeconds int `json:"sleepSeconds"`
+	// NewSession starts it in a new session, outside the process group.
+	NewSession bool `json:"newSession,omitempty"`
 }
 
 // StubFile is one file to write.
@@ -61,6 +117,8 @@ type StubOptions struct {
 	OutDir    string
 	// Stdout gets the event stream the stub adapter reads.
 	Stdout io.Writer
+	// Stderr gets the junk of FloodStderr. Empty means discard.
+	Stderr io.Writer
 	// Now gives the event time. Empty means time.Now.
 	Now func() time.Time
 }
@@ -96,6 +154,9 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 	if err := sc.check(); err != nil {
 		return stubUsageExit, err
 	}
+	if err := sc.checkAttackRoot(opts); err != nil {
+		return stubUsageExit, err
+	}
 	// Resolve every target before acting, so a bad path changes nothing.
 	for _, p := range sc.paths() {
 		if _, err := target(wsRoot, p); err != nil {
@@ -107,6 +168,27 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 		if err := res.Validate(); err != nil {
 			return stubUsageExit, fmt.Errorf("stub script: result: %w", err)
 		}
+	}
+
+	if sc.IgnoreSignals {
+		stop := ignoreSignals()
+		defer stop()
+	}
+	var extra []StubEvent
+	if sc.DumpEnv {
+		for _, kv := range os.Environ() {
+			extra = append(extra, StubEvent{Kind: api.EventStatus, Text: "env " + kv})
+		}
+	}
+	if sc.Child != nil {
+		pid, err := startChild(*sc.Child, opts.Stdout)
+		if err != nil {
+			return stubUsageExit, err
+		}
+		extra = append(extra, StubEvent{Kind: api.EventStatus, Text: fmt.Sprintf("child-pid=%d", pid)})
+	}
+	if sc.WriteIn {
+		extra = append(extra, tryWriteIn()...)
 	}
 
 	if sc.DelayMS > 0 {
@@ -141,7 +223,7 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 		out = io.Discard
 	}
 	enc := json.NewEncoder(out)
-	for _, e := range sc.Events {
+	for _, e := range append(extra, sc.Events...) {
 		ev := api.Event{Time: now(), Kind: e.Kind, Text: e.Text}
 		b, _ := json.Marshal(ev)
 		log.Write(b)
@@ -150,10 +232,17 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 			return stubUsageExit, err
 		}
 	}
+	if err := sc.flood(out, opts.Stderr); err != nil {
+		return stubUsageExit, err
+	}
 	if err := writeSafe(outRoot, "events.jsonl", log.Bytes()); err != nil {
 		return stubUsageExit, err
 	}
-	if !sc.OmitResult {
+	if sc.ResultAs != "" {
+		if err := makeResultAs(outRoot, sc.ResultAs, sc.ResultTarget, sc.ResultSize); err != nil {
+			return stubUsageExit, err
+		}
+	} else if !sc.OmitResult {
 		b, err := json.MarshalIndent(res, "", "  ")
 		if err != nil {
 			return stubUsageExit, err
@@ -161,6 +250,9 @@ func RunStub(ctx context.Context, opts StubOptions) (int, error) {
 		if err := writeSafe(outRoot, "result.json", append(b, '\n')); err != nil {
 			return stubUsageExit, err
 		}
+	}
+	if err := sc.tamper(outRoot, opts); err != nil {
+		return stubUsageExit, err
 	}
 	usage := res.Usage
 	if sc.Usage != nil {
@@ -212,7 +304,7 @@ func (sc StubScript) check() error {
 			return fmt.Errorf("stub script: events[%d].kind %q is not known", i, e.Kind)
 		}
 	}
-	return nil
+	return sc.checkAttacks()
 }
 
 // resolveRoot checks a directory given on the command line and returns it
@@ -369,6 +461,9 @@ type stubLine struct {
 type Stub struct {
 	// Program is the program that has the stub-harness subcommand.
 	Program string
+	// AttackRoot, when set, is passed as OXF_STUB_ATTACK_ROOT. The hostile
+	// behaviours of the stub act only under that directory.
+	AttackRoot string
 }
 
 // NewStub returns the stub adapter. program is usually the path of oxf.
@@ -395,6 +490,9 @@ func (s *Stub) Command(sp Spec) (Command, error) {
 		// The subcommand refuses to run without this variable.
 		Env: append(sp.env(), "OXF_ALLOW_STUB=1"),
 		Dir: sp.Workspace,
+	}
+	if s.AttackRoot != "" {
+		cmd.Env = append(cmd.Env, "OXF_STUB_ATTACK_ROOT="+s.AttackRoot)
 	}
 	if err := checkForbidden(cmd); err != nil {
 		return Command{}, err

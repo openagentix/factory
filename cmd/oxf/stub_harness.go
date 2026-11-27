@@ -36,7 +36,7 @@ func runStubHarness(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	code, err := harness.RunStub(context.Background(), harness.StubOptions{
-		Script: data, Workspace: *workspace, OutDir: *out, Stdout: stdout,
+		Script: data, Workspace: *workspace, OutDir: *out, Stdout: stdout, Stderr: stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "stub-harness: %v\n", err)

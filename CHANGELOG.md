@@ -16,6 +16,7 @@ There is no release yet. While the version is 0.x, minor releases can change int
 
 ### Added
 
+- `internal/runner`: the local runner. It runs one work stage as a process in a plain workspace directory with a deadline, a scrubbed environment and no git host credential, then imports the files as one commit. The workspace is held by an opened directory, so an agent that swaps its directory for a link to another run's gets nothing. Known limits are in the package documentation. Not wired to a command yet.
 - Decision record 0003, running on one machine and in a team: the `oxf init` and `oxf run` commands, machine settings, tokens from the operating system's credential tool, `trigger.json`, run record additions, a limit on cut-off runs, approving a goal by label, and the list of trusted logins with claims ordered by comment id. Designed, not built. A proposal.
 - Design, not built: a list of trusted logins, claims across teammates' machines, and review on a different machine.
 - Three rules the first build established, in record 0001 and `AGENTS.md`.

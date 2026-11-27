@@ -152,6 +152,9 @@ type RunIn struct {
 	HasChange  Opt[bool]
 	// Deadline is the task's own deadline. Zero means unknown.
 	Deadline time.Duration
+	// SubjectRun and SubjectAttempt say which build run a review run judged.
+	SubjectRun     string
+	SubjectAttempt int
 }
 
 // ClaimIn is a claim by another machine, as read from the git host. Times are

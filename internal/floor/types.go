@@ -344,11 +344,16 @@ func (x ActionName) Valid() bool {
 
 type JournalKind string
 
+// JournalUnreadable stands for an entry that could not be shown: its kind is
+// not known, or its phrase would have an open slot. It carries only its
+// sequence number and time. It is not in record 0004's list of kinds.
+const JournalUnreadable JournalKind = "unreadable"
+
 // AllJournalKinds is the list in record 0004.
 func AllJournalKinds() []JournalKind {
 	return []JournalKind{"plan_approved", "checks_written", "entered_holding_area", "check_failed", "taken_out",
 		"question_asked", "answered", "consequence_answered", "could_not_confirm", "accepted", "accept_cancelled",
-		"undone", "dial_moved", "paused", "resumed"}
+		"undone", "dial_moved", "paused", "resumed", JournalUnreadable}
 }
 
 func (x JournalKind) Valid() bool {
@@ -632,20 +637,23 @@ type PieceClaim struct {
 // RULING: since is null when the time is unknown or lies in the future. The
 // record types it as a string.
 type Piece struct {
-	ID        string        `json:"id"`
-	Kind      PieceKind     `json:"kind"`
-	Goal      int           `json:"goal"`
-	Ticket    *int          `json:"ticket"`
-	Title     Untrusted     `json:"title"`
-	Station   StationNo     `json:"station"`
-	State     PieceState    `json:"state"`
-	Reason    *Reason       `json:"reason"`
-	Since     *string       `json:"since"`
-	BlockedBy *string       `json:"blockedBy"`
-	Machine   *PieceMachine `json:"machine"`
-	Claim     *PieceClaim   `json:"claim"`
-	Run       *string       `json:"run"`
-	Call      *string       `json:"call"`
+	ID        string     `json:"id"`
+	Kind      PieceKind  `json:"kind"`
+	Goal      int        `json:"goal"`
+	Ticket    *int       `json:"ticket"`
+	Title     Untrusted  `json:"title"`
+	Station   StationNo  `json:"station"`
+	State     PieceState `json:"state"`
+	Reason    *Reason    `json:"reason"`
+	Since     *string    `json:"since"`
+	BlockedBy *string    `json:"blockedBy"`
+	// RootBlocker is the piece at the end of the blockedBy chain, set when this
+	// piece took the state of its blocker. The root is the one that is counted.
+	RootBlocker *string       `json:"rootBlocker"`
+	Machine     *PieceMachine `json:"machine"`
+	Claim       *PieceClaim   `json:"claim"`
+	Run         *string       `json:"run"`
+	Call        *string       `json:"call"`
 }
 
 type PieceDetail struct {

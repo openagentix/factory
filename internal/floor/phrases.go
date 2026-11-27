@@ -88,6 +88,7 @@ func Phrases() map[PhraseKey]string {
 		"journal.dial_moved":           "The level of a kind of work moved from {from} to {to}.",
 		"journal.paused":               "The line was paused on this machine.",
 		"journal.resumed":              "The line was resumed on this machine.",
+		"journal.unreadable":           "One entry could not be read.",
 		// the lamp
 		"lamp.could_not_read": "Could not read",
 		"lamp.stuck":          "Stuck",

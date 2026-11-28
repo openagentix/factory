@@ -13,6 +13,15 @@ func newFakeWorld(t *testing.T) *world {
 		seedIssue: func(title, author, assoc string, labels ...string) int {
 			return f.SeedIssue(title, "", author, assoc, labels...)
 		},
+		labelAs:   func(n int, label, actor string) { f.SimulateLabel(n, label, actor) },
+		unlabelAs: func(n int, label, actor string) { f.SimulateUnlabel(n, label, actor) },
+		seedPR: func(author, head, base string) int {
+			n, err := f.SeedPullRequest(author, head, base)
+			if err != nil {
+				t.Fatalf("SeedPullRequest: %v", err)
+			}
+			return n
+		},
 		branchHead:   f.BranchHead,
 		defaultName:  fx.DefaultBranch,
 		mergePR:      f.SimulateMerge,

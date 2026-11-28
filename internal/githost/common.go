@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -19,6 +20,45 @@ type rawComment struct {
 	Body    string
 	Created time.Time
 	Updated time.Time
+}
+
+// labelEvent is one add or removal of a label, as the host's events list it.
+type labelEvent struct {
+	// ID is the host's id of the event. Events come in ascending ID order.
+	ID    int64
+	Added bool
+	Label string
+	// Actor is empty when the host names no actor (a deleted user).
+	Actor string
+	At    time.Time
+}
+
+// latestAdd finds who made the latest add of label. present is whether the
+// label is on the issue now. It returns false (unknown) unless the label is
+// present, the events are in strict ascending ID order and in time order, the
+// latest event for the label is an add, and that event names an actor with a
+// valid login. A label name that differs only by letter case is the same
+// label, as on the host.
+func latestAdd(events []labelEvent, label string, present bool) (labelEvent, bool) {
+	if !present {
+		return labelEvent{}, false
+	}
+	var last labelEvent
+	found := false
+	var prev labelEvent
+	for i, e := range events {
+		if i > 0 && (e.ID <= prev.ID || e.At.Before(prev.At)) {
+			return labelEvent{}, false // out of order: ambiguous
+		}
+		prev = e
+		if strings.EqualFold(e.Label, label) {
+			last, found = e, true
+		}
+	}
+	if !found || !last.Added || last.At.IsZero() || !loginRE.MatchString(last.Actor) {
+		return labelEvent{}, false
+	}
+	return last, true
 }
 
 // classify drops comments from users who are not writers (the factory's own

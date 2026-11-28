@@ -61,6 +61,7 @@ type fakeItem struct {
 	Issue
 	pr       *fakePR
 	comments []rawComment
+	events   []labelEvent
 }
 
 type fakePR struct {
@@ -83,6 +84,7 @@ type fakeState struct {
 	items         map[int]*fakeItem
 	next          int
 	nextComment   int64
+	nextEvent     int64
 	statuses      map[string]CommitStatus
 	protected     bool
 	parents       map[int]int
@@ -118,7 +120,9 @@ func NewFake(fx Fixture, clock func() time.Time) *Fake {
 	f := &Fake{fakeState: s, hasAccept: true}
 	for _, fi := range fx.Issues {
 		it := s.newItem(fi.Title, fi.Body, fi.Author, fi.Association)
-		it.Labels = append([]string(nil), fi.Labels...)
+		for _, l := range fi.Labels {
+			s.setLabel(it, l, fi.Author, true)
+		}
 		if fi.Closed {
 			it.State = "closed"
 		}
@@ -140,6 +144,29 @@ func (s *fakeState) newItem(title, body, author, assoc string) *fakeItem {
 	}}
 	s.items[s.next] = it
 	return it
+}
+
+// setLabel adds or removes a label as actor and records the event, as a host
+// does. Adding a label that is there, or removing one that is not, changes
+// nothing and records nothing. An empty actor records an event with no actor,
+// as the host does for a deleted user.
+func (s *fakeState) setLabel(it *fakeItem, label, actor string, add bool) {
+	if it.HasLabel(label) == add {
+		return
+	}
+	if add {
+		it.Labels = append(it.Labels, label)
+	} else {
+		var keep []string
+		for _, l := range it.Labels {
+			if l != label {
+				keep = append(keep, l)
+			}
+		}
+		it.Labels = keep
+	}
+	s.nextEvent++
+	it.events = append(it.events, labelEvent{ID: s.nextEvent, Added: add, Label: label, Actor: actor, At: s.clock()})
 }
 
 func (s *fakeState) addRawComment(it *fakeItem, author, assoc, body string) {
@@ -208,8 +235,30 @@ func (f *Fake) SeedIssue(title, body, author, assoc string, labels ...string) in
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	it := f.newItem(title, body, author, assoc)
-	it.Labels = labels
+	for _, l := range labels {
+		f.setLabel(it, l, author, true)
+	}
 	return it.Number
+}
+
+// SimulateLabel puts a label on an issue as the user `by`, as a person on the
+// host would. The label need not be in FixedLabels. An empty `by` records an
+// event with no actor.
+func (f *Fake) SimulateLabel(number int, label, by string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil {
+		f.setLabel(it, label, by, true)
+	}
+}
+
+// SimulateUnlabel takes a label off an issue as the user `by`.
+func (f *Fake) SimulateUnlabel(number int, label, by string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil {
+		f.setLabel(it, label, by, false)
+	}
 }
 
 // SeedSubIssue adds an issue from any user as a sub-issue of a goal, for tests,
@@ -220,6 +269,32 @@ func (f *Fake) SeedSubIssue(goal int, title, body, author, assoc string) int {
 	it := f.newItem(title, body, author, assoc)
 	f.parents[it.Number] = goal
 	return it.Number
+}
+
+// SeedPullRequest opens a pull request as any user, for tests. It follows the
+// host's rule that both branches must exist, and none of the factory's rules:
+// a person can open a pull request from any branch into any branch.
+func (f *Fake) SeedPullRequest(author, head, base string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.branchesExist(head, base); err != nil {
+		return 0, err
+	}
+	it := f.newItem("a pull request", "", author, "NONE")
+	it.pr = &fakePR{head: head, base: base, headSHA: f.branches[head], headRepo: "demo/demo", state: PROpen, title: it.Title}
+	return it.Number, nil
+}
+
+// branchesExist is the host's rule for a new pull request: the head and the
+// base branch must both be there. The caller holds f.mu.
+func (s *fakeState) branchesExist(head, base string) error {
+	if _, ok := s.branches[head]; !ok {
+		return &APIError{Status: 422, Message: "Validation Failed: the head branch does not exist"}
+	}
+	if _, ok := s.branches[base]; !ok {
+		return &APIError{Status: 422, Message: "Validation Failed: the base branch does not exist"}
+	}
+	return nil
 }
 
 // SimulateMerge marks a pull request as merged by a user, as a person would.
@@ -313,7 +388,11 @@ type failure struct {
 // call fails before it writes anything. With afterWrite true it writes, then
 // reports a failure, as a host does when its answer is lost. op is a method
 // name: PostComment, PostAnswer, PostConsequenceAnswer, AddLabel,
-// RemoveLabel, MergeStaging, CreateSubIssues. The error holds no text from the caller.
+// RemoveLabel, MergeStaging, CreateSubIssues, OpenPullRequest, PushBranch,
+// PushStaging, and the reads DefaultBranch, LabelActor, ListAgentPullRequests
+// and GetPullRequest (a read writes nothing, so afterWrite changes nothing for
+// it). A call that breaks a rule is refused first and does not use up the
+// planned failure. The error holds no text from the caller.
 func (f *Fake) FailNext(op string, afterWrite bool) { f.FailAfter(op, 0, afterWrite) }
 
 // FailAfter is FailNext for the call after the next `calls` calls of op.
@@ -420,9 +499,7 @@ func (f *Fake) AddLabel(_ context.Context, n int, label string) error {
 	if err != nil {
 		return err
 	}
-	if !it.HasLabel(label) {
-		it.Labels = append(it.Labels, label)
-	}
+	f.setLabel(it, label, f.factoryLogin, true)
 	if fail {
 		return errFakeFailure
 	}
@@ -443,13 +520,7 @@ func (f *Fake) RemoveLabel(_ context.Context, n int, label string) error {
 	if err != nil {
 		return err
 	}
-	var keep []string
-	for _, l := range it.Labels {
-		if l != label {
-			keep = append(keep, l)
-		}
-	}
-	it.Labels = keep
+	f.setLabel(it, label, f.factoryLogin, false)
 	if fail {
 		return errFakeFailure
 	}
@@ -509,29 +580,46 @@ func (f *Fake) OpenPullRequest(_ context.Context, spec PRSpec) (PullRequest, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("OpenPullRequest")
+	if fail && !after {
+		return PullRequest{}, errFakeFailure
+	}
 	draft := spec.Head != StagingBranch
 	for _, it := range f.items {
 		if p := it.pr; p != nil && p.state == PROpen && p.head == spec.Head && p.base == spec.Base {
 			p.title, p.body, p.headSHA = safeTitle(spec.Title), safeBody(spec.Body), f.branches[spec.Head]
 			it.Title, it.Body = p.title, p.body
+			if fail {
+				return PullRequest{}, errFakeFailure
+			}
 			return f.prView(it), nil
 		}
+	}
+	// The host refuses a new pull request when either branch is missing.
+	if err := f.branchesExist(spec.Head, spec.Base); err != nil {
+		return PullRequest{}, err
 	}
 	title, body := safeTitle(spec.Title), safeBody(spec.Body)
 	it := f.newItem(title, body, f.factoryLogin, "NONE")
 	it.pr = &fakePR{head: spec.Head, base: spec.Base, headSHA: f.branches[spec.Head], headRepo: "demo/demo", draft: draft, state: PROpen, title: title, body: body}
+	if fail {
+		return PullRequest{}, errFakeFailure // the pull request exists, the reply is lost
+	}
 	return f.prView(it), nil
 }
 
 func (f *Fake) prView(it *fakeItem) PullRequest {
 	p := it.pr
 	return PullRequest{Number: it.Number, State: p.state, MergedBy: p.mergedBy, Head: p.head, HeadSHA: p.headSHA,
-		Base: p.base, Draft: p.draft, Title: p.title, Body: p.body}
+		Base: p.base, Draft: p.draft, Title: p.title, Body: p.body, Author: it.Author}
 }
 
 func (f *Fake) GetPullRequest(_ context.Context, n int) (PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if fail, _ := f.takeFailure("GetPullRequest"); fail {
+		return PullRequest{}, errFakeFailure
+	}
 	it, err := f.get(n)
 	if err != nil {
 		return PullRequest{}, err
@@ -568,7 +656,14 @@ func (f *Fake) PushBranch(_ context.Context, _, commit, branch string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("PushBranch")
+	if fail && !after {
+		return errFakeFailure
+	}
 	f.branches[branch] = commit
+	if fail {
+		return errFakeFailure
+	}
 	return nil
 }
 
@@ -581,7 +676,14 @@ func (f *Fake) PushStaging(_ context.Context, _, commit string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	fail, after := f.takeFailure("PushStaging")
+	if fail && !after {
+		return errFakeFailure
+	}
 	f.branches[StagingBranch] = commit
+	if fail {
+		return errFakeFailure
+	}
 	return nil
 }
 
@@ -678,4 +780,78 @@ func (f *Fake) ManualPullRequestURL(_ context.Context, branch string) (string, e
 		return "", err
 	}
 	return "https://example.invalid/" + f.repo.String() + "/compare/" + f.defaultBranch + "..." + branch + "?expand=1", nil
+}
+
+// readFailure is the failure hook of a call that writes nothing.
+func (f *Fake) readFailure(op string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fail, _ := f.takeFailure(op); fail {
+		return errFakeFailure
+	}
+	return nil
+}
+
+func (f *Fake) DefaultBranch(context.Context) (DefaultBranchInfo, error) {
+	if err := f.readFailure("DefaultBranch"); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	name := f.defaultBranch
+	if err := checkStagingPush(name); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	if err := checkBranchName(name); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	commit := f.branches[name]
+	if err := checkCommit(commit); err != nil {
+		return DefaultBranchInfo{}, errors.New("githost: the host gave no valid commit for the default branch")
+	}
+	return DefaultBranchInfo{Name: name, Commit: commit}, nil
+}
+
+func (f *Fake) LabelActor(_ context.Context, n int, label string) (LabelActorInfo, error) {
+	if err := checkLabel(label); err != nil {
+		return LabelActorInfo{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fail, _ := f.takeFailure("LabelActor"); fail {
+		return LabelActorInfo{}, errFakeFailure
+	}
+	it, err := f.get(n)
+	if err != nil {
+		return LabelActorInfo{}, err
+	}
+	e, ok := latestAdd(it.events, label, hasLabelFold(it.Labels, label))
+	if !ok {
+		return LabelActorInfo{}, nil
+	}
+	return LabelActorInfo{Known: true, Login: e.Actor, At: e.At, Trusted: f.writer(e.Actor)}, nil
+}
+
+func (f *Fake) ListAgentPullRequests(_ context.Context, state PRState) ([]PullRequest, error) {
+	if err := checkListState(state); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fail, _ := f.takeFailure("ListAgentPullRequests"); fail {
+		return nil, errFakeFailure
+	}
+	var out []PullRequest
+	for _, it := range f.items {
+		p := it.pr
+		if p == nil || p.state != state || !isFactoryLogin(it.Author, f.factoryLogin) || p.base != StagingBranch ||
+			p.headRepo != "demo/demo" || !isAgentBranch(p.head) {
+			continue
+		}
+		v := f.prView(it)
+		v.Title, v.Body = clip(v.Title, maxListTitle), clip(v.Body, maxListBody)
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, nil
 }

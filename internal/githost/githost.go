@@ -252,6 +252,34 @@ type PullRequest struct {
 	Title    string
 	Body     string
 	URL      string
+	// Author is the login of the user who opened it. It is empty when the
+	// host did not say.
+	Author string
+}
+
+// DefaultBranchInfo is the default branch as the host reports it.
+type DefaultBranchInfo struct {
+	// Name is the branch name. It has passed the branch name rules and is
+	// never the staging branch.
+	Name string
+	// Commit is the full id of the head commit, as the host reports it now.
+	Commit string
+}
+
+// LabelActorInfo tells who put a label on an issue. The zero value, with Known
+// false, means "unknown" and must never be read as a trusted answer.
+type LabelActorInfo struct {
+	// Known is true only when the host's events name exactly one actor for
+	// the latest add of the label, and the label is on the issue now.
+	Known bool
+	// Login is the user who made the latest add. Empty unless Known.
+	Login string
+	// At is when the host says that add happened. Zero unless Known.
+	At time.Time
+	// Trusted is true when Known and the actor has write, maintain or admin
+	// permission, or is the factory's own user. A person on the list of
+	// trusted logins (record 0003) is a further check made by the caller.
+	Trusted bool
 }
 
 // PRSpec asks for a pull request. A pull request from an agent branch goes
@@ -352,8 +380,27 @@ type Proposer interface {
 	// accept token and writes nothing.
 	ManualPullRequestURL(ctx context.Context, branch string) (string, error)
 	// PushStaging force pushes a commit to the staging branch. It is the only
-	// way to write the staging branch.
+	// way to write the staging branch. It refuses when the default branch is
+	// not known, or is the staging branch.
 	PushStaging(ctx context.Context, dir, commit string) error
+	// DefaultBranch reads the name and the head commit of the default branch
+	// from the host. It fails when either is missing or not valid, or when the
+	// default branch is the staging branch.
+	DefaultBranch(ctx context.Context) (DefaultBranchInfo, error)
+	// LabelActor tells who made the latest add of a label on an issue or pull
+	// request, from the host's events. The label must be in FixedLabels. When
+	// the label is not on the issue now, the events are out of order, the
+	// actor is missing or not a valid login, or the events were cut short
+	// (then with a *TruncatedError), the answer is unknown (Known false).
+	LabelActor(ctx context.Context, number int, label string) (LabelActorInfo, error)
+	// ListAgentPullRequests lists the pull requests that the factory's own
+	// user opened from a branch under BranchPrefix of this repository into
+	// the staging branch, in the given state, oldest number first. The state
+	// is PROpen, PRClosed (closed and not merged) or PRMerged; any other value
+	// is refused. A label is not needed and not trusted. If a size cap is hit,
+	// the pull requests read so far come back with a *TruncatedError, and a
+	// caller that counts them must treat the count as unknown.
+	ListAgentPullRequests(ctx context.Context, state PRState) ([]PullRequest, error)
 }
 
 // Accepter is everything the accept token may do, and nothing else. Each

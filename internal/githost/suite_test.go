@@ -48,6 +48,11 @@ type world struct {
 	forkPR       func(n int)
 	setPerm      func(login, perm string)
 	editComment  func(n, index int, body string)
+	// labelAs and unlabelAs change a label as a person on the host would.
+	// An empty actor leaves the event without an actor.
+	labelAs, unlabelAs func(n int, label, actor string)
+	// seedPR opens a pull request as any user. The branches must exist.
+	seedPR func(author, head, base string) int
 	// repo is a local git repository with two unrelated commits, c1 and c2.
 	repoDir, c1, c2 string
 }
@@ -274,6 +279,7 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 			if err := w.host.PushBranch(ctx, w.repoDir, w.c1, "factory/run-1"); err != nil {
 				t.Fatal(err)
 			}
+			must(t, w.host.PushStaging(ctx, w.repoDir, w.c1)) // the base branch must exist
 			spec := PRSpec{Head: "factory/run-1", Base: StagingBranch, Title: "Move endpoint", Body: "Body"}
 			pr, err := w.host.OpenPullRequest(ctx, spec)
 			if err != nil {
@@ -313,6 +319,176 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 			} {
 				if _, err := w.host.OpenPullRequest(ctx, bad); !errors.Is(err, ErrRefused) {
 					t.Errorf("pull request %+v: %v", bad, err)
+				}
+			}
+		}},
+		{"a pull request needs its head and its base branch on the host", func(t *testing.T, w *world) {
+			wantNo := func(what string, err error) {
+				t.Helper()
+				var ae *APIError
+				if !errors.As(err, &ae) || ae.Status != 422 {
+					t.Errorf("%s: err = %v, want the host's 422", what, err)
+				}
+			}
+			// Neither branch is there.
+			_, err := w.host.OpenPullRequest(ctx, PRSpec{Head: "factory/run-1", Base: StagingBranch, Title: "x"})
+			wantNo("no head, no base", err)
+			// The head is there, the staging branch is not.
+			must(t, w.host.PushBranch(ctx, w.repoDir, w.c1, "factory/run-1"))
+			_, err = w.host.OpenPullRequest(ctx, PRSpec{Head: "factory/run-1", Base: StagingBranch, Title: "x"})
+			wantNo("no base", err)
+			// The staging branch is there, the head is not.
+			must(t, w.host.PushStaging(ctx, w.repoDir, w.c2))
+			_, err = w.host.OpenPullRequest(ctx, PRSpec{Head: "factory/run-2", Base: StagingBranch, Title: "x"})
+			wantNo("no head", err)
+			// The staging pull request needs the staging branch as its head.
+			must(t, w.host.PushBranch(ctx, w.repoDir, w.c1, "factory/run-3"))
+			ok, err := w.host.OpenPullRequest(ctx, PRSpec{Head: "factory/run-3", Base: StagingBranch, Title: "ok"})
+			if err != nil {
+				t.Fatalf("with both branches: %v", err)
+			}
+			if ok.Number != 4 { // the three issues of the fixture, and nothing made by the refused calls
+				t.Errorf("number = %d, a refused call made an item", ok.Number)
+			}
+		}},
+		{"default branch name and head", func(t *testing.T, w *world) {
+			got, err := w.host.DefaultBranch(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Name != w.defaultName || got.Commit != w.branchHead(w.defaultName) || checkCommit(got.Commit) != nil {
+				t.Fatalf("DefaultBranch = %+v, want %q at %q", got, w.defaultName, w.branchHead(w.defaultName))
+			}
+			// It follows the host: after a merge the head is the merged commit.
+			must(t, w.host.PushStaging(ctx, w.repoDir, w.c2))
+			sp, err := w.host.OpenPullRequest(ctx, PRSpec{Head: StagingBranch, Base: w.defaultName, Title: "Staging"})
+			must(t, err)
+			must(t, w.host.MergeStaging(ctx, MergeSpec{PullRequest: sp.Number, Commit: w.c2}))
+			got, err = w.host.DefaultBranch(ctx)
+			if err != nil || got.Commit != w.c2 {
+				t.Fatalf("after a merge DefaultBranch = %+v %v, want head %s", got, err, w.c2)
+			}
+		}},
+		{"who put a label on", func(t *testing.T, w *world) {
+			// Ticket 3 got factory:ready from its author, the factory user.
+			got, err := w.host.LabelActor(ctx, 3, LabelReady)
+			if err != nil || !got.Known || got.Login != "factory-bot" || !got.Trusted || got.At.IsZero() {
+				t.Fatalf("seeded label = %+v %v", got, err)
+			}
+			// A user with triage permission adds a label: known, not trusted.
+			w.setPerm("triager", "triage")
+			w.labelAs(2, LabelReady, "triager")
+			got, err = w.host.LabelActor(ctx, 2, LabelReady)
+			if err != nil || !got.Known || got.Login != "triager" || got.Trusted {
+				t.Fatalf("triage user = %+v %v", got, err)
+			}
+			// The same label put on again by a writer is no new event: the
+			// first add still counts.
+			w.setPerm("writer", "write")
+			w.labelAs(2, LabelReady, "writer")
+			got, _ = w.host.LabelActor(ctx, 2, LabelReady)
+			if got.Login != "triager" || got.Trusted {
+				t.Fatalf("a second add changed the actor: %+v", got)
+			}
+			// Removed and put on again by a writer: the latest add counts.
+			w.unlabelAs(2, LabelReady, "writer")
+			w.labelAs(2, LabelReady, "writer")
+			got, err = w.host.LabelActor(ctx, 2, LabelReady)
+			if err != nil || !got.Known || got.Login != "writer" || !got.Trusted {
+				t.Fatalf("writer = %+v %v", got, err)
+			}
+			// The factory's own add through the host call.
+			must(t, w.host.AddLabel(ctx, 2, LabelClaimed))
+			got, err = w.host.LabelActor(ctx, 2, LabelClaimed)
+			if err != nil || !got.Known || got.Login != "factory-bot" || !got.Trusted {
+				t.Fatalf("factory add = %+v %v", got, err)
+			}
+			// Unknown: label not on the issue, removed, actor missing.
+			if got, err := w.host.LabelActor(ctx, 2, LabelGoal); err != nil || got.Known || got.Login != "" || got.Trusted {
+				t.Fatalf("label never there = %+v %v", got, err)
+			}
+			w.unlabelAs(2, LabelReady, "triager")
+			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.Trusted {
+				t.Fatalf("label removed = %+v %v", got, err)
+			}
+			w.labelAs(2, LabelReady, "")
+			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.Trusted || got.Login != "" {
+				t.Fatalf("no actor = %+v %v", got, err)
+			}
+			// A person with no permission at all is known, and not trusted.
+			w.unlabelAs(2, LabelReady, "x")
+			w.labelAs(2, LabelReady, "stranger")
+			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || !got.Known || got.Trusted || got.Login != "stranger" {
+				t.Fatalf("stranger = %+v %v", got, err)
+			}
+			if _, err := w.host.LabelActor(ctx, 2, "bug"); !errors.Is(err, ErrRefused) {
+				t.Fatalf("label outside the fixed list: %v", err)
+			}
+			if _, err := w.host.LabelActor(ctx, 999, LabelReady); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing issue: %v", err)
+			}
+		}},
+		{"agent pull requests", func(t *testing.T, w *world) {
+			for _, st := range []PRState{"", "all", "OPEN", "draft"} {
+				if _, err := w.host.ListAgentPullRequests(ctx, st); !errors.Is(err, ErrRefused) {
+					t.Errorf("state %q: err = %v, want ErrRefused", st, err)
+				}
+			}
+			got, err := w.host.ListAgentPullRequests(ctx, PROpen)
+			if err != nil || len(got) != 0 {
+				t.Fatalf("empty: %+v %v", got, err)
+			}
+			must(t, w.host.PushStaging(ctx, w.repoDir, w.c1))
+			var mine []int
+			for _, b := range []string{"factory/run-1", "factory/run-2", "factory/run-3", "factory/run-4"} {
+				must(t, w.host.PushBranch(ctx, w.repoDir, w.c2, b))
+				pr, err := w.host.OpenPullRequest(ctx, PRSpec{Head: b, Base: StagingBranch, Title: "t"})
+				must(t, err)
+				mine = append(mine, pr.Number)
+			}
+			// Others, who must not count: a stranger's, a writer's, one from a fork,
+			// one into another base, one from another prefix, and the staging pull request.
+			w.setPerm("writer", "write")
+			must(t, w.host.PushBranch(ctx, w.repoDir, w.c2, "factory/evil"))
+			w.seedPR("stranger", "factory/evil", StagingBranch)
+			w.seedPR("writer", "factory/evil", StagingBranch)
+			w.seedPR("factory-bot", w.defaultName, StagingBranch) // not an agent branch
+			w.seedPR("factory-bot", "factory/evil", w.defaultName)
+			forked := w.seedPR("factory-bot", "factory/evil", StagingBranch)
+			w.forkPR(forked)
+			sp, err := w.host.OpenPullRequest(ctx, PRSpec{Head: StagingBranch, Base: w.defaultName, Title: "Staging"})
+			must(t, err)
+			_ = sp
+			// A person takes the label off one of ours. It must still count.
+			must(t, w.host.AddLabel(ctx, mine[0], LabelAgent))
+			must(t, w.host.RemoveLabel(ctx, mine[0], LabelAgent))
+
+			got, err = w.host.ListAgentPullRequests(ctx, PROpen)
+			must(t, err)
+			var nums []int
+			for _, p := range got {
+				nums = append(nums, p.Number)
+				if p.State != PROpen || p.Base != StagingBranch || !strings.HasPrefix(p.Head, BranchPrefix) || p.Author != "factory-bot" || p.HeadSHA != w.c2 || !p.Draft {
+					t.Errorf("bad item %+v", p)
+				}
+			}
+			if !reflect.DeepEqual(nums, mine) {
+				t.Fatalf("open agent pull requests = %v, want %v", nums, mine)
+			}
+			w.mergePR(mine[0], "repo-owner")
+			w.closePR(mine[1])
+			for st, want := range map[PRState][]int{PROpen: mine[2:], PRMerged: mine[:1], PRClosed: mine[1:2]} {
+				got, err := w.host.ListAgentPullRequests(ctx, st)
+				must(t, err)
+				var n []int
+				for _, p := range got {
+					n = append(n, p.Number)
+					if p.State != st {
+						t.Errorf("state %s: item %+v", st, p)
+					}
+				}
+				if !reflect.DeepEqual(n, want) {
+					t.Errorf("state %s: %v, want %v", st, n, want)
 				}
 			}
 		}},
@@ -553,6 +729,7 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 				t.Error("the factory's own block no longer parses")
 			}
 			must(t, w.host.PushBranch(ctx, w.repoDir, w.c1, "factory/run-1"))
+			must(t, w.host.PushStaging(ctx, w.repoDir, w.c1))
 			pr, err := w.host.OpenPullRequest(ctx, PRSpec{Head: "factory/run-1", Base: StagingBranch, Title: "Closes #9 @bob", Body: bodies})
 			must(t, err)
 			pr, _ = w.host.GetPullRequest(ctx, pr.Number)
@@ -598,6 +775,9 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 				"PushBranch":             func() error { return w.noAccept.PushBranch(ctx, w.repoDir, w.c2, d) },
 				"PushStaging":            func() error { return w.noAccept.PushStaging(ctx, w.repoDir, w.c1) },
 				"ManualPullRequestURL":   func() error { _, err := w.noAccept.ManualPullRequestURL(ctx, d); return err },
+				"DefaultBranch":          func() error { _, err := w.noAccept.DefaultBranch(ctx); return err },
+				"LabelActor":             func() error { _, err := w.noAccept.LabelActor(ctx, 1, LabelGoal); return err },
+				"ListAgentPullRequests":  func() error { _, err := w.noAccept.ListAgentPullRequests(ctx, PROpen); return err },
 			}
 			covered := map[string]bool{}
 			for name, fn := range calls {

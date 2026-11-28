@@ -57,7 +57,26 @@ func newGitHubWorld(t *testing.T) *world {
 			srv.mu.Lock()
 			defer srv.mu.Unlock()
 			it := srv.newItem(title, "", author, assoc)
-			it.labels = labels
+			for _, l := range labels {
+				srv.setLabel(it, l, author, true)
+			}
+			return it.number
+		},
+		labelAs: func(n int, label, actor string) {
+			srv.mu.Lock()
+			srv.setLabel(srv.items[n], label, actor, true)
+			srv.mu.Unlock()
+		},
+		unlabelAs: func(n int, label, actor string) {
+			srv.mu.Lock()
+			srv.setLabel(srv.items[n], label, actor, false)
+			srv.mu.Unlock()
+		},
+		seedPR: func(author, head, base string) int {
+			srv.mu.Lock()
+			defer srv.mu.Unlock()
+			it := srv.newItem("a pull request", "", author, "NONE")
+			it.pr, it.head, it.base, it.headRepo = true, head, base, "demo/demo"
 			return it.number
 		},
 		branchHead:  git.head,

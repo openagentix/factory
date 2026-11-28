@@ -129,3 +129,35 @@ func isFactoryLogin(author, factoryLogin string) bool {
 }
 
 var loginRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,38}|[A-Za-z0-9-]*\[bot\])$`)
+
+const (
+	// maxListTitle and maxListBody bound the text of a pull request in a list.
+	maxListTitle = 250
+	maxListBody  = 65536
+)
+
+// checkListState allows the three states a list of pull requests may ask for.
+func checkListState(st PRState) error {
+	switch st {
+	case PROpen, PRClosed, PRMerged:
+		return nil
+	}
+	return refuse("the state of a pull request list must be open, closed or merged")
+}
+
+// isAgentBranch reports whether name is a valid agent branch: under
+// BranchPrefix, with something after it, and a name git accepts.
+func isAgentBranch(name string) bool {
+	return strings.HasPrefix(name, BranchPrefix) && len(name) > len(BranchPrefix) && checkBranchName(name) == nil
+}
+
+// hasLabelFold reports whether the labels hold the label. The host treats
+// label names that differ only by letter case as one label.
+func hasLabelFold(labels []string, label string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(l, label) {
+			return true
+		}
+	}
+	return false
+}

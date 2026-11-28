@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -646,10 +647,14 @@ func (g *GitHub) CreateSubIssues(ctx context.Context, goal int, p []api.IssuePro
 }
 
 type ghPR struct {
-	Number   int    `json:"number"`
-	State    string `json:"state"`
-	Draft    bool   `json:"draft"`
-	Merged   bool   `json:"merged"`
+	Number   int     `json:"number"`
+	State    string  `json:"state"`
+	Draft    bool    `json:"draft"`
+	Merged   bool    `json:"merged"`
+	MergedAt *string `json:"merged_at"`
+	User     struct {
+		Login string `json:"login"`
+	} `json:"user"`
 	Title    string `json:"title"`
 	Body     string `json:"body"`
 	HTMLURL  string `json:"html_url"`
@@ -671,9 +676,9 @@ type ghPR struct {
 
 func (p ghPR) view() PullRequest {
 	v := PullRequest{Number: p.Number, State: PRClosed, Head: p.Head.Ref, HeadSHA: p.Head.SHA, Base: p.Base.Ref,
-		Draft: p.Draft, Title: p.Title, Body: p.Body, URL: p.HTMLURL}
+		Draft: p.Draft, Title: p.Title, Body: p.Body, URL: p.HTMLURL, Author: p.User.Login}
 	switch {
-	case p.Merged || p.MergedBy != nil:
+	case p.Merged || p.MergedBy != nil || (p.MergedAt != nil && *p.MergedAt != ""):
 		v.State = PRMerged
 		if p.MergedBy != nil {
 			v.MergedBy = p.MergedBy.Login
@@ -881,4 +886,139 @@ func (g *GitHub) OpenRevert(ctx context.Context, spec RevertSpec) (PullRequest, 
 		return PullRequest{}, err
 	}
 	return p.view(), nil
+}
+
+func (g *GitHub) DefaultBranch(ctx context.Context) (DefaultBranchInfo, error) {
+	def, err := g.defaultBranch(ctx)
+	if err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	if err := checkStagingPush(def); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	if err := checkBranchName(def); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	var b struct {
+		Name   string `json:"name"`
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if _, err := g.call(ctx, g.propose, http.MethodGet, g.base.String()+g.path("/branches/"+url.PathEscape(def)), nil, &b); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	if b.Name != def {
+		return DefaultBranchInfo{}, errors.New("githost: the host answered for another branch than the default branch")
+	}
+	if checkCommit(b.Commit.SHA) != nil {
+		return DefaultBranchInfo{}, errors.New("githost: the host gave no valid commit for the default branch")
+	}
+	return DefaultBranchInfo{Name: def, Commit: b.Commit.SHA}, nil
+}
+
+// ghLabelEvent is one entry of an issue's events list.
+type ghLabelEvent struct {
+	ID    int64  `json:"id"`
+	Event string `json:"event"`
+	Actor *struct {
+		Login string `json:"login"`
+	} `json:"actor"`
+	Label *struct {
+		Name string `json:"name"`
+	} `json:"label"`
+	Created string `json:"created_at"`
+}
+
+func (g *GitHub) LabelActor(ctx context.Context, n int, label string) (LabelActorInfo, error) {
+	if err := checkLabel(label); err != nil {
+		return LabelActorInfo{}, err
+	}
+	var i ghIssue
+	if _, err := g.call(ctx, g.propose, http.MethodGet, g.base.String()+g.path("/issues/"+strconv.Itoa(n)), nil, &i); err != nil {
+		return LabelActorInfo{}, err
+	}
+	var names []string
+	for _, l := range i.Labels {
+		names = append(names, l.Name)
+	}
+	if !hasLabelFold(names, label) {
+		return LabelActorInfo{}, nil // not on the issue now: unknown
+	}
+	var events []labelEvent
+	err := g.getAll(ctx, g.path("/issues/"+strconv.Itoa(n)+"/events"), nil, func(raw json.RawMessage) error {
+		var e ghLabelEvent
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return errors.New("githost: bad event JSON")
+		}
+		if (e.Event != "labeled" && e.Event != "unlabeled") || e.Label == nil {
+			return nil
+		}
+		at, err := time.Parse(time.RFC3339, e.Created)
+		if err != nil {
+			return fmt.Errorf("githost: event %d has no valid time", e.ID)
+		}
+		le := labelEvent{ID: e.ID, Added: e.Event == "labeled", Label: e.Label.Name, At: at}
+		if e.Actor != nil {
+			le.Actor = e.Actor.Login
+		}
+		events = append(events, le)
+		return nil
+	})
+	if err != nil {
+		// The newest events are the last ones. A list cut short may hide the
+		// event that decides, so it is never an answer.
+		return LabelActorInfo{}, err
+	}
+	e, ok := latestAdd(events, label, true)
+	if !ok {
+		return LabelActorInfo{}, nil
+	}
+	trusted, err := g.isWriter(ctx, e.Actor)
+	if err != nil {
+		return LabelActorInfo{}, err
+	}
+	return LabelActorInfo{Known: true, Login: e.Actor, At: e.At, Trusted: trusted}, nil
+}
+
+func (g *GitHub) ListAgentPullRequests(ctx context.Context, state PRState) ([]PullRequest, error) {
+	if err := checkListState(state); err != nil {
+		return nil, err
+	}
+	q := "open"
+	if state != PROpen {
+		q = "closed" // a merged pull request is a closed one
+	}
+	factory, err := g.factoryLogin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []PullRequest
+	seen := map[int]bool{}
+	readErr := g.getAll(ctx, g.path("/pulls"), url.Values{"state": {q}, "base": {StagingBranch}, "sort": {"created"}, "direction": {"asc"}},
+		func(raw json.RawMessage) error {
+			var p ghPR
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return errors.New("githost: bad pull request JSON")
+			}
+			// The filters above are a request, not a promise. Check every item.
+			if p.Number <= 0 || seen[p.Number] || !isFactoryLogin(p.User.Login, factory) || !isAgentBranch(p.Head.Ref) ||
+				p.Base.Ref != StagingBranch || p.Head.Repo == nil || p.Head.Repo.Fork || !strings.EqualFold(p.Head.Repo.FullName, g.repo.String()) {
+				return nil
+			}
+			v := p.view()
+			if v.State != state {
+				return nil
+			}
+			seen[p.Number] = true
+			v.Title, v.Body = clip(v.Title, maxListTitle), clip(v.Body, maxListBody)
+			out = append(out, v)
+			return nil
+		})
+	var trunc *TruncatedError
+	if readErr != nil && !errors.As(readErr, &trunc) {
+		return nil, readErr
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, readErr
 }

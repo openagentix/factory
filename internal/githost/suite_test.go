@@ -428,6 +428,30 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 				t.Fatalf("missing issue: %v", err)
 			}
 		}},
+		{"label names that differ only in ASCII case are one label", func(t *testing.T, w *world) {
+			// Ticket 3 got factory:ready from the factory user.
+			w.setPerm("triager", "triage")
+			w.labelAs(3, "FACTORY:READY", "triager")
+			is, err := w.host.GetIssue(ctx, 3)
+			if err != nil || len(is.Labels) != 1 || is.Labels[0] != LabelReady {
+				t.Fatalf("labels = %v %v, want the one label", is.Labels, err)
+			}
+			// A repeat add in another case is no new add: it must not turn an
+			// untrusted user into the latest actor.
+			got, err := w.host.LabelActor(ctx, 3, LabelReady)
+			if err != nil || !got.Known || got.Login != "factory-bot" {
+				t.Fatalf("actor = %+v %v, want factory-bot", got, err)
+			}
+			// A removal in another case removes the label.
+			w.unlabelAs(3, "Factory:Ready", "triager")
+			is, _ = w.host.GetIssue(ctx, 3)
+			if is.HasLabel(LabelReady) || len(is.Labels) != 0 {
+				t.Fatalf("labels after the removal = %v", is.Labels)
+			}
+			if got, err := w.host.LabelActor(ctx, 3, LabelReady); err != nil || got.Known {
+				t.Fatalf("after the removal: %+v %v", got, err)
+			}
+		}},
 		{"agent pull requests", func(t *testing.T, w *world) {
 			for _, st := range []PRState{"", "all", "OPEN", "draft"} {
 				if _, err := w.host.ListAgentPullRequests(ctx, st); !errors.Is(err, ErrRefused) {

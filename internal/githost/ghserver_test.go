@@ -284,15 +284,11 @@ func (s *ghServer) defaultName() string {
 }
 
 // setLabel adds or removes a label as actor and records the event, as GitHub
-// does. Adding a label that is there, or removing one that is not, does
-// nothing. An empty actor writes an event with no actor, as for a deleted user.
+// does. Label names that differ only in ASCII letter case are one label. A
+// repeat add (in any case) or a removal of a label that is not there does
+// nothing and records no event. An empty actor writes an event with no actor.
 func (s *ghServer) setLabel(it *srvItem, label, actor string, add bool) {
-	has := false
-	for _, l := range it.labels {
-		if l == label {
-			has = true
-		}
-	}
+	has := hasLabelFold(it.labels, label)
 	if has == add {
 		return
 	}
@@ -301,7 +297,7 @@ func (s *ghServer) setLabel(it *srvItem, label, actor string, add bool) {
 	} else {
 		var keep []string
 		for _, l := range it.labels {
-			if l != label {
+			if !asciiEqualFold(l, label) {
 				keep = append(keep, l)
 			}
 		}

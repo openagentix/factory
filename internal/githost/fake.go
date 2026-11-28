@@ -149,11 +149,13 @@ func (s *fakeState) newItem(title, body, author, assoc string) *fakeItem {
 }
 
 // setLabel adds or removes a label as actor and records the event, as a host
-// does. Adding a label that is there, or removing one that is not, changes
-// nothing and records nothing. An empty actor records an event with no actor,
-// as the host does for a deleted user.
+// does. Label names that differ only in ASCII letter case are one label, as on
+// the host. Adding a label that is there, in any case, changes nothing and
+// records no event: a repeat add never becomes the latest add, so an untrusted
+// user cannot take over an add by repeating it. Removing one that is not there
+// does nothing. An empty actor records an event with no actor name.
 func (s *fakeState) setLabel(it *fakeItem, label, actor string, add bool) {
-	if it.HasLabel(label) == add {
+	if hasLabelFold(it.Labels, label) == add {
 		return
 	}
 	if add {
@@ -161,7 +163,7 @@ func (s *fakeState) setLabel(it *fakeItem, label, actor string, add bool) {
 	} else {
 		var keep []string
 		for _, l := range it.Labels {
-			if l != label {
+			if !asciiEqualFold(l, label) {
 				keep = append(keep, l)
 			}
 		}

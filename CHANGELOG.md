@@ -15,8 +15,16 @@ There is no release yet. While the version is 0.x, minor releases can change int
 - The wording on agent logins and plan terms is now one position, in record 0001, "Not settled".
 - Design for OpenAgentix: the factory maps onto planned platform resources. Designed, not built.
 
+### Fixed
+
+- After a press that was done, the screen no longer shows the old picture with the button offered again.
+- Approve pressed again after its label was removed by hand no longer queues the builds twice.
+- A factory ticket that a person edited during a failed Approve is now refused with "This changed. Look again." and is not left behind.
+- A press at the moment of stopping no longer races with the stop.
+
 ### Added
 
+- Accept, Cancel and Undo work in the demo. Accept asks once more before it acts. Undo is in a piece's detail panel: it first shows which changes would leave the holding area, then asks. Cancel is offered only when a merge started and did not finish. Each press is tied to the state the screen showed and is refused with a plain sentence when that changed. When the git host fails half way, the factory finishes or repairs the step by itself on its next round. Undo after Accept is not built.
 - `internal/settings`, `internal/tokens` and `internal/redact`: the machine settings file with its two locks, the propose and accept tokens read from the system credential tool, and a filter that removes known secrets from text and streams. Nothing uses them yet. The token source is tested with a fake tool only.
 - Three buttons work in the demo: answer a question, yes or no on a risky change, and approve a plan. Each press is checked against what the screen showed, and is refused with a plain sentence when that changed. Accept, Cancel and Undo are not built.
 - `oxf run --demo`: the first thing to watch. It serves the Floor screen for a made-up project on a fake git host, on this machine only, with no login and no token. Real factory code moves the line: the runner with a stub agent, the checks, the machine gate and the holding area. The second opinion is scripted and marked so. Every printed line starts with `DEMO`. The story waits where a person would act. If the real code does not do what the story expects, the story stops and says so. `--once` plays the story and exits. Build it with `make web` and `make build-web`. It proves nothing about a real job.

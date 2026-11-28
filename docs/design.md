@@ -297,7 +297,7 @@ The evidence bundle is rendered in the pull request body as Summary, Evidence an
 
 ## 10. The web app
 
-Detail in decision record 0004. The design the owner approved is `docs/design/factory-floor-mockup.html`, a mockup with made-up data. It is the contract for look, words and behaviour. **(owner)** Built so far: the Floor, Needs you and Goals screens, shown by `oxf run --demo` with a made-up project. Three actions work there: answer a question, yes or no on a consequence, approve a plan. Accept, Cancel and Undo are not built. Nothing else in this section is built.
+Detail in decision record 0004. The design the owner approved is `docs/design/factory-floor-mockup.html`, a mockup with made-up data. It is the contract for look, words and behaviour. **(owner)** Built so far: the Floor, Needs you and Goals screens, shown by `oxf run --demo` with a made-up project. The actions work there: answer a question, yes or no on a consequence, approve a plan, Accept, Cancel and Undo of a change in the holding area. Undo after Accept is not built. Nothing else in this section is built.
 
 Stack: Svelte 5 with runes, SvelteKit as a static single-page app, Vite and strict TypeScript, with no utility style framework for now, embedded in the binary. The design's CSS variables are the tokens. Fonts are bundled under the SIL Open Font Licence 1.1. A strict content security policy. Live updates by server-sent events, read with `fetch` so the key is never in a cookie or a URL. **(call)**
 
@@ -316,7 +316,7 @@ Screens in v0.1:
 
 | Group | Screen | Shows | Status |
 |---|---|---|---|
-| Factory | Floor (home) | The tower, the gauges, the line, goal lanes, Needs a person, the shift log | Built, with the demo's data only; no actions yet |
+| Factory | Floor (home) | The tower, the gauges, the line, goal lanes, Needs a person, the shift log | Built, with the demo's data only |
 | Factory | Needs you | Questions, yes or no on a consequence, plans to approve, Accept, oldest first | Built, with the demo's data only; no actions yet |
 | Factory | Goals | Each goal with its lane, its course and its lines | Built, with the demo's data only; no actions yet |
 | Factory | Live | What this machine does now; a teammate's machine from its claim | Designed, not built |

@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -55,6 +54,10 @@ var (
 	ErrNoAcceptToken = errors.New("githost: this action needs the accept token and none was given")
 	// ErrRefused is returned when a rule of this package forbids the action.
 	ErrRefused = errors.New("githost: refused by a factory rule")
+	// ErrRepositoryMoved is returned when an answer comes from, or names, a
+	// repository other than the configured one: the repository was probably
+	// renamed or transferred. Nothing from such an answer is taken.
+	ErrRepositoryMoved = errors.New("githost: the answer is from another repository than the configured one; the repository seems to have moved")
 	// ErrNotFound is returned when the host has no such item.
 	ErrNotFound = errors.New("githost: not found")
 )
@@ -252,6 +255,36 @@ type PullRequest struct {
 	Title    string
 	Body     string
 	URL      string
+	// Author is the login of the user who opened it. It is empty when the
+	// host did not say.
+	Author string
+}
+
+// DefaultBranchInfo is the default branch as the host reports it.
+type DefaultBranchInfo struct {
+	// Name is the branch name. It has passed the branch name rules and is
+	// never the staging branch.
+	Name string
+	// Commit is the full id of the head commit, as the host reports it now.
+	Commit string
+}
+
+// LabelActorInfo tells who put a label on an issue. The zero value, with Known
+// false, means "unknown" and must never be read as a trusted answer.
+type LabelActorInfo struct {
+	// Known is true only when the host's events name exactly one actor for
+	// the latest add of the label, and the label is on the issue now.
+	Known bool
+	// Login is the user who made the latest add. Empty unless Known.
+	Login string
+	// At is when the host says that add happened. Zero unless Known.
+	At time.Time
+	// ActorCanWrite is NOT the list of trusted logins of record 0003: it is
+	// true when the actor has write, maintain or admin permission on the
+	// repository, or is the factory's own user, and the answer is Known. A
+	// caller that acts on a label must also check the actor against the list of
+	// trusted logins, by id.
+	ActorCanWrite bool
 }
 
 // PRSpec asks for a pull request. A pull request from an agent branch goes
@@ -352,8 +385,40 @@ type Proposer interface {
 	// accept token and writes nothing.
 	ManualPullRequestURL(ctx context.Context, branch string) (string, error)
 	// PushStaging force pushes a commit to the staging branch. It is the only
-	// way to write the staging branch.
+	// way to write the staging branch. It refuses when the default branch is
+	// not known, or is the staging branch.
 	PushStaging(ctx context.Context, dir, commit string) error
+	// DefaultBranch reads the name and the head commit of the default branch
+	// from the host. It fails when either is missing or not valid, or when the
+	// default branch is the staging branch. The name comes with the repository's
+	// full name, which must be the configured one. The head commit is read in a
+	// second request that carries no repository name: a rename of the
+	// repository between the two requests, with a new repository created at the
+	// old name, is not detected.
+	DefaultBranch(ctx context.Context) (DefaultBranchInfo, error)
+	// LabelActor tells who made the latest add of a label on an issue or pull
+	// request, from the host's events. The label must be in FixedLabels, and
+	// names are compared in ASCII letter case only. The answer is unknown
+	// (Known false) when the label is not on the issue now, the events are out
+	// of order, the actor is missing, not a valid login, "ghost" or a "[bot]"
+	// login, or the events were cut short (then with a *TruncatedError).
+	// An answer that comes from another repository is ErrRepositoryMoved.
+	LabelActor(ctx context.Context, number int, label string) (LabelActorInfo, error)
+	// ListAgentPullRequests lists the pull requests that the factory's own
+	// user opened from a branch under BranchPrefix of this repository into
+	// the staging branch, in the given state, oldest number first. The state
+	// is PROpen, PRClosed (closed and not merged) or PRMerged; any other value
+	// is refused. A label is not needed and not trusted.
+	//
+	// A *TruncatedError means the count is unknown: the pull requests read so
+	// far come back with it, and a caller that counts them (for a cap) must
+	// hold and not read the count as a lower bound it can act on. A pull
+	// request that is closed or merged while the pages are being read can move
+	// between the lists and be missed or seen twice; a count is a snapshot at
+	// best. A pull request by the factory user from a non-fork head repository
+	// with another name fails the whole call with ErrRepositoryMoved, so a
+	// renamed repository is never counted as zero. A real fork is skipped.
+	ListAgentPullRequests(ctx context.Context, state PRState) ([]PullRequest, error)
 }
 
 // Accepter is everything the accept token may do, and nothing else. Each
@@ -386,7 +451,7 @@ func refuse(format string, a ...any) error {
 // permissionWrites says whether a repository permission or role counts as
 // write access: admin, maintain and write do; triage, read and none do not.
 func permissionWrites(perm string) bool {
-	switch strings.ToLower(perm) {
+	switch asciiLower(perm) {
 	case "admin", "maintain", "write":
 		return true
 	}

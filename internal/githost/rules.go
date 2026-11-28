@@ -49,6 +49,19 @@ func asciiEqualFold(a, b string) bool {
 	return true
 }
 
+// asciiLower lower-cases ASCII letters only. strings.ToLower also maps, for
+// example, the Kelvin sign U+212A to "k", so two different logins could share
+// one key. Names from the host are untrusted, so keys use this.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
 // isStagingName reports whether a branch name, as a host or a person might
 // write it, names the staging branch or could be taken for it: the exact name,
 // with refs/heads/, in any letter case, with white space or a trailing slash.
@@ -125,7 +138,52 @@ func checkLabel(l string) error {
 
 // isFactoryLogin reports whether the author is the factory's own user.
 func isFactoryLogin(author, factoryLogin string) bool {
-	return author != "" && factoryLogin != "" && strings.EqualFold(author, factoryLogin)
+	return author != "" && factoryLogin != "" && asciiEqualFold(author, factoryLogin)
 }
 
 var loginRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,38}|[A-Za-z0-9-]*\[bot\])$`)
+
+const (
+	// maxListTitle and maxListBody bound the text of a pull request in a list.
+	maxListTitle = 250
+	maxListBody  = 65536
+)
+
+// checkListState allows the three states a list of pull requests may ask for.
+func checkListState(st PRState) error {
+	switch st {
+	case PROpen, PRClosed, PRMerged:
+		return nil
+	}
+	return refuse("the state of a pull request list must be open, closed or merged")
+}
+
+// isAgentBranch reports whether name is a valid agent branch: under
+// BranchPrefix, with something after it, and a name git accepts.
+func isAgentBranch(name string) bool {
+	return strings.HasPrefix(name, BranchPrefix) && len(name) > len(BranchPrefix) && checkBranchName(name) == nil
+}
+
+// hasLabelFold reports whether the labels hold the label. The host treats
+// label names that differ only by ASCII letter case as one label. Unicode
+// folding is never used: it would equate "factory:need\u017f-human" with
+// "factory:needs-human".
+func hasLabelFold(labels []string, label string) bool {
+	for _, l := range labels {
+		if asciiEqualFold(l, label) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactLine makes untrusted host text safe to put in an error: one line, no
+// control characters.
+func redactLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+}

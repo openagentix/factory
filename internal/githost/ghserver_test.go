@@ -35,6 +35,11 @@ type ghServer struct {
 	protected   bool
 	perms       map[string]string
 	permCalls   int
+	// defBranch is the default branch the server reports. Empty means main.
+	defBranch string
+	// isFork makes the repository a fork: its own pull requests say fork true.
+	isFork    bool
+	nextEvent int64
 
 	// Requests that used a token for something it must not do.
 	mergesByPropose int
@@ -49,6 +54,7 @@ type srvItem struct {
 	labels       []string
 	login, assoc string
 	comments     []map[string]any
+	events       []map[string]any
 	pr           bool
 	head, base   string
 	draft        bool
@@ -75,7 +81,9 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 	}
 	for _, fi := range fx.Issues {
 		it := s.newItem(fi.Title, fi.Body, fi.Author, fi.Association)
-		it.labels = append(it.labels, fi.Labels...)
+		for _, l := range fi.Labels {
+			s.setLabel(it, l, fi.Author, true)
+		}
 		for _, c := range fi.Comments {
 			s.addComment(it, c.Author, c.Association, c.Body)
 		}
@@ -99,7 +107,7 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 		writeJSON(w, 200, map[string]any{"login": login})
 	})
 	h("GET "+R, func(w http.ResponseWriter, r *http.Request, _ string) {
-		writeJSON(w, 200, map[string]any{"default_branch": "main", "full_name": "demo/demo"})
+		writeJSON(w, 200, map[string]any{"default_branch": s.defaultName(), "full_name": "demo/demo"})
 	})
 	h("GET "+R+"/branches/{branch}", func(w http.ResponseWriter, r *http.Request, _ string) {
 		sha := s.git.head(r.PathValue("branch"))
@@ -149,28 +157,29 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 			writeJSON(w, 201, s.addComment(it, login, "NONE", in.Body))
 		}
 	})
-	h("POST "+R+"/issues/{n}/labels", func(w http.ResponseWriter, r *http.Request, _ string) {
+	h("POST "+R+"/issues/{n}/labels", func(w http.ResponseWriter, r *http.Request, login string) {
 		if it := s.find(w, r); it != nil {
 			var in struct{ Labels []string }
 			decode(r, &in)
 			for _, l := range in.Labels {
-				if !contains(strings.Join(it.labels, "\n"), l) {
-					it.labels = append(it.labels, l)
-				}
+				s.setLabel(it, l, login, true)
 			}
 			writeJSON(w, 200, s.issueJSON(it)["labels"])
 		}
 	})
-	h("DELETE "+R+"/issues/{n}/labels/{label}", func(w http.ResponseWriter, r *http.Request, _ string) {
+	h("DELETE "+R+"/issues/{n}/labels/{label}", func(w http.ResponseWriter, r *http.Request, login string) {
 		if it := s.find(w, r); it != nil {
-			var keep []string
-			for _, l := range it.labels {
-				if l != r.PathValue("label") {
-					keep = append(keep, l)
-				}
-			}
-			it.labels = keep
+			s.setLabel(it, r.PathValue("label"), login, false)
 			writeJSON(w, 200, s.issueJSON(it)["labels"])
+		}
+	})
+	h("GET "+R+"/issues/{n}/events", func(w http.ResponseWriter, r *http.Request, _ string) {
+		if it := s.find(w, r); it != nil {
+			all := []any{}
+			for _, e := range it.events {
+				all = append(all, e)
+			}
+			s.paginate(w, r, all)
 		}
 	})
 	h("POST "+R+"/issues/{n}/sub_issues", func(w http.ResponseWriter, r *http.Request, _ string) {
@@ -208,6 +217,10 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 		decode(r, &in)
 		if s.git.head(in.Head) == "" {
 			writeJSON(w, 422, map[string]any{"message": "Validation Failed", "errors": []any{map[string]any{"message": "head branch does not exist"}}})
+			return
+		}
+		if s.git.head(in.Base) == "" {
+			writeJSON(w, 422, map[string]any{"message": "Validation Failed", "errors": []any{map[string]any{"message": "base branch does not exist"}}})
 			return
 		}
 		it := s.newItem(in.Title, in.Body, login, "NONE")
@@ -265,6 +278,48 @@ func newGHServer(t *testing.T, git gitFixture, clock *testClock, fx Fixture) *gh
 	return s
 }
 
+func (s *ghServer) defaultName() string {
+	if s.defBranch == "" {
+		return "main"
+	}
+	return s.defBranch
+}
+
+// setLabel adds or removes a label as actor and records the event, as GitHub
+// does. Label names that differ only in ASCII letter case are one label. A
+// repeat add (in any case) or a removal of a label that is not there does
+// nothing and records no event. An empty actor writes an event with no actor.
+func (s *ghServer) setLabel(it *srvItem, label, actor string, add bool) {
+	has := hasLabelFold(it.labels, label)
+	if has == add {
+		return
+	}
+	if add {
+		it.labels = append(it.labels, label)
+	} else {
+		var keep []string
+		for _, l := range it.labels {
+			if !asciiEqualFold(l, label) {
+				keep = append(keep, l)
+			}
+		}
+		it.labels = keep
+	}
+	s.nextEvent++
+	kind := "labeled"
+	if !add {
+		kind = "unlabeled"
+	}
+	var who any
+	if actor != "" {
+		who = map[string]any{"login": actor}
+	}
+	it.events = append(it.events, map[string]any{
+		"id": s.nextEvent, "event": kind, "actor": who, "label": map[string]any{"name": label},
+		"created_at": s.clock.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 func decode(r *http.Request, v any) { _ = json.NewDecoder(r.Body).Decode(v) }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -318,6 +373,7 @@ func (s *ghServer) issueJSON(it *srvItem) map[string]any {
 	m := map[string]any{
 		"number": it.number, "id": it.id, "title": it.title, "state": it.state, "labels": labels,
 		"user": map[string]any{"login": it.login}, "author_association": it.assoc,
+		"repository_url": "https://api.github.com/repos/demo/demo",
 	}
 	if it.body != "" {
 		m["body"] = it.body // GitHub sends null for an empty body
@@ -335,12 +391,14 @@ func (s *ghServer) prJSON(it *srvItem) map[string]any {
 	m := map[string]any{
 		"number": it.number, "state": state, "title": it.title, "body": it.body, "draft": it.draft, "merged": it.merged,
 		"html_url": "https://example.invalid/pull/" + strconv.Itoa(it.number),
+		"user":     map[string]any{"login": it.login},
 		"head": map[string]any{"ref": it.head, "sha": s.git.head(it.head),
-			"repo": map[string]any{"full_name": it.headRepo, "fork": it.headRepo != "demo/demo"}},
+			"repo": map[string]any{"full_name": it.headRepo, "fork": it.headRepo != "demo/demo" || s.isFork}},
 		"base": map[string]any{"ref": it.base},
 	}
 	if it.merged {
 		m["merged_by"] = map[string]any{"login": it.mergedBy}
+		m["merged_at"] = "2026-11-26T09:00:00Z"
 	}
 	return m
 }

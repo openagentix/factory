@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -339,16 +340,35 @@ func (g *GitHub) factoryLogin(ctx context.Context) (string, error) {
 }
 
 func (g *GitHub) defaultBranch(ctx context.Context) (string, error) {
+	def, _, err := g.repoInfo(ctx)
+	return def, err
+}
+
+// repoInfo reads the repository: the default branch and the full name the
+// host gives it. The full name is empty when the host did not say.
+func (g *GitHub) repoInfo(ctx context.Context) (def, fullName string, err error) {
 	var r struct {
 		DefaultBranch string `json:"default_branch"`
+		FullName      string `json:"full_name"`
 	}
 	if _, err := g.call(ctx, g.propose, http.MethodGet, g.base.String()+g.path(""), nil, &r); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if r.DefaultBranch == "" {
-		return "", errors.New("githost: the host did not name the default branch")
+		return "", "", errors.New("githost: the host did not name the default branch")
 	}
-	return r.DefaultBranch, nil
+	return r.DefaultBranch, r.FullName, nil
+}
+
+// sameRepo reports whether a full name from the host is the configured
+// repository. Repository names are ASCII, so only ASCII letter case is folded.
+func (g *GitHub) sameRepo(fullName string) bool {
+	return asciiEqualFold(fullName, g.repo.String())
+}
+
+// movedError is the error for an answer from another repository.
+func movedError(what, got string) error {
+	return fmt.Errorf("%w (%s names %q)", ErrRepositoryMoved, what, clip(redactLine(got), 80))
 }
 
 type ghIssue struct {
@@ -365,6 +385,8 @@ type ghIssue struct {
 	} `json:"user"`
 	Association string          `json:"author_association"`
 	PullRequest json.RawMessage `json:"pull_request"`
+	// RepositoryURL is the API address of the repository the issue is in.
+	RepositoryURL string `json:"repository_url"`
 }
 
 // isWriter says whether a user may write to the repository, by the user's
@@ -382,7 +404,7 @@ func (g *GitHub) isWriter(ctx context.Context, login string) (bool, error) {
 	if !loginRE.MatchString(login) {
 		return false, nil
 	}
-	key := strings.ToLower(login)
+	key := asciiLower(login)
 	g.mu.Lock()
 	e, ok := g.perms[key]
 	g.mu.Unlock()
@@ -400,7 +422,7 @@ func (g *GitHub) isWriter(ctx context.Context, login string) (bool, error) {
 	case err != nil:
 		return false, err
 	default:
-		switch strings.ToLower(r.RoleName) {
+		switch asciiLower(r.RoleName) {
 		case "admin", "maintain", "write":
 			write = true
 		case "triage", "read", "none":
@@ -418,7 +440,7 @@ func (g *GitHub) isWriter(ctx context.Context, login string) (bool, error) {
 func (g *GitHub) writerSet(ctx context.Context, logins []string) (func(string) bool, error) {
 	set := map[string]bool{}
 	for _, l := range logins {
-		k := strings.ToLower(l)
+		k := asciiLower(l)
 		if _, done := set[k]; done {
 			continue
 		}
@@ -428,7 +450,7 @@ func (g *GitHub) writerSet(ctx context.Context, logins []string) (func(string) b
 		}
 		set[k] = w
 	}
-	return func(l string) bool { return set[strings.ToLower(l)] }, nil
+	return func(l string) bool { return set[asciiLower(l)] }, nil
 }
 
 func (g *GitHub) issueFrom(i ghIssue, writer func(string) bool) Issue {
@@ -646,10 +668,14 @@ func (g *GitHub) CreateSubIssues(ctx context.Context, goal int, p []api.IssuePro
 }
 
 type ghPR struct {
-	Number   int    `json:"number"`
-	State    string `json:"state"`
-	Draft    bool   `json:"draft"`
-	Merged   bool   `json:"merged"`
+	Number   int     `json:"number"`
+	State    string  `json:"state"`
+	Draft    bool    `json:"draft"`
+	Merged   bool    `json:"merged"`
+	MergedAt *string `json:"merged_at"`
+	User     struct {
+		Login string `json:"login"`
+	} `json:"user"`
 	Title    string `json:"title"`
 	Body     string `json:"body"`
 	HTMLURL  string `json:"html_url"`
@@ -671,9 +697,9 @@ type ghPR struct {
 
 func (p ghPR) view() PullRequest {
 	v := PullRequest{Number: p.Number, State: PRClosed, Head: p.Head.Ref, HeadSHA: p.Head.SHA, Base: p.Base.Ref,
-		Draft: p.Draft, Title: p.Title, Body: p.Body, URL: p.HTMLURL}
+		Draft: p.Draft, Title: p.Title, Body: p.Body, URL: p.HTMLURL, Author: p.User.Login}
 	switch {
-	case p.Merged || p.MergedBy != nil:
+	case p.Merged || p.MergedBy != nil || (p.MergedAt != nil && *p.MergedAt != ""):
 		v.State = PRMerged
 		if p.MergedBy != nil {
 			v.MergedBy = p.MergedBy.Login
@@ -685,13 +711,16 @@ func (p ghPR) view() PullRequest {
 }
 
 // checkHead makes sure a pull request is the one the caller expects: open,
-// from this repository and not a fork, from the expected branch at the
+// with this repository as its head (decided by name, not by the fork flag), from the expected branch at the
 // expected commit, into the default branch.
 func (g *GitHub) checkHead(p ghPR, headRef, commit, def string) error {
 	switch {
 	case p.Head.Ref != headRef || p.Base.Ref != def:
 		return refuse("pull request %d is not the expected pull request from %q into %q", p.Number, headRef, def)
-	case p.Head.Repo == nil || p.Head.Repo.Fork || !strings.EqualFold(p.Head.Repo.FullName, g.repo.String()):
+	// The fork flag says the head repository is a fork of some other
+	// repository. In a repository that is itself a fork, every pull request of
+	// its own carries it. Only the name says whether the head is this repository.
+	case p.Head.Repo == nil || !g.sameRepo(p.Head.Repo.FullName):
 		return refuse("pull request %d does not come from this repository", p.Number)
 	case p.State != "open":
 		return refuse("pull request %d is not open", p.Number)
@@ -881,4 +910,171 @@ func (g *GitHub) OpenRevert(ctx context.Context, spec RevertSpec) (PullRequest, 
 		return PullRequest{}, err
 	}
 	return p.view(), nil
+}
+
+func (g *GitHub) DefaultBranch(ctx context.Context) (DefaultBranchInfo, error) {
+	def, full, err := g.repoInfo(ctx)
+	if err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	// A rename or transfer is answered with a redirect that the client
+	// follows. The answer then names the new repository. With no name there is
+	// no way to tell, and that is not an answer either.
+	if full == "" {
+		return DefaultBranchInfo{}, errors.New("githost: the host did not name the repository, so the default branch is not taken")
+	}
+	if !g.sameRepo(full) {
+		return DefaultBranchInfo{}, movedError("the repository answer", full)
+	}
+	if err := checkStagingPush(def); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	if err := checkBranchName(def); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	var b struct {
+		Name   string `json:"name"`
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if _, err := g.call(ctx, g.propose, http.MethodGet, g.base.String()+g.path("/branches/"+url.PathEscape(def)), nil, &b); err != nil {
+		return DefaultBranchInfo{}, err
+	}
+	if b.Name != def {
+		return DefaultBranchInfo{}, errors.New("githost: the host answered for another branch than the default branch")
+	}
+	if checkCommit(b.Commit.SHA) != nil {
+		return DefaultBranchInfo{}, errors.New("githost: the host gave no valid commit for the default branch")
+	}
+	return DefaultBranchInfo{Name: def, Commit: b.Commit.SHA}, nil
+}
+
+// ghLabelEvent is one entry of an issue's events list.
+type ghLabelEvent struct {
+	ID    int64  `json:"id"`
+	Event string `json:"event"`
+	Actor *struct {
+		Login string `json:"login"`
+	} `json:"actor"`
+	Label *struct {
+		Name string `json:"name"`
+	} `json:"label"`
+	Created string `json:"created_at"`
+}
+
+func (g *GitHub) LabelActor(ctx context.Context, n int, label string) (LabelActorInfo, error) {
+	if err := checkLabel(label); err != nil {
+		return LabelActorInfo{}, err
+	}
+	var i ghIssue
+	if _, err := g.call(ctx, g.propose, http.MethodGet, g.base.String()+g.path("/issues/"+strconv.Itoa(n)), nil, &i); err != nil {
+		return LabelActorInfo{}, err
+	}
+	if p, err := url.Parse(i.RepositoryURL); i.RepositoryURL == "" || err != nil {
+		return LabelActorInfo{}, errors.New("githost: the host did not say which repository the issue is in, so its events are not taken")
+	} else if !asciiEqualFold(strings.TrimRight(p.Path, "/"), strings.TrimRight(g.base.Path, "/")+g.path("")) {
+		return LabelActorInfo{}, movedError("the issue", p.Path)
+	}
+	var names []string
+	for _, l := range i.Labels {
+		names = append(names, l.Name)
+	}
+	if !hasLabelFold(names, label) {
+		return LabelActorInfo{}, nil // not on the issue now: unknown
+	}
+	var events []labelEvent
+	err := g.getAll(ctx, g.path("/issues/"+strconv.Itoa(n)+"/events"), nil, func(raw json.RawMessage) error {
+		var e ghLabelEvent
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return errors.New("githost: bad event JSON")
+		}
+		if (e.Event != "labeled" && e.Event != "unlabeled") || e.Label == nil {
+			return nil
+		}
+		at, err := time.Parse(time.RFC3339, e.Created)
+		if err != nil {
+			return fmt.Errorf("githost: event %d has no valid time", e.ID)
+		}
+		le := labelEvent{ID: e.ID, Added: e.Event == "labeled", Label: e.Label.Name, At: at}
+		if e.Actor != nil {
+			le.Actor = e.Actor.Login
+		}
+		events = append(events, le)
+		return nil
+	})
+	if err != nil {
+		// The newest events are the last ones. A list cut short may hide the
+		// event that decides, so it is never an answer.
+		return LabelActorInfo{}, err
+	}
+	e, ok := latestAdd(events, label, true)
+	if !ok {
+		return LabelActorInfo{}, nil
+	}
+	trusted, err := g.isWriter(ctx, e.Actor)
+	if err != nil {
+		return LabelActorInfo{}, err
+	}
+	return LabelActorInfo{Known: true, Login: e.Actor, At: e.At, ActorCanWrite: trusted}, nil
+}
+
+func (g *GitHub) ListAgentPullRequests(ctx context.Context, state PRState) ([]PullRequest, error) {
+	if err := checkListState(state); err != nil {
+		return nil, err
+	}
+	q := "open"
+	if state != PROpen {
+		q = "closed" // a merged pull request is a closed one
+	}
+	factory, err := g.factoryLogin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []PullRequest
+	seen := map[int]bool{}
+	readErr := g.getAll(ctx, g.path("/pulls"), url.Values{"state": {q}, "base": {StagingBranch}, "sort": {"created"}, "direction": {"asc"}},
+		func(raw json.RawMessage) error {
+			var p ghPR
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return errors.New("githost: bad pull request JSON")
+			}
+			// The filters above are a request, not a promise. Check every item.
+			if p.Number <= 0 || seen[p.Number] || !isFactoryLogin(p.User.Login, factory) || !isAgentBranch(p.Head.Ref) ||
+				p.Base.Ref != StagingBranch {
+				return nil
+			}
+			// A null head repository is a deleted fork. The head repository of
+			// one of our own pull requests is this repository, which exists
+			// while we read it, so it is never null. Skipping cannot hide one.
+			if p.Head.Repo == nil {
+				return nil
+			}
+			// Decide by the name, never by the fork flag alone. The flag says
+			// "a fork of some other repository": a repository that is itself a
+			// fork has it on every pull request of its own.
+			if !g.sameRepo(p.Head.Repo.FullName) {
+				if p.Head.Repo.Fork {
+					return nil // a real fork, with another name
+				}
+				// Not a fork and another name: the repository moved (the host
+				// answered the old path with a redirect, or the name changed).
+				// Skipping it would count zero. Fail the whole call.
+				return movedError("pull request "+strconv.Itoa(p.Number), p.Head.Repo.FullName)
+			}
+			v := p.view()
+			if v.State != state {
+				return nil
+			}
+			seen[p.Number] = true
+			v.Title, v.Body = clip(v.Title, maxListTitle), clip(v.Body, maxListBody)
+			out = append(out, v)
+			return nil
+		})
+	var trunc *TruncatedError
+	if readErr != nil && !errors.As(readErr, &trunc) {
+		return nil, readErr
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, readErr
 }

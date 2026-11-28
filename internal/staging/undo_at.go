@@ -122,3 +122,30 @@ func (s *Staging) UndoAt(ctx context.Context, seq int64, commit, id string, also
 	}
 	return s.removeUndone(ctx, id, list, deps)
 }
+
+// Republish pushes the newest state again when it was recorded and never
+// confirmed as pushed. This is what a failed push leaves behind, also after an
+// UndoAt: the removal is in the recorded state and the host does not have it
+// yet. It records nothing new and removes nothing, so calling it again, or after
+// the push worked, does nothing and answers false. It is the first step of
+// Resolve, for a caller that must not read the pull request.
+func (s *Staging) Republish(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.republishLocked(ctx)
+}
+
+func (s *Staging) republishLocked(ctx context.Context) (bool, error) {
+	latest, ok, err := s.cfg.Store.Latest(ctx)
+	if err != nil || !ok || latest.Published {
+		return false, err
+	}
+	cur, err := s.readStagingRef(ctx)
+	if err != nil {
+		return false, err
+	}
+	if err := s.publish(ctx, latest, cur); err != nil {
+		return false, err
+	}
+	return true, nil
+}

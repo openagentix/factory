@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/openagentix/factory/internal/githost"
 )
 
 // threeChanges builds three changes: ticket 2 waits for ticket 1, ticket 3 stands
@@ -251,5 +253,61 @@ func TestCancelAcceptAtBindsTheCommit(t *testing.T) {
 	}
 	if _, ok, _ := f.store.GetPending(f.ctx); ok {
 		t.Error("still pending")
+	}
+}
+
+// A push that fails inside UndoAt leaves the removal recorded in a state that is
+// not published. Republish pushes that same state again: nothing is removed
+// twice, the state number does not move, and the holding area works again.
+func TestRepublishAfterAFailedPushInUndoAt(t *testing.T) {
+	t.Parallel()
+	f, es, st := threeChanges(t)
+	f.host.failPush = 1
+	if _, _, err := f.s.UndoAt(f.ctx, st.Seq, st.Commit, es[2].ID, nil); err == nil {
+		t.Fatal("the push should have failed")
+	}
+	latest, _, _ := f.store.Latest(f.ctx)
+	if latest.Published || latest.Seq != st.Seq+1 {
+		t.Fatalf("latest: %+v", latest)
+	}
+	// Until it is repaired, nothing works on the holding area.
+	if _, err := f.s.UndoPreview(f.ctx, es[0].ID); !errors.Is(err, ErrNotPublished) {
+		t.Fatalf("preview: %v", err)
+	}
+	ok, err := f.s.Republish(f.ctx)
+	if err != nil || !ok {
+		t.Fatalf("Republish = %v %v", ok, err)
+	}
+	after, _, _ := f.store.Latest(f.ctx)
+	if !after.Published || after.Seq != latest.Seq || after.Commit != latest.Commit {
+		t.Fatalf("after: %+v", after)
+	}
+	if ok, err := f.s.Republish(f.ctx); err != nil || ok {
+		t.Fatalf("a second Republish did something: %v %v", ok, err)
+	}
+	// The undone change is gone once, and the others work.
+	if _, _, err := f.s.UndoAt(f.ctx, st.Seq, st.Commit, es[2].ID, nil); err == nil {
+		t.Fatal("the old press worked again")
+	}
+	if _, err := f.s.UndoPreview(f.ctx, es[2].ID); !errors.Is(err, ErrUnknownEntry) {
+		t.Fatalf("the change is removed once: %v", err)
+	}
+	if _, err := f.s.UndoPreview(f.ctx, es[0].ID); err != nil {
+		t.Fatalf("preview of another change: %v", err)
+	}
+	if res, err := f.s.Accept(f.ctx, after.Seq, after.Commit); err != nil || res.Outcome != OutcomeAccepted {
+		t.Fatalf("Accept: %+v %v", res, err)
+	}
+	if got := f.fake.BranchHead(githost.StagingBranch); got == "" {
+		t.Error("the host has no staging branch")
+	}
+}
+
+// With no failed push, Republish does nothing.
+func TestRepublishWithNothingToDo(t *testing.T) {
+	t.Parallel()
+	f, _, _ := threeChanges(t)
+	if ok, err := f.s.Republish(f.ctx); err != nil || ok {
+		t.Fatalf("%v %v", ok, err)
 	}
 }

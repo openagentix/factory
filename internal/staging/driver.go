@@ -391,20 +391,11 @@ func (s *Staging) Resolve(ctx context.Context) (Resolution, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var res Resolution
-	latest, ok, err := s.cfg.Store.Latest(ctx)
+	repub, err := s.republishLocked(ctx)
 	if err != nil {
 		return res, err
 	}
-	if ok && !latest.Published {
-		cur, err := s.readStagingRef(ctx)
-		if err != nil {
-			return res, err
-		}
-		if err := s.publish(ctx, latest, cur); err != nil {
-			return res, err
-		}
-		res.Republished = true
-	}
+	res.Republished = repub
 	p, pending, err := s.cfg.Store.GetPending(ctx)
 	if err != nil {
 		return res, err

@@ -289,7 +289,9 @@ export class AppState {
         const undoLive = (k: string) => h !== null && k.startsWith(`u|${h.stagingSeq}|${h.commit}|`);
         for (const k of Object.keys(this.acts)) if (k.startsWith('u|') && undoLive(k)) live.add(k);
         if (this.undo !== null && !undoLive(undoKey(this.undo.ref))) {
-            const wasSent = this.acts[undoKey(this.undo.ref)] !== undefined;
+            // Only a press that went out says the change was taken out. A refused or failed press says nothing.
+            const phase = this.acts[undoKey(this.undo.ref)]?.phase;
+            const wasSent = phase === 'sent' || phase === 'running' || phase === 'again';
             this.undo = null;
             if (wasSent) this.announce = 'The change was taken out of the holding area.';
         }

@@ -295,4 +295,37 @@ describe('the piece drawer', () => {
         await userEvent.click(btn(dialog(), 'Undo now'));
         await vi.waitFor(() => expect(txt(dialog().querySelector('[data-undo]'))).toContain(table['refusal.stale']));
     });
+
+    const status = () => document.querySelector('.sr[role="status"]')!.textContent ?? '';
+    const newState = (fake: { setSnapshot(v: unknown): void; event(n: string): void }) => {
+        const next: Any = clone(FIXTURES.demo);
+        next.holdingArea.stagingSeq = 8;
+        next.holdingArea.commit = 'd'.repeat(40);
+        fake.setSnapshot(next);
+        fake.event('floor');
+    };
+    const readUndo = (u: string) => (u.endsWith('/pieces/t46') ? json(detailOf('t46')) : json(previewOf()));
+
+    it('a refused Undo followed by a new state announces nothing about a change taken out', async () => {
+        const { fake } = await openPiece(46, { write: () => refuse(409, 'stale'), read: readUndo });
+        await vi.waitFor(() => expect(btn(dialog(), 'Undo this change')).toBeDefined());
+        await userEvent.click(btn(dialog(), 'Undo this change'));
+        await vi.waitFor(() => expect(btn(dialog(), 'Undo now')).toBeDefined());
+        await userEvent.click(btn(dialog(), 'Undo now'));
+        await vi.waitFor(() => expect(txt(dialog().querySelector('[data-undo]'))).toContain(table['refusal.stale']));
+        newState(fake);
+        await vi.waitFor(() => expect(dialog().querySelector('[data-undo]')).toBeNull());
+        expect(status()).not.toContain('taken out of the holding area');
+    });
+
+    it('an Undo that was sent and a new state announces that the change was taken out', async () => {
+        const { fake } = await openPiece(46, { read: readUndo });
+        await vi.waitFor(() => expect(btn(dialog(), 'Undo this change')).toBeDefined());
+        await userEvent.click(btn(dialog(), 'Undo this change'));
+        await vi.waitFor(() => expect(btn(dialog(), 'Undo now')).toBeDefined());
+        await userEvent.click(btn(dialog(), 'Undo now'));
+        await vi.waitFor(() => expect(txt(dialog().querySelector('[data-undo]'))).toContain('Sent.'));
+        newState(fake);
+        await vi.waitFor(() => expect(status()).toContain('The change was taken out of the holding area.'));
+    });
 });

@@ -989,3 +989,53 @@ func TestGhostAndBotActorsAreUnknown_Fake(t *testing.T) {
 		}
 	}
 }
+
+// --- a repository that is a fork; a base URL with a path ---
+
+func TestOwnPullRequestsCountWhateverTheForkFlagSays_GitHub(t *testing.T) {
+	ctx := context.Background()
+	items := []string{
+		prJSON(1, "factory-bot", "factory/r1", StagingBranch, "demo/demo", true, "open", ""),   // own, the repository is a fork
+		prJSON(2, "factory-bot", "factory/r2", StagingBranch, "Demo/Demo", true, "open", ""),   // same, other letter case
+		prJSON(3, "factory-bot", "factory/r3", StagingBranch, "demo/demo", false, "open", ""),  // own, usual case
+		prJSON(4, "factory-bot", "factory/r4", StagingBranch, "other/demo", true, "open", ""),  // a real fork: skipped
+		prJSON(5, "factory-bot", "factory/r5", StagingBranch, "", true, "open", ""),            // head repository deleted: skipped
+		prJSON(6, "factory-bot", "factory/r6", StagingBranch, "other/demo", false, "open", ""), // not a fork, another name: moved
+	}
+	g, _ := testGH(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "["+strings.Join(items[:5], ",")+"]")
+	})
+	got, err := g.ListAgentPullRequests(ctx, PROpen)
+	var nums []int
+	for _, p := range got {
+		nums = append(nums, p.Number)
+	}
+	if err != nil || !reflect.DeepEqual(nums, []int{1, 2, 3}) {
+		t.Fatalf("got %v %v, want 1 2 3", nums, err)
+	}
+	g, _ = testGH(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "["+strings.Join(items, ",")+"]")
+	})
+	if got, err := g.ListAgentPullRequests(ctx, PROpen); !errors.Is(err, ErrRepositoryMoved) || len(got) != 0 {
+		t.Fatalf("not a fork, other name: %v %v", got, err)
+	}
+}
+
+func TestFakeRepositoryThatIsAForkKeepsItsOwnPullRequests(t *testing.T) {
+	ctx := context.Background()
+	c1, _ := fakeCommits()
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	must(t, f.PushBranch(ctx, "", c1, "factory/r1"))
+	must(t, f.PushStaging(ctx, "", c1))
+	pr, err := f.OpenPullRequest(ctx, PRSpec{Head: "factory/r1", Base: StagingBranch, Title: "t"})
+	must(t, err)
+	f.SimulateRepositoryIsFork()
+	if f.items[pr.Number].pr.headRepo != "demo/demo" || !f.items[pr.Number].pr.fork {
+		t.Fatalf("an own pull request must carry fork true and its own name: %+v", f.items[pr.Number].pr)
+	}
+	// SimulateFork gives another name and fork true.
+	f.SimulateFork(pr.Number)
+	if p := f.items[pr.Number].pr; p.headRepo == "demo/demo" || !p.fork {
+		t.Fatalf("SimulateFork: %+v", p)
+	}
+}

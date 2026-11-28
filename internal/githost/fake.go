@@ -57,6 +57,9 @@ func DemoFixture() Fixture {
 	}
 }
 
+// fakeRepoName is the full name of the fake repository.
+const fakeRepoName = "demo/demo"
+
 type fakeItem struct {
 	Issue
 	pr       *fakePR
@@ -87,6 +90,7 @@ type fakeState struct {
 	nextComment   int64
 	nextEvent     int64
 	moved         bool
+	isFork        bool // the repository is itself a fork
 	statuses      map[string]CommitStatus
 	protected     bool
 	parents       map[int]int
@@ -216,7 +220,8 @@ func (f *Fake) EditComment(number, index int, body string) {
 	}
 }
 
-// SimulateFork makes a pull request look as if it came from a fork.
+// SimulateFork makes a pull request look as if it came from a fork of this
+// repository: another repository name, and fork true.
 func (f *Fake) SimulateFork(number int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -286,7 +291,7 @@ func (f *Fake) SeedPullRequest(author, head, base string) (int, error) {
 		return 0, err
 	}
 	it := f.newItem("a pull request", "", author, "NONE")
-	it.pr = &fakePR{head: head, base: base, headSHA: f.branches[head], headRepo: "demo/demo", state: PROpen, title: it.Title}
+	it.pr = &fakePR{head: head, base: base, headSHA: f.branches[head], headRepo: fakeRepoName, fork: f.isFork, state: PROpen, title: it.Title}
 	return it.Number, nil
 }
 
@@ -625,7 +630,7 @@ func (f *Fake) OpenPullRequest(_ context.Context, spec PRSpec) (PullRequest, err
 	}
 	title, body := safeTitle(spec.Title), safeBody(spec.Body)
 	it := f.newItem(title, body, f.factoryLogin, "NONE")
-	it.pr = &fakePR{head: spec.Head, base: spec.Base, headSHA: f.branches[spec.Head], headRepo: "demo/demo", draft: draft, state: PROpen, title: title, body: body}
+	it.pr = &fakePR{head: spec.Head, base: spec.Base, headSHA: f.branches[spec.Head], headRepo: fakeRepoName, fork: f.isFork, draft: draft, state: PROpen, title: title, body: body}
 	if fail {
 		return PullRequest{}, errFakeFailure // the pull request exists, the reply is lost
 	}
@@ -719,7 +724,7 @@ func (f *Fake) checkHead(it *fakeItem, headRef, commit string) error {
 	switch {
 	case p == nil || p.head != headRef || p.base != f.defaultBranch:
 		return refuse("pull request %d is not the expected pull request from %q", it.Number, headRef)
-	case p.headRepo != "demo/demo":
+	case p.headRepo != fakeRepoName:
 		return refuse("pull request %d comes from another repository", it.Number)
 	case p.state != PROpen:
 		return refuse("pull request %d is not open", it.Number)
@@ -782,7 +787,7 @@ func (f *Fake) OpenRevert(_ context.Context, spec RevertSpec) (PullRequest, erro
 	}
 	title, body := safeTitle(spec.Title), safeBody(spec.Body)
 	it := f.newItem(title, body, f.acceptLogin, "OWNER")
-	it.pr = &fakePR{head: branch, base: f.defaultBranch, headSHA: spec.Commit, headRepo: "demo/demo", state: PROpen, title: title, body: body}
+	it.pr = &fakePR{head: branch, base: f.defaultBranch, headSHA: spec.Commit, headRepo: fakeRepoName, fork: f.isFork, state: PROpen, title: title, body: body}
 	return f.prView(it), nil
 }
 
@@ -868,10 +873,14 @@ func (f *Fake) ListAgentPullRequests(_ context.Context, state PRState) ([]PullRe
 	for _, it := range f.items {
 		p := it.pr
 		if p == nil || p.state != state || !isFactoryLogin(it.Author, f.factoryLogin) || p.base != StagingBranch ||
-			p.fork || !isAgentBranch(p.head) {
+			!isAgentBranch(p.head) {
 			continue
 		}
-		if p.headRepo != "demo/demo" { // not a fork, another name: see the real client
+		// As the real client: the name decides, the fork flag alone does not.
+		if p.headRepo != fakeRepoName {
+			if p.fork {
+				continue // a real fork, with another name
+			}
 			return nil, ErrRepositoryMoved
 		}
 		v := f.prView(it)
@@ -903,4 +912,18 @@ func (f *Fake) SimulateRepositoryMoved() {
 	f.mu.Lock()
 	f.moved = true
 	f.mu.Unlock()
+}
+
+// SimulateRepositoryIsFork makes the repository itself a fork of another one.
+// On the host, every pull request of its own then says head.repo.fork is true,
+// with the repository's own name. They must still count as its own.
+func (f *Fake) SimulateRepositoryIsFork() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.isFork = true
+	for _, it := range f.items {
+		if it.pr != nil && it.pr.headRepo == fakeRepoName {
+			it.pr.fork = true
+		}
+	}
 }

@@ -46,8 +46,11 @@ type world struct {
 	parentOf     func(n int) int
 	setProtected func(bool)
 	forkPR       func(n int)
-	setPerm      func(login, perm string)
-	editComment  func(n, index int, body string)
+	// repoIsFork makes the repository itself a fork of another one: from then
+	// on every pull request of its own has head.repo.fork true, with its own name.
+	repoIsFork  func()
+	setPerm     func(login, perm string)
+	editComment func(n, index int, body string)
 	// labelAs and unlabelAs change a label as a person on the host would.
 	// An empty actor leaves the event without an actor.
 	labelAs, unlabelAs func(n int, label, actor string)
@@ -450,6 +453,37 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 			}
 			if got, err := w.host.LabelActor(ctx, 3, LabelReady); err != nil || got.Known {
 				t.Fatalf("after the removal: %+v %v", got, err)
+			}
+		}},
+		{"a repository that is itself a fork counts its own pull requests", func(t *testing.T, w *world) {
+			w.repoIsFork()
+			must(t, w.host.PushStaging(ctx, w.repoDir, w.c1))
+			var mine []int
+			for _, b := range []string{"factory/run-1", "factory/run-2"} {
+				must(t, w.host.PushBranch(ctx, w.repoDir, w.c2, b))
+				pr, err := w.host.OpenPullRequest(ctx, PRSpec{Head: b, Base: StagingBranch, Title: "t"})
+				must(t, err)
+				mine = append(mine, pr.Number)
+			}
+			// A pull request from a real fork, with another name, still does not count.
+			must(t, w.host.PushBranch(ctx, w.repoDir, w.c2, "factory/evil"))
+			forked := w.seedPR("factory-bot", "factory/evil", StagingBranch)
+			w.forkPR(forked)
+			got, err := w.host.ListAgentPullRequests(ctx, PROpen)
+			must(t, err)
+			var nums []int
+			for _, p := range got {
+				nums = append(nums, p.Number)
+			}
+			if !reflect.DeepEqual(nums, mine) {
+				t.Fatalf("open agent pull requests = %v, want %v (own pull requests carry fork: true)", nums, mine)
+			}
+			// The merge check does not read the flag as "another repository" either.
+			must(t, w.host.PushStaging(ctx, w.repoDir, w.c2))
+			sp, err := w.host.OpenPullRequest(ctx, PRSpec{Head: StagingBranch, Base: w.defaultName, Title: "Staging"})
+			must(t, err)
+			if err := w.host.MergeStaging(ctx, MergeSpec{PullRequest: sp.Number, Commit: w.c2}); err != nil {
+				t.Fatalf("MergeStaging in a repository that is a fork: %v", err)
 			}
 		}},
 		{"agent pull requests", func(t *testing.T, w *world) {

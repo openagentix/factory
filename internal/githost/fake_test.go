@@ -22,6 +22,7 @@ func newFakeWorld(t *testing.T) *world {
 			}
 			return n
 		},
+		repoIsFork:   f.SimulateRepositoryIsFork,
 		branchHead:   f.BranchHead,
 		defaultName:  fx.DefaultBranch,
 		mergePR:      f.SimulateMerge,

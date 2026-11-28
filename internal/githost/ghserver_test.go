@@ -37,6 +37,8 @@ type ghServer struct {
 	permCalls   int
 	// defBranch is the default branch the server reports. Empty means main.
 	defBranch string
+	// isFork makes the repository a fork: its own pull requests say fork true.
+	isFork    bool
 	nextEvent int64
 
 	// Requests that used a token for something it must not do.
@@ -391,7 +393,7 @@ func (s *ghServer) prJSON(it *srvItem) map[string]any {
 		"html_url": "https://example.invalid/pull/" + strconv.Itoa(it.number),
 		"user":     map[string]any{"login": it.login},
 		"head": map[string]any{"ref": it.head, "sha": s.git.head(it.head),
-			"repo": map[string]any{"full_name": it.headRepo, "fork": it.headRepo != "demo/demo"}},
+			"repo": map[string]any{"full_name": it.headRepo, "fork": it.headRepo != "demo/demo" || s.isFork}},
 		"base": map[string]any{"ref": it.base},
 	}
 	if it.merged {

@@ -99,6 +99,7 @@ func newGitHubWorld(t *testing.T) *world {
 		},
 		parentOf:     func(n int) int { srv.mu.Lock(); defer srv.mu.Unlock(); return srv.items[n].parent },
 		setProtected: func(p bool) { srv.mu.Lock(); srv.protected = p; srv.mu.Unlock() },
+		repoIsFork:   func() { srv.mu.Lock(); srv.isFork = true; srv.mu.Unlock() },
 		forkPR:       func(n int) { srv.mu.Lock(); srv.items[n].headRepo = "someone-else/demo"; srv.mu.Unlock() },
 		setPerm:      func(login, perm string) { srv.mu.Lock(); srv.perms[login] = perm; srv.mu.Unlock() },
 		editComment: func(n, index int, body string) {

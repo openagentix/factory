@@ -717,7 +717,10 @@ func (g *GitHub) checkHead(p ghPR, headRef, commit, def string) error {
 	switch {
 	case p.Head.Ref != headRef || p.Base.Ref != def:
 		return refuse("pull request %d is not the expected pull request from %q into %q", p.Number, headRef, def)
-	case p.Head.Repo == nil || p.Head.Repo.Fork || !g.sameRepo(p.Head.Repo.FullName):
+	// The fork flag says the head repository is a fork of some other
+	// repository. In a repository that is itself a fork, every pull request of
+	// its own carries it. Only the name says whether the head is this repository.
+	case p.Head.Repo == nil || !g.sameRepo(p.Head.Repo.FullName):
 		return refuse("pull request %d does not come from this repository", p.Number)
 	case p.State != "open":
 		return refuse("pull request %d is not open", p.Number)
@@ -1038,14 +1041,25 @@ func (g *GitHub) ListAgentPullRequests(ctx context.Context, state PRState) ([]Pu
 			}
 			// The filters above are a request, not a promise. Check every item.
 			if p.Number <= 0 || seen[p.Number] || !isFactoryLogin(p.User.Login, factory) || !isAgentBranch(p.Head.Ref) ||
-				p.Base.Ref != StagingBranch || p.Head.Repo == nil || p.Head.Repo.Fork {
+				p.Base.Ref != StagingBranch {
 				return nil
 			}
-			// The factory's own pull request from a branch that is not in a
-			// fork, and not in this repository by name: the repository moved
-			// (the host answered the old path with a redirect, or the name
-			// changed). Skipping it would count zero. Fail the whole call.
+			// A null head repository is a deleted fork. The head repository of
+			// one of our own pull requests is this repository, which exists
+			// while we read it, so it is never null. Skipping cannot hide one.
+			if p.Head.Repo == nil {
+				return nil
+			}
+			// Decide by the name, never by the fork flag alone. The flag says
+			// "a fork of some other repository": a repository that is itself a
+			// fork has it on every pull request of its own.
 			if !g.sameRepo(p.Head.Repo.FullName) {
+				if p.Head.Repo.Fork {
+					return nil // a real fork, with another name
+				}
+				// Not a fork and another name: the repository moved (the host
+				// answered the old path with a redirect, or the name changed).
+				// Skipping it would count zero. Fail the whole call.
 				return movedError("pull request "+strconv.Itoa(p.Number), p.Head.Repo.FullName)
 			}
 			v := p.view()

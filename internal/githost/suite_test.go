@@ -375,14 +375,14 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 		{"who put a label on", func(t *testing.T, w *world) {
 			// Ticket 3 got factory:ready from its author, the factory user.
 			got, err := w.host.LabelActor(ctx, 3, LabelReady)
-			if err != nil || !got.Known || got.Login != "factory-bot" || !got.Trusted || got.At.IsZero() {
+			if err != nil || !got.Known || got.Login != "factory-bot" || !got.ActorCanWrite || got.At.IsZero() {
 				t.Fatalf("seeded label = %+v %v", got, err)
 			}
 			// A user with triage permission adds a label: known, not trusted.
 			w.setPerm("triager", "triage")
 			w.labelAs(2, LabelReady, "triager")
 			got, err = w.host.LabelActor(ctx, 2, LabelReady)
-			if err != nil || !got.Known || got.Login != "triager" || got.Trusted {
+			if err != nil || !got.Known || got.Login != "triager" || got.ActorCanWrite {
 				t.Fatalf("triage user = %+v %v", got, err)
 			}
 			// The same label put on again by a writer is no new event: the
@@ -390,38 +390,38 @@ func runSuite(t *testing.T, mk func(t *testing.T) *world) {
 			w.setPerm("writer", "write")
 			w.labelAs(2, LabelReady, "writer")
 			got, _ = w.host.LabelActor(ctx, 2, LabelReady)
-			if got.Login != "triager" || got.Trusted {
+			if got.Login != "triager" || got.ActorCanWrite {
 				t.Fatalf("a second add changed the actor: %+v", got)
 			}
 			// Removed and put on again by a writer: the latest add counts.
 			w.unlabelAs(2, LabelReady, "writer")
 			w.labelAs(2, LabelReady, "writer")
 			got, err = w.host.LabelActor(ctx, 2, LabelReady)
-			if err != nil || !got.Known || got.Login != "writer" || !got.Trusted {
+			if err != nil || !got.Known || got.Login != "writer" || !got.ActorCanWrite {
 				t.Fatalf("writer = %+v %v", got, err)
 			}
 			// The factory's own add through the host call.
 			must(t, w.host.AddLabel(ctx, 2, LabelClaimed))
 			got, err = w.host.LabelActor(ctx, 2, LabelClaimed)
-			if err != nil || !got.Known || got.Login != "factory-bot" || !got.Trusted {
+			if err != nil || !got.Known || got.Login != "factory-bot" || !got.ActorCanWrite {
 				t.Fatalf("factory add = %+v %v", got, err)
 			}
 			// Unknown: label not on the issue, removed, actor missing.
-			if got, err := w.host.LabelActor(ctx, 2, LabelGoal); err != nil || got.Known || got.Login != "" || got.Trusted {
+			if got, err := w.host.LabelActor(ctx, 2, LabelGoal); err != nil || got.Known || got.Login != "" || got.ActorCanWrite {
 				t.Fatalf("label never there = %+v %v", got, err)
 			}
 			w.unlabelAs(2, LabelReady, "triager")
-			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.Trusted {
+			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.ActorCanWrite {
 				t.Fatalf("label removed = %+v %v", got, err)
 			}
 			w.labelAs(2, LabelReady, "")
-			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.Trusted || got.Login != "" {
+			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.ActorCanWrite || got.Login != "" {
 				t.Fatalf("no actor = %+v %v", got, err)
 			}
 			// A person with no permission at all is known, and not trusted.
 			w.unlabelAs(2, LabelReady, "x")
 			w.labelAs(2, LabelReady, "stranger")
-			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || !got.Known || got.Trusted || got.Login != "stranger" {
+			if got, err := w.host.LabelActor(ctx, 2, LabelReady); err != nil || !got.Known || got.ActorCanWrite || got.Login != "stranger" {
 				t.Fatalf("stranger = %+v %v", got, err)
 			}
 			if _, err := w.host.LabelActor(ctx, 2, "bug"); !errors.Is(err, ErrRefused) {

@@ -184,10 +184,10 @@ func TestLabelActorHostileEvents_GitHub(t *testing.T) {
 			if (err != nil) != tc.fail {
 				t.Fatalf("err = %v, want failure %v", err, tc.fail)
 			}
-			if got.Known != tc.known || got.Login != tc.login || got.Trusted != tc.trust {
+			if got.Known != tc.known || got.Login != tc.login || got.ActorCanWrite != tc.trust {
 				t.Fatalf("got %+v, want known=%v login=%q trusted=%v", got, tc.known, tc.login, tc.trust)
 			}
-			if !got.Known && (got.Trusted || got.Login != "" || !got.At.IsZero()) {
+			if !got.Known && (got.ActorCanWrite || got.Login != "" || !got.At.IsZero()) {
 				t.Fatalf("an unknown answer carries data: %+v", got)
 			}
 		})
@@ -220,7 +220,7 @@ func TestLabelActorEventListCutShortIsUnknown_GitHub(t *testing.T) {
 	if !errors.As(err, &tr) {
 		t.Fatalf("err = %v, want *TruncatedError", err)
 	}
-	if got.Known || got.Trusted || got.Login != "" {
+	if got.Known || got.ActorCanWrite || got.Login != "" {
 		t.Fatalf("a cut-short list gave an answer: %+v", got)
 	}
 	g.maxPages = 10
@@ -700,7 +700,7 @@ func TestFakeLabelEventsAreKept(t *testing.T) {
 	f.SimulateLabel(2, LabelReady, "pat")
 	f.SimulateLabel(2, "somebody-elses-label", "pat") // a person may add any label
 	got, err := f.LabelActor(ctx, 2, LabelReady)
-	if err != nil || !got.Known || got.Login != "pat" || !got.Trusted {
+	if err != nil || !got.Known || got.Login != "pat" || !got.ActorCanWrite {
 		t.Fatalf("%+v %v", got, err)
 	}
 	// The factory takes it off, and puts it back: the factory is the actor now.
@@ -767,7 +767,7 @@ func TestAnAnswerFromAnotherRepositoryIsNeverTaken_GitHub(t *testing.T) {
 	if got, err := g.DefaultBranch(ctx); !errors.Is(err, ErrRepositoryMoved) || got != (DefaultBranchInfo{}) {
 		t.Errorf("DefaultBranch after a rename: %+v %v; want ErrRepositoryMoved", got, err)
 	}
-	if got, err := g.LabelActor(ctx, 7, LabelReady); !errors.Is(err, ErrRepositoryMoved) || got.Known || got.Trusted {
+	if got, err := g.LabelActor(ctx, 7, LabelReady); !errors.Is(err, ErrRepositoryMoved) || got.Known || got.ActorCanWrite {
 		t.Errorf("LabelActor after a rename: %+v %v; want ErrRepositoryMoved", got, err)
 	}
 	// The same names in another letter case are the same repository.
@@ -859,7 +859,7 @@ func TestLookalikeLabelIsNotTheLabel_GitHub(t *testing.T) {
 	// (a) The issue carries only the look-alike, added by a writer.
 	g, _ := testGH(t, eventsHost([]string{needsHumanLookalike},
 		[]string{evJSON(1, "labeled", "ann", needsHumanLookalike, t1)}, "write"))
-	if got, err := g.LabelActor(ctx, 7, LabelNeedsHuman); err != nil || got.Known || got.Trusted {
+	if got, err := g.LabelActor(ctx, 7, LabelNeedsHuman); err != nil || got.Known || got.ActorCanWrite {
 		t.Errorf("(a) look-alike only: %+v %v, want unknown", got, err)
 	}
 	// (b) The factory added the real label, a triage user then added the look-alike.
@@ -876,7 +876,7 @@ func TestLookalikeLabelIsNotTheLabel_Fake(t *testing.T) {
 	f := NewFake(DemoFixture(), newTestClock().Now)
 	f.SetPermission("ann", "write")
 	f.SimulateLabel(2, needsHumanLookalike, "ann")
-	if got, err := f.LabelActor(ctx, 2, LabelNeedsHuman); err != nil || got.Known || got.Trusted {
+	if got, err := f.LabelActor(ctx, 2, LabelNeedsHuman); err != nil || got.Known || got.ActorCanWrite {
 		t.Errorf("(a) look-alike only: %+v %v, want unknown", got, err)
 	}
 	must(t, f.AddLabel(ctx, 3, LabelNeedsHuman))
@@ -964,7 +964,7 @@ func TestGhostAndBotActorsAreUnknown_GitHub(t *testing.T) {
 			// Even with write permission, and even for the factory's own add.
 			g, _ := testGH(t, eventsHost([]string{LabelReady},
 				[]string{evJSON(1, "labeled", actor, LabelReady, "2026-11-26T09:00:01Z")}, "write"))
-			if got, err := g.LabelActor(ctx, 7, LabelReady); err != nil || got.Known || got.Trusted || got.Login != "" {
+			if got, err := g.LabelActor(ctx, 7, LabelReady); err != nil || got.Known || got.ActorCanWrite || got.Login != "" {
 				t.Fatalf("%+v %v, want unknown", got, err)
 			}
 		})
@@ -984,7 +984,7 @@ func TestGhostAndBotActorsAreUnknown_Fake(t *testing.T) {
 		f.SetPermission(actor, "admin")
 		f.SimulateUnlabel(2, LabelReady, "x")
 		f.SimulateLabel(2, LabelReady, actor)
-		if got, err := f.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.Trusted || got.Login != "" {
+		if got, err := f.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.ActorCanWrite || got.Login != "" {
 			t.Errorf("%q: %+v %v, want unknown", actor, got, err)
 		}
 	}

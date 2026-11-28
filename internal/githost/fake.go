@@ -857,7 +857,7 @@ func (f *Fake) LabelActor(_ context.Context, n int, label string) (LabelActorInf
 	if !ok {
 		return LabelActorInfo{}, nil
 	}
-	return LabelActorInfo{Known: true, Login: e.Actor, At: e.At, Trusted: f.writer(e.Actor)}, nil
+	return LabelActorInfo{Known: true, Login: e.Actor, At: e.At, ActorCanWrite: f.writer(e.Actor)}, nil
 }
 
 func (f *Fake) ListAgentPullRequests(_ context.Context, state PRState) ([]PullRequest, error) {

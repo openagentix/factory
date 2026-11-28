@@ -279,12 +279,12 @@ type LabelActorInfo struct {
 	Login string
 	// At is when the host says that add happened. Zero unless Known.
 	At time.Time
-	// Trusted is NOT the list of trusted logins of record 0003. It only says
-	// that the actor has write, maintain or admin permission on the
-	// repository, or is the factory's own user, and that the answer is Known.
-	// A caller that acts on a label must also check the actor against the
-	// list of trusted logins, by id.
-	Trusted bool
+	// ActorCanWrite is NOT the list of trusted logins of record 0003: it is
+	// true when the actor has write, maintain or admin permission on the
+	// repository, or is the factory's own user, and the answer is Known. A
+	// caller that acts on a label must also check the actor against the list of
+	// trusted logins, by id.
+	ActorCanWrite bool
 }
 
 // PRSpec asks for a pull request. A pull request from an agent branch goes
@@ -390,7 +390,11 @@ type Proposer interface {
 	PushStaging(ctx context.Context, dir, commit string) error
 	// DefaultBranch reads the name and the head commit of the default branch
 	// from the host. It fails when either is missing or not valid, or when the
-	// default branch is the staging branch.
+	// default branch is the staging branch. The name comes with the repository's
+	// full name, which must be the configured one. The head commit is read in a
+	// second request that carries no repository name: a rename of the
+	// repository between the two requests, with a new repository created at the
+	// old name, is not detected.
 	DefaultBranch(ctx context.Context) (DefaultBranchInfo, error)
 	// LabelActor tells who made the latest add of a label on an issue or pull
 	// request, from the host's events. The label must be in FixedLabels, and

@@ -1016,7 +1016,7 @@ func (g *GitHub) LabelActor(ctx context.Context, n int, label string) (LabelActo
 	if err != nil {
 		return LabelActorInfo{}, err
 	}
-	return LabelActorInfo{Known: true, Login: e.Actor, At: e.At, Trusted: trusted}, nil
+	return LabelActorInfo{Known: true, Login: e.Actor, At: e.At, ActorCanWrite: trusted}, nil
 }
 
 func (g *GitHub) ListAgentPullRequests(ctx context.Context, state PRState) ([]PullRequest, error) {

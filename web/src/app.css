@@ -217,6 +217,10 @@ td.num{font-family:var(--f-data);text-align:right} th.num{text-align:right}
 .quote{border:1px solid var(--line2);border-left:4px solid var(--line2);background:var(--raised);padding:6px 9px;border-radius:2px;font-size:13px}
 .quote .by{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
 .quote .tx{display:block;overflow-wrap:anywhere;white-space:pre-wrap}
+.confirm{border:1px solid var(--line2);border-left:4px solid var(--line2);background:var(--raised);padding:8px 10px;border-radius:2px;display:grid;gap:8px;margin-top:8px}
+.confirm .q{margin:0}
+.confirm ul{margin:0;padding-left:18px}
+.route{list-style:none;margin:0;padding:0;display:grid;gap:2px}
 .btn:disabled{opacity:.6;border-style:dashed;cursor:not-allowed}
 .btn.pri:disabled{background:var(--raised);color:var(--ink2);border-color:var(--line2)}
 .nbtn{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px}

@@ -1,6 +1,7 @@
 // The state of the page: the key, the latest snapshot, the clock, the route and the open drawer.
 import { startClient, type Client } from './client';
-import type { Call, Floor } from './floor';
+import { parseDetail, parseUndoPreview } from './detail';
+import type { Call, Floor, PieceDetail, UndoPreview, UndoRef } from './floor';
 import { readKeys, rememberKey, type KeyEnv } from './key';
 import { lampWord } from './text';
 import { modeKind, signalView } from './view';
@@ -26,7 +27,17 @@ export type Env = KeyEnv & {
  * snapshot still has the call, so the button is live and a press sends the same key); refused with the server's code; or failed with no answer.
  */
 export type Act = { phase: 'sending' | 'sent' | 'running' | 'again' | 'refused' | 'failed'; code?: string };
-export type ActionKind = 'answer' | 'yes' | 'no' | 'approve';
+export type ActionKind = 'answer' | 'yes' | 'no' | 'approve' | 'accept' | 'cancel';
+
+/** The piece drawer's detail, read from GET /api/v1/pieces/{id}. Old detail stays until the new one is read. */
+export type DetailView = { id: string; phase: 'loading' | 'ready' | 'failed'; detail: PieceDetail | null };
+
+/**
+ * One Undo, from the piece drawer. It always reads what leaves first (loading, then preview), and sends nothing until the
+ * person presses "Undo now". A failed read keeps its code, so the screen says why.
+ */
+export type UndoFlow = { piece: string; ref: UndoRef; phase: 'loading' | 'preview' | 'failed'; preview: UndoPreview | null; code?: string };
+export const undoKey = (r: UndoRef) => `u|${r.stagingSeq}|${r.commit}|${r.change}`;
 const actKey = (c: Pick<Call, 'id' | 'version'>) => `${c.id}|${c.version}`;
 
 /** A fresh random Idempotency-Key. It has nothing to do with the login key. */
@@ -50,6 +61,8 @@ export class AppState {
     route = $state<Route>('floor');
     openGoals = $state<Record<number, boolean>>({});
     drawerId = $state<string | null>(null);
+    detail = $state.raw<DetailView | null>(null);
+    undo = $state.raw<UndoFlow | null>(null);
     announce = $state('');
     /** Ids of pieces whose station changed between the last two snapshots. */
     fresh = $state.raw<ReadonlySet<string>>(new Set());
@@ -58,6 +71,8 @@ export class AppState {
     acts = $state.raw<Readonly<Record<string, Act>>>({});
     /** The Idempotency-Key of a press, kept until the snapshot shows the result, so a repeat sends the same key. */
     private idem = new Map<string, { key: string; body: string }>();
+    /** Counts the reads of a piece, so a slow old reply never replaces a newer one. */
+    private detailN = 0;
 
     private tick = $state(0);
     private serverMs = 0;
@@ -130,8 +145,26 @@ export class AppState {
         const cur = this.acts[k];
         if (cur && (cur.phase === 'sending' || cur.phase === 'sent' || cur.phase === 'running')) return;
         if (!(call.actions as string[]).includes(action) || this.client === null) return;
-        const body: Record<string, string> = { version: call.version };
+        let path = `/api/v1/calls/${encodeURIComponent(call.id)}/${action}`;
+        const body: Record<string, string | number> = { version: call.version };
         if (action === 'answer') body.text = (text ?? '').replace(/\r\n?/g, '\n');
+        if (action === 'accept' || action === 'cancel') {
+            // The Accept call is for one state of the holding area. The page sends that state, and only when the call is for it.
+            const h = this.floor?.holdingArea ?? null;
+            if (h === null || call.id !== `a-${h.stagingSeq}`) {
+                this.acts = { ...this.acts, [k]: { phase: 'refused', code: 'stale' } };
+                return;
+            }
+            path = `/api/v1/holding-area/${action}`;
+            body.stagingSeq = h.stagingSeq;
+            body.commit = h.commit;
+        }
+        await this.send(k, path, body);
+    }
+
+    /** One press, from its key to its message. The key of the press stays the same for a repeat of the same body. */
+    private async send(k: string, path: string, body: Record<string, unknown>): Promise<void> {
+        if (this.client === null) return;
         const json = JSON.stringify(body);
         let held = this.idem.get(k);
         if (!held || held.body !== json) {
@@ -139,11 +172,58 @@ export class AppState {
             this.idem.set(k, held);
         }
         this.acts = { ...this.acts, [k]: { phase: 'sending' } };
-        const r = await this.client.write(`/api/v1/calls/${encodeURIComponent(call.id)}/${action}`, body, held.key);
+        const r = await this.client.write(path, body, held.key);
         // A snapshot may have dropped this press while it was sent. Then nothing is left to say.
         if (!(k in this.acts)) return;
         const next: Act = r.ok ? { phase: r.status === 202 ? 'running' : 'sent' } : r.status === 0 ? { phase: 'failed' } : { phase: 'refused', code: r.code };
         this.acts = { ...this.acts, [k]: next };
+    }
+
+    /** Reads one piece for the drawer. A reply that is not whole is "Could not read". */
+    async loadDetail(id: string): Promise<void> {
+        if (this.client === null) return;
+        const keep = this.detail !== null && this.detail.id === id ? this.detail.detail : null;
+        this.detail = { id, phase: keep === null ? 'loading' : 'ready', detail: keep };
+        const n = ++this.detailN;
+        const r = await this.client.read(`/api/v1/pieces/${encodeURIComponent(id)}`);
+        if (this.drawerId !== id || n !== this.detailN) return; // the drawer was closed or moved on, or a newer read is under way
+        const d = r.ok ? parseDetail(r.body) : null;
+        this.detail = d !== null && d.piece.id === id ? { id, phase: 'ready', detail: d } : { id, phase: 'failed', detail: null };
+    }
+
+    /** Starts an Undo: reads what would leave with the change. Nothing is sent. */
+    async startUndo(piece: string, ref: UndoRef): Promise<void> {
+        if (this.client === null) return;
+        this.undo = { piece, ref, phase: 'loading', preview: null };
+        const r = await this.client.read(`/api/v1/changes/${encodeURIComponent(ref.change)}/undo-preview`);
+        const cur = this.undo;
+        if (cur === null || cur.piece !== piece || cur.ref !== ref) return; // the person went back
+        if (!r.ok) {
+            this.undo = { ...cur, phase: 'failed', code: r.status === 0 ? 'unreachable' : r.code };
+            return;
+        }
+        const p = parseUndoPreview(r.body);
+        // The preview must be for the change and the state the person was offered, or nothing is acted on.
+        if (p === null || p.change !== ref.change || p.stagingSeq !== ref.stagingSeq || p.commit !== ref.commit) {
+            this.undo = { ...cur, phase: 'failed', code: 'internal' };
+            return;
+        }
+        this.undo = { ...cur, phase: 'preview', preview: p };
+    }
+
+    backUndo(): void {
+        this.undo = null;
+    }
+
+    /** Sends the Undo that the preview showed: the state and the list exactly as the preview gave them. */
+    async confirmUndo(): Promise<void> {
+        const u = this.undo;
+        if (u === null || u.phase !== 'preview' || u.preview === null) return;
+        const k = undoKey(u.ref);
+        const cur = this.acts[k];
+        if (cur && (cur.phase === 'sending' || cur.phase === 'sent' || cur.phase === 'running')) return;
+        const p = u.preview;
+        await this.send(k, `/api/v1/changes/${encodeURIComponent(p.change)}/undo`, { stagingSeq: p.stagingSeq, commit: p.commit, change: p.change, alsoRemoved: p.alsoRemoved });
     }
 
     /** The failed state: an alert band, the unknown lamp, an "as of" mark on what is old, and one announcement. */
@@ -183,6 +263,8 @@ export class AppState {
         this.recvPerf = this.env.perfNow();
         this.floor = f;
         this.dropActs(f);
+        // The drawer reads its piece again, so it never shows what an earlier state said.
+        if (this.drawerId !== null) void this.loadDetail(this.drawerId);
         this.failed = false;
         if (this.crashed) {
             this.crashed = false;
@@ -202,6 +284,17 @@ export class AppState {
     /** A press is forgotten, and its key with it, once the snapshot no longer has that call at that version. */
     private dropActs(f: Floor): void {
         const live = new Set(f.calls.map(actKey));
+        // An Undo press is for one state of the holding area. When the state moves on, the press is over.
+        const h = f.holdingArea;
+        const undoLive = (k: string) => h !== null && k.startsWith(`u|${h.stagingSeq}|${h.commit}|`);
+        for (const k of Object.keys(this.acts)) if (k.startsWith('u|') && undoLive(k)) live.add(k);
+        if (this.undo !== null && !undoLive(undoKey(this.undo.ref))) {
+            // Only a press that went out says the change was taken out. A refused or failed press says nothing.
+            const phase = this.acts[undoKey(this.undo.ref)]?.phase;
+            const wasSent = phase === 'sent' || phase === 'running' || phase === 'again';
+            this.undo = null;
+            if (wasSent) this.announce = 'The change was taken out of the holding area.';
+        }
         const keep: Record<string, Act> = {};
         let changed = false;
         for (const [k, v] of Object.entries(this.acts)) {
@@ -236,10 +329,14 @@ export class AppState {
     openDrawer(id: string, from: HTMLElement | null): void {
         this.opener = from;
         this.drawerId = id;
+        this.undo = null;
+        void this.loadDetail(id);
     }
 
     closeDrawer(): void {
         this.drawerId = null;
+        this.detail = null;
+        this.undo = null;
         const o = this.opener;
         this.opener = null;
         // Focus goes back to the tag that opened the drawer, if it is still there.

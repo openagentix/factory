@@ -661,6 +661,16 @@ type PieceDetail struct {
 	Route       []RouteStep `json:"route"`
 	Rulings     []Untrusted `json:"rulings"`
 	Unconfirmed []Untrusted `json:"unconfirmed"`
+	// Undo is set only for a piece at 06 whose holding area is published, not
+	// frozen, not pending and held by this machine.
+	Undo *UndoRef `json:"undo"`
+}
+
+// UndoRef names the change a person may take back, and the state they saw.
+type UndoRef struct {
+	Change     string `json:"change"`
+	StagingSeq int64  `json:"stagingSeq"`
+	Commit     string `json:"commit"`
 }
 
 type RouteStep struct {

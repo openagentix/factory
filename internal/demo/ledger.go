@@ -157,3 +157,10 @@ func (l *memLedger) gateOf(ticket int) (floor.GateIn, bool) {
 	}
 	return floor.GateIn{}, false
 }
+
+// lastSeq is the number of the newest journal entry, or zero.
+func (l *memLedger) lastSeq() int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.seq
+}

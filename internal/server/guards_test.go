@@ -19,9 +19,17 @@ func guardTargets(e *testEnv) []string {
 
 // passStatus is the status a GET gets once it is past every guard: 200 for a
 // read route, 405 for a write route, which only answers POST.
+// The guard tests build the server with no Actions and no Detail, so the two
+// read routes of the actions answer 503, and an id that is no piece id is 404.
 func passStatus(target string) int {
-	if strings.HasPrefix(target, "/api/v1/calls/") {
+	switch {
+	case strings.HasPrefix(target, "/api/v1/calls/"), strings.HasPrefix(target, "/api/v1/holding-area/"),
+		strings.HasSuffix(target, "/undo"):
 		return 405
+	case strings.HasSuffix(target, "/undo-preview"):
+		return 503
+	case strings.HasPrefix(target, "/api/v1/pieces/"):
+		return 404
 	}
 	return 200
 }

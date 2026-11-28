@@ -3,9 +3,14 @@
     import type { AppState } from './state.svelte';
     import Icon from './Icon.svelte';
     import Pending from './Pending.svelte';
+    import ActionButton from './ActionButton.svelte';
+    import { tick } from 'svelte';
+    import { actMessage, busy, refusalText } from './act';
+    import { enter } from './focus';
+    import { undoKey } from './state.svelte';
     import { isUnreadable, reasonText } from './text';
     import { goalById, pieceById, pieceAge, pieceLook, stationName, two } from './view';
-    import { COULD_NOT_READ, NOT_BUILT, clockText } from './text';
+    import { COULD_NOT_READ, clockText } from './text';
 
     let { app }: { app: AppState } = $props();
     const f = $derived(app.floor!);
@@ -13,6 +18,17 @@
     const look = $derived(p ? pieceLook(p, isUnreadable(p)) : null);
     const goal = $derived(p ? goalById(f, p.goal) : null);
     let root: HTMLElement;
+    const dv = $derived(app.detail !== null && app.detail.id === app.drawerId ? app.detail : null);
+    const det = $derived(dv?.detail ?? null);
+    const undoRef = $derived(det !== null && p !== null && det.piece.id === p.id ? det.undo : null);
+    const flow = $derived(app.undo !== null && p !== null && app.undo.piece === p.id ? app.undo : null);
+    const undoAct = $derived(flow ? app.acts[undoKey(flow.ref)] : undefined);
+
+    async function backFromUndo(): Promise<void> {
+        app.backUndo();
+        await tick();
+        root?.querySelector<HTMLElement>('[data-act="undo"]')?.focus();
+    }
 
     onMount(() => {
         const first = root.querySelector<HTMLElement>('button');
@@ -27,7 +43,9 @@
         if (e.key === 'Escape') {
             e.preventDefault();
             e.stopPropagation();
-            app.closeDrawer();
+            // Escape first leaves the question about an Undo, and only then the drawer.
+            if (flow !== null) void backFromUndo();
+            else app.closeDrawer();
             return;
         }
         if (e.key !== 'Tab') return;
@@ -73,12 +91,71 @@
             {#if pieceAge(p, app.nowMs())}<span class="muted small">here {pieceAge(p, app.nowMs())}</span>{/if}
         </div>
         {#if p.reason}<p class="dreason {look.cls}">{reasonText(p)}</p>{/if}
-        <div><h3>Its route so far</h3><p class="muted">{NOT_BUILT}</p></div>
-        <div><h3>Decided for you</h3><p class="muted">{NOT_BUILT}</p></div>
-        <div><h3>Could not be confirmed</h3><p class="muted">{NOT_BUILT}</p></div>
-        <div class="acts">
-            {#if p.station === 6}<Pending label="Undo this change" />{/if}
+        <div>
+            <h3>Its route so far</h3>
+            {#if dv === null || dv.phase === 'loading'}<p class="muted">Reading.</p>
+            {:else if det === null}<p class="muted">{COULD_NOT_READ}</p>
+            {:else if det.route.length === 0}<p class="muted">Nothing is recorded yet.</p>
+            {:else}
+                <ul class="route">
+                    {#each det.route as r (r.station)}
+                        <li><span class="data">{two(r.station)} {stationName(r.station)}</span> <span class="muted small">{r.at === null ? 'time not known' : (clockText(r.at) ?? COULD_NOT_READ)}</span></li>
+                    {/each}
+                </ul>
+            {/if}
         </div>
+        <div>
+            <h3>Decided for you</h3>
+            {#if dv === null || dv.phase === 'loading'}<p class="muted">Reading.</p>
+            {:else if det === null}<p class="muted">{COULD_NOT_READ}</p>
+            {:else if det.rulings.length === 0}<p class="muted">Nothing was decided for you.</p>
+            {:else}
+                {#each det.rulings as u, i (i)}
+                    <div class="quote"><span class="by">Written by the agent, as written:</span><span class="tx">{u.text}{u.truncated ? ' (cut short)' : ''}</span></div>
+                {/each}
+            {/if}
+        </div>
+        <div>
+            <h3>Could not be confirmed</h3>
+            {#if dv === null || dv.phase === 'loading'}<p class="muted">Reading.</p>
+            {:else if det === null}<p class="muted">{COULD_NOT_READ}</p>
+            {:else if det.unconfirmed.length === 0}<p class="muted">Nothing is left unconfirmed.</p>
+            {:else}
+                {#each det.unconfirmed as u, i (i)}
+                    <div class="quote"><span class="by">Written by the agent, as written:</span><span class="tx">{u.text}{u.truncated ? ' (cut short)' : ''}</span></div>
+                {/each}
+            {/if}
+        </div>
+        <div class="acts">
+            {#if p.station === 7}<Pending label="Undo after Accept" />{/if}
+            {#if undoRef !== null && p.station === 6}<ActionButton label="Undo this change" tag="undo" onpress={() => app.startUndo(p.id, undoRef)} />{/if}
+        </div>
+        {#if flow !== null}
+            <div class="confirm" role="group" aria-label="Undo this change" data-undo>
+                {#if flow.phase === 'loading'}
+                    <p class="q" tabindex="-1" use:enter>Looking at what would leave the holding area.</p>
+                    <div class="acts"><button type="button" class="btn" onclick={backFromUndo}>Back</button></div>
+                {:else if flow.phase === 'failed'}
+                    <p class="q" tabindex="-1" use:enter>{refusalText(flow.code)}</p>
+                    <div class="acts"><button type="button" class="btn" onclick={backFromUndo}>Back</button></div>
+                {:else if flow.preview !== null}
+                    {@const t = flow.preview.tickets}
+                    {#if t.length === 1}
+                        <p class="q" tabindex="-1" use:enter>Ticket {t[0]!.ticket} leaves the holding area. Nothing else leaves with it.</p>
+                    {:else}
+                        <p class="q" tabindex="-1" use:enter>These leave the holding area:</p>
+                        <ul>
+                            {#each t as x (x.change)}<li>Ticket {x.ticket}</li>{/each}
+                        </ul>
+                    {/if}
+                    <div class="acts">
+                        <ActionButton label="Undo now" kind="warn" busy={busy(undoAct)} onpress={() => app.confirmUndo()} />
+                        <button type="button" class="btn" onclick={backFromUndo}>Back</button>
+                    </div>
+                    <p class="small act-msg" aria-live="polite">{actMessage(undoAct)}</p>
+                {/if}
+            </div>
+        {/if}
     {:else}
         <p class="muted">This piece is no longer on the line.</p>
     {/if}

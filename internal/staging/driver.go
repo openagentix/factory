@@ -151,6 +151,12 @@ func (s *Staging) Undo(ctx context.Context, id string) (State, []string, error) 
 	if err != nil {
 		return State{}, nil, err
 	}
+	return s.removeUndone(ctx, id, live, deps)
+}
+
+// removeUndone records the removal of a change and of what depends on it, then
+// rebuilds. The caller holds s.mu and has checked that staging is not frozen.
+func (s *Staging) removeUndone(ctx context.Context, id string, live []Entry, deps []string) (State, []string, error) {
 	all := append([]string{id}, deps...)
 	byID := map[string]Entry{}
 	for _, e := range live {
@@ -290,12 +296,36 @@ func (s *Staging) Accept(ctx context.Context, seq int64, commit string) (AcceptR
 func (s *Staging) CancelAccept(ctx context.Context, seq int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.cancelLocked(ctx, seq, "")
+}
+
+// CancelAcceptAt is CancelAccept for a person who saw one state: it also needs
+// the commit of the pending Accept to be the one named. A different commit, a
+// blank one, or no pending Accept is ErrStale, and nothing changes.
+func (s *Staging) CancelAcceptAt(ctx context.Context, seq int64, commit string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !commitRE.MatchString(commit) {
+		return fmt.Errorf("%w: the state is named by a sequence number and a full commit id", ErrStale)
+	}
+	return s.cancelLocked(ctx, seq, commit)
+}
+
+// cancelLocked ends a pending Accept. With a commit, it must be the pending
+// one. The caller holds s.mu.
+func (s *Staging) cancelLocked(ctx context.Context, seq int64, commit string) error {
 	p, ok, err := s.cfg.Store.GetPending(ctx)
 	if err != nil {
 		return err
 	}
 	if !ok || p.StateSeq != seq {
+		if commit != "" {
+			return fmt.Errorf("%w: no accept is pending for this state", ErrStale)
+		}
 		return errors.New("staging: no accept is pending for this state")
+	}
+	if commit != "" && p.Commit != commit {
+		return fmt.Errorf("%w: the pending accept is for another commit", ErrStale)
 	}
 	got, err := s.cfg.Host.GetPullRequest(ctx, p.PR)
 	if err != nil {
@@ -361,20 +391,11 @@ func (s *Staging) Resolve(ctx context.Context) (Resolution, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var res Resolution
-	latest, ok, err := s.cfg.Store.Latest(ctx)
+	repub, err := s.republishLocked(ctx)
 	if err != nil {
 		return res, err
 	}
-	if ok && !latest.Published {
-		cur, err := s.readStagingRef(ctx)
-		if err != nil {
-			return res, err
-		}
-		if err := s.publish(ctx, latest, cur); err != nil {
-			return res, err
-		}
-		res.Republished = true
-	}
+	res.Republished = repub
 	p, pending, err := s.cfg.Store.GetPending(ctx)
 	if err != nil {
 		return res, err

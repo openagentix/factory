@@ -35,6 +35,8 @@ type Config struct {
 	// Actions carries out the three actions of the first release. With nil,
 	// every action route answers 503.
 	Actions Actions
+	// Detail gives the piece detail. With nil, the piece route answers 503.
+	Detail Detailer
 	// Static is the web app. Required.
 	Static fs.FS
 	// Logger takes the package's own log lines. Nil discards them.
@@ -81,9 +83,12 @@ type Server struct {
 	actWG      sync.WaitGroup
 	// stopping is set when a stop is requested: no new write starts. actCtx is
 	// the context of every write; it ends when the stop's limit is reached.
-	stopping  atomic.Bool
-	actCtx    context.Context
-	actCancel context.CancelFunc
+	actMu    sync.Mutex // one step: the stopping check and the count of a write
+	stopping atomic.Bool
+	// stopCheckHook is called between the stopping check and the count. Tests only.
+	stopCheckHook func()
+	actCtx        context.Context
+	actCancel     context.CancelFunc
 	// Timers for the event stream. Real ones by default. Tests replace them
 	// with channels they control. Each returns a channel and a stop function.
 	newTicker func(time.Duration) (<-chan time.Time, func())

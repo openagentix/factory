@@ -33,7 +33,7 @@
             <span class="muted">{here} {here === 1 ? 'piece' : 'pieces'} on the line</span>
             <span class="grow"></span>
             <Pending label="Try it" kind="sm" />
-            <Pending label="Undo a change" kind="sm" />
+            <Pending label="Undo after Accept" kind="sm" />
         </div>
         {#if counts !== null}<div class="pad nopt"><GoalLines {g} pieces={f.pieces} flat /></div>{/if}
     </section>

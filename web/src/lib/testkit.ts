@@ -21,6 +21,8 @@ export type Fake = {
     store: Map<string, string>;
     calls: { url: string; headers: Record<string, string> }[];
     urls: string[];
+    /** Every GET of something other than the snapshot and the stream (a piece, an undo preview). */
+    reads: { url: string; headers: Record<string, string> }[];
     /** Every POST the page sent. */
     writes: { url: string; headers: Record<string, string>; body: string; init: RequestInit }[];
     /** Change what the next snapshot read returns. A number is a status code. */
@@ -31,7 +33,7 @@ export type Fake = {
     served: () => number;
 };
 
-export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: string | null; accept?: string[]; write?: (url: string, init: RequestInit) => Response | Promise<Response> } = {}): Fake {
+export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: string | null; accept?: string[]; write?: (url: string, init: RequestInit) => Response | Promise<Response>; read?: (url: string) => Response | Promise<Response> } = {}): Fake {
     const store = new Map<string, string>();
     if (opts.stored) store.set('oxf-key', opts.stored);
     const local = new Map<string, string>();
@@ -39,6 +41,7 @@ export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: stri
     const calls: Fake['calls'] = [];
     const urls: string[] = [];
     const writes: Fake['writes'] = [];
+    const reads: Fake['reads'] = [];
     let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
     const enc = new TextEncoder();
     const perf = { now: 0 };
@@ -61,6 +64,10 @@ export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: stri
                 });
                 return new Response(body, { status: 200 });
             }
+            if (!String(url).endsWith('/floor')) {
+                reads.push({ url: String(url), headers: hdrs });
+                return opts.read ? opts.read(String(url)) : new Response('{"error":"not_found"}', { status: 404 });
+            }
             if (typeof snap === 'number') return new Response('{}', { status: snap });
             return new Response(JSON.stringify(snap), { status: 200 });
         }) as unknown as typeof fetch,
@@ -72,7 +79,7 @@ export function fakeEnv(opts: { snapshot?: unknown; hash?: string; stored?: stri
         matchMedia: () => ({ matches: false }),
     };
     return {
-        env, store, calls, urls, writes, perf,
+        env, store, calls, urls, writes, reads, perf,
         served: () => calls.filter((c) => c.url.endsWith('/floor')).length,
         setSnapshot: (v) => void (snap = v),
         event: (name) => ctl?.enqueue(enc.encode(`event: ${name}\ndata: {}\n\n`)),

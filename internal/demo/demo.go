@@ -61,6 +61,10 @@ type Config struct {
 	// wrapHost lets a test in this package put a wrapper around the host that
 	// staging sees. Unexported, nil in the product.
 	wrapHost func(githost.Proposer) githost.Proposer
+	// noAcceptToken makes the holding area run in developer mode: no accept
+	// token, so an Accept opens a pull request and waits. Unexported: only tests
+	// in this package set it.
+	noAcceptToken bool
 	// Report takes the lines the demo says about work that went wrong after an
 	// action was accepted. Each starts with "DEMO ". Nil means none.
 	Report func(line string)
@@ -89,9 +93,12 @@ type Demo struct {
 	def     string
 	env     []string
 
-	mu       sync.RWMutex // write: a change of facts. read: a snapshot.
+	mu sync.RWMutex // write: a change of facts. read: a snapshot.
+	// cache is the last whole snapshot. It is made at the end of every change
+	// of facts, under the write lock, and by every reader that gets the read
+	// lock, so it is never older than the last action that answered "done".
 	cacheMu  sync.Mutex
-	cache    []byte
+	cache    *snapshot
 	pubMu    sync.Mutex
 	lastPub  int64
 	stepMu   sync.Mutex // one step at a time
@@ -124,12 +131,21 @@ type Demo struct {
 	// approving holds, by goal, the version of an Approve that put the label on
 	// and did not finish.
 	approving map[int]string
-	fuMu      sync.Mutex
-	fu        []followup
-	wake      chan struct{}
+	// queued holds the builds of an approval that were queued and did not fail,
+	// by key. Under the step lock.
+	queued map[string]bool
+	fuMu   sync.Mutex
+	fu     []followup
+	wake   chan struct{}
 	// addHook may fail the step that adds an answered change to the holding
 	// area. Tests only.
 	addHook func() error
+	// unsettled is an Accept the host merged and whose facts are not written yet.
+	// Read without a lock by a reader that asks whether a repair is needed;
+	// written under the step lock.
+	unsettled atomic.Pointer[staging.State]
+	// settleHook may fail the step that records an Accept the host merged. Tests only.
+	settleHook func() error
 	// taskHook is called when a follow-up task starts. Tests only.
 	taskHook func()
 	// taskErr sees the error of a follow-up task that failed. Tests only.
@@ -161,7 +177,7 @@ func New(ctx context.Context, cfg Config) (*Demo, error) {
 		return nil, errors.New("demo: the data directory must exist with mode 0700")
 	}
 	d := &Demo{cfg: cfg, led: newLedger(), factory: factoryFile(), attempt: map[int]int{}, tk: map[string]int{}, reported: map[int]bool{},
-		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, noAnswer: map[string]bool{}, approving: map[int]string{}, wake: make(chan struct{}, 1)}
+		sealed: map[int]sealedChange{}, jobs: map[string]job{}, latest: map[int]string{}, noAnswer: map[string]bool{}, approving: map[int]string{}, queued: map[string]bool{}, wake: make(chan struct{}, 1)}
 	d.env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C"}
 	if err := d.setup(ctx); err != nil {
 		d.Close()
@@ -249,7 +265,7 @@ func (d *Demo) setup(ctx context.Context) error {
 	if d.cfg.wrapHost != nil {
 		stHost = d.cfg.wrapHost(stHost)
 	}
-	d.stg, err = staging.New(staging.Config{
+	scfg := staging.Config{
 		Repo: r, Host: stHost, Accept: d.host, Store: d.stgSt, Factory: d.factory, Tasks: tasks,
 		AllowedTasks: []string{api.TaskImplement, api.TaskFixCI, api.TaskAcceptance},
 		Checks:       taskChecks(),
@@ -261,7 +277,11 @@ func (d *Demo) setup(ctx context.Context) error {
 		},
 		DefaultBranch: "main", Author: author,
 		CheckOptions: verify.CheckOptions{Deadline: 30 * time.Second, Environ: d.env},
-	})
+	}
+	if d.cfg.noAcceptToken {
+		scfg.Accept = nil // developer mode: Accept opens a pull request and waits
+	}
+	d.stg, err = staging.New(scfg)
 	if err != nil {
 		return fmt.Errorf("demo: %w", err)
 	}
@@ -297,30 +317,58 @@ func (d *Demo) project(ctx context.Context) floor.Floor {
 	return floor.Project(collect.Collect(ctx, d.sources()))
 }
 
-// Floor is the snapshot the server serves. It implements server.Source. While
-// the driver is changing facts it gives the last whole snapshot, so a reader
-// never sees a beat half done.
-func (d *Demo) Floor(ctx context.Context) ([]byte, error) {
+// snapshot is one whole picture of the line: what was read, what it projects to
+// and its JSON.
+type snapshot struct {
+	in floor.Inputs
+	f  floor.Floor
+	b  []byte
+}
+
+// takeSnapshot reads the line once. The caller holds mu, for reading or writing.
+func (d *Demo) takeSnapshot(ctx context.Context) (*snapshot, error) {
+	in := collect.Collect(ctx, d.sources())
+	f := floor.Project(in)
+	b, err := json.Marshal(f)
+	if err != nil {
+		return nil, err
+	}
+	s := &snapshot{in: in, f: f, b: b}
+	d.cacheMu.Lock()
+	d.cache = s
+	d.cacheMu.Unlock()
+	return s, nil
+}
+
+func (d *Demo) cached() *snapshot {
+	d.cacheMu.Lock()
+	defer d.cacheMu.Unlock()
+	return d.cache
+}
+
+// view gives the newest whole snapshot there is. While the driver is changing
+// facts it gives the last one made, so a reader never sees a beat half done,
+// and never a state older than the last change that was finished.
+func (d *Demo) view(ctx context.Context) (*snapshot, error) {
 	if d.mu.TryRLock() {
 		defer d.mu.RUnlock()
-		b, err := json.Marshal(d.project(ctx))
-		if err != nil {
-			return nil, err
-		}
-		d.cacheMu.Lock()
-		d.cache = b
-		d.cacheMu.Unlock()
-		return b, nil
+		return d.takeSnapshot(ctx)
 	}
-	d.cacheMu.Lock()
-	c := d.cache
-	d.cacheMu.Unlock()
-	if c != nil {
+	if c := d.cached(); c != nil {
 		return c, nil
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return json.Marshal(d.project(ctx))
+	return d.takeSnapshot(ctx)
+}
+
+// Floor is the snapshot the server serves. It implements server.Source.
+func (d *Demo) Floor(ctx context.Context) ([]byte, error) {
+	s, err := d.view(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.b, nil
 }
 
 // mutate changes facts under the write lock, then tells the hub.
@@ -332,14 +380,32 @@ func (d *Demo) mutate(ctx context.Context, fn func() error) error {
 	return err
 }
 
-// publish sends the new journal entries and a floor hint to the hub.
+// mutateFresh is mutate for an action. Before the write lock is handed on, it
+// makes the snapshot of the new state. A long task that takes the lock next
+// cannot then make a reader see a picture older than the action that was
+// answered "done".
+func (d *Demo) mutateFresh(ctx context.Context, fn func() error) error {
+	d.mu.Lock()
+	err := fn()
+	_, _ = d.takeSnapshot(context.WithoutCancel(ctx))
+	d.mu.Unlock()
+	d.publish(ctx)
+	return err
+}
+
+// publish sends the new journal entries and a floor hint to the hub. The
+// snapshot it makes is also the newest whole one for readers.
 func (d *Demo) publish(ctx context.Context) {
 	if d.cfg.Hub == nil {
 		return
 	}
 	d.mu.RLock()
-	f := d.project(context.WithoutCancel(ctx))
+	s, err := d.takeSnapshot(context.WithoutCancel(ctx))
 	d.mu.RUnlock()
+	if err != nil {
+		return
+	}
+	f := s.f
 	d.pubMu.Lock()
 	defer d.pubMu.Unlock()
 	for i := len(f.Log) - 1; i >= 0; i-- { // the log is newest first

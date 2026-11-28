@@ -30,6 +30,13 @@ type fakeActions struct {
 	answers []AnswerRequest
 	conseq  []ConsequenceRequest
 	approve []ApproveRequest
+	accepts []HoldingRequest
+	cancels []HoldingRequest
+	undos   []UndoRequest
+	// previews holds the ids asked for. previewOut and previewErr answer.
+	previews   []string
+	previewOut UndoPreviewView
+	previewErr error
 	// hook runs inside every call. It may block, or fail.
 	hook    func(ctx context.Context, steps Steps) (ActionResult, error)
 	entered chan struct{}
@@ -62,10 +69,34 @@ func (f *fakeActions) Approve(ctx context.Context, r ApproveRequest) (ActionResu
 	f.mu.Unlock()
 	return f.run(ctx, r.Steps)
 }
+func (f *fakeActions) Accept(ctx context.Context, r HoldingRequest) (ActionResult, error) {
+	f.mu.Lock()
+	f.accepts = append(f.accepts, r)
+	f.mu.Unlock()
+	return f.run(ctx, r.Steps)
+}
+func (f *fakeActions) CancelAccept(ctx context.Context, r HoldingRequest) (ActionResult, error) {
+	f.mu.Lock()
+	f.cancels = append(f.cancels, r)
+	f.mu.Unlock()
+	return f.run(ctx, r.Steps)
+}
+func (f *fakeActions) Undo(ctx context.Context, r UndoRequest) (ActionResult, error) {
+	f.mu.Lock()
+	f.undos = append(f.undos, r)
+	f.mu.Unlock()
+	return f.run(ctx, r.Steps)
+}
+func (f *fakeActions) UndoPreview(_ context.Context, change string) (UndoPreviewView, error) {
+	f.mu.Lock()
+	f.previews = append(f.previews, change)
+	f.mu.Unlock()
+	return f.previewOut, f.previewErr
+}
 func (f *fakeActions) calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return len(f.answers) + len(f.conseq) + len(f.approve)
+	return len(f.answers) + len(f.conseq) + len(f.approve) + len(f.accepts) + len(f.cancels) + len(f.undos) + len(f.previews)
 }
 
 func actEnv(t *testing.T) (*testEnv, *fakeActions) {
@@ -105,6 +136,9 @@ func TestTheRegisteredRoutesAreExactlyTheExpectedList(t *testing.T) {
 		"GET /api/v1/events", "GET /api/v1/floor",
 		"POST /api/v1/calls/{id}/answer", "POST /api/v1/calls/{id}/approve",
 		"POST /api/v1/calls/{id}/no", "POST /api/v1/calls/{id}/yes",
+		"POST /api/v1/holding-area/accept", "POST /api/v1/holding-area/cancel",
+		"POST /api/v1/changes/{id}/undo", "GET /api/v1/changes/{id}/undo-preview",
+		"GET /api/v1/pieces/{id}",
 	}
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -120,6 +154,9 @@ func actRoutes() []actRoute {
 		{"yes", "/api/v1/calls/c-5-run-1/yes", verBody},
 		{"no", "/api/v1/calls/c-5-run-1/no", verBody},
 		{"approve", "/api/v1/calls/p-3/approve", verBody},
+		{"accept", "/api/v1/holding-area/accept", holdBody()},
+		{"cancel", "/api/v1/holding-area/cancel", holdBody()},
+		{"undo", "/api/v1/changes/run-1/undo", undoBody("run-1", "run-2")},
 	}
 }
 
@@ -699,5 +736,81 @@ func TestNoWriteStartsAfterAStopAndAWriteInFlightEndsAsFailure(t *testing.T) {
 	}
 	if !e.s.drain(time.Second) {
 		t.Fatal("nothing should be in flight now")
+	}
+}
+
+// Leftover 1 of the W4 review: a write that has passed the stopping check must
+// be counted before drain starts to wait. After drain says nothing is in
+// flight, no write may start. The hook holds a write between the check and the
+// count, for as long as a stop would need to run in that gap.
+func TestNoWriteStartsAfterDrainBeganWaiting(t *testing.T) {
+	e, fa := actEnv(t)
+	var drained atomic.Bool
+	var enteredAfter atomic.Int32
+	fa.hook = func(context.Context, Steps) (ActionResult, error) {
+		if drained.Load() {
+			enteredAfter.Add(1)
+		}
+		return ActionResult{Result: ResultDone, JournalSeq: 1}, nil
+	}
+	e.s.stopCheckHook = func() {
+		// Give a stop the chance to run in the gap. If the check and the count
+		// are one step, the stop waits for the lock and this times out.
+		deadline := time.Now().Add(300 * time.Millisecond)
+		for !drained.Load() && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	r := actRoutes()[0]
+	got := make(chan *httptest.ResponseRecorder, 1)
+	go func() { got <- post(e, r.path, key1, r.body) }()
+	time.Sleep(50 * time.Millisecond) // the write is inside the gap
+	e.s.beginStop()
+	ok := e.s.drain(2 * time.Second)
+	drained.Store(true)
+	rec := <-got
+	if !ok {
+		t.Fatal("drain did not see the write end")
+	}
+	if n := enteredAfter.Load(); n != 0 {
+		t.Fatalf("%d write(s) started after drain said nothing was in flight", n)
+	}
+	// Whatever the reply was, it is never "done" for a write that did not run.
+	if strings.Contains(rec.Body.String(), `"done"`) && fa.calls() == 0 {
+		t.Fatal("done with nothing written")
+	}
+}
+
+// Many writers against a stop, under -race: no write is lost or counted after
+// the wait began.
+func TestManyWritersAgainstAStop(t *testing.T) {
+	for round := 0; round < 10; round++ {
+		e, fa := actEnv(t)
+		var drained atomic.Bool
+		var late atomic.Int32
+		fa.hook = func(context.Context, Steps) (ActionResult, error) {
+			if drained.Load() {
+				late.Add(1)
+			}
+			time.Sleep(time.Millisecond)
+			return ActionResult{Result: ResultDone, JournalSeq: 1}, nil
+		}
+		var wg sync.WaitGroup
+		for i := 1; i <= 24; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				path := fmt.Sprintf("/api/v1/calls/q-%d-9/answer", i)
+				post(e, path, fmt.Sprintf("key-writer-%04d-aaaaaaaa", i), answerBody("blue"))
+			}()
+		}
+		time.Sleep(time.Millisecond)
+		e.s.beginStop()
+		e.s.drain(2 * time.Second)
+		drained.Store(true)
+		wg.Wait()
+		if late.Load() != 0 {
+			t.Fatalf("round %d: %d writes started after the wait", round, late.Load())
+		}
 	}
 }

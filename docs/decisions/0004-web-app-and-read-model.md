@@ -1,6 +1,6 @@
 # 0004. The web app and its read model
 
-- Status: proposed, 2026-11-27. Built and tested: the read model (`internal/floor`), the collector that fills it (`internal/floor/collect`), the server with three actions (`internal/server`: answer, yes or no, approve), the Floor, Needs you and Goals screens, and the demo (`oxf run --demo`). Accept, Cancel, Undo, the dial, Pause and the other screens are not built. The demo has been run. Nothing here has been run on a real repository.
+- Status: proposed, 2026-11-27. Built and tested: the read model (`internal/floor`), the collector that fills it (`internal/floor/collect`), the server with its actions (`internal/server`: answer, yes or no, approve, Accept, Cancel, Undo, the undo preview and the piece detail), the Floor, Needs you and Goals screens with the piece drawer, and the demo (`oxf run --demo`). Undo after Accept, the dial, Pause and the other screens are not built. The demo has been run. Nothing here has been run on a real repository.
 - Scope: the web app of the first release. Records 0001, 0002 and 0003 are the authority. Where this record changes them, "Changes to records 0001, 0002 and 0003" says so, and each was edited to agree.
 - **(owner)** marks the owner's call. **(call)** marks a call by the assistant, open to change.
 
@@ -29,7 +29,7 @@ Also different: bundled fonts, decoration-only reduced motion, numbers in senten
 
 ## The screens
 
-The Floor, Needs you and Goals screens are built and shown with the demo's data only. Answer, yes or no, and Approve work. The other buttons are switched off until their actions are built. The other screens say they are not built.
+The Floor, Needs you and Goals screens are built and shown with the demo's data only. Answer, yes or no, Approve, Accept, Cancel and Undo work. The other buttons are switched off until their actions are built. The other screens say they are not built.
 
 | Group | Screen | Status |
 |---|---|---|
@@ -288,11 +288,14 @@ A title may appear only in these places, each its own element, text only: on the
 - **The `undo` field of `PieceDetail`** is set only for a piece at 06 when the holding area is published, not frozen, not pending and held by this machine. `undo` on `PieceDetail` is `{change, stagingSeq, commit}`. `change` is the staging entry id: the ticket's first applied entry. `GET /api/v1/changes/{id}/undo-preview` returns an `UndoPreview`. `alsoRemoved` holds the staging entry ids that depend on `change`, not `change` itself, in the order they stand in the holding area, oldest first. The server compares in the same order. `tickets` has one entry for `change` first, then one per `alsoRemoved` entry, in the same order. The body's `change` must equal the route's `{id}`, or it is `bad_request`. The plain screens show ticket numbers, never entry ids.
 
 ```ts
-type UndoPreview = { change: string; stagingSeq: number; commit: string;
+type UndoPreview = { mode: "demo" | "live"; change: string; stagingSeq: number; commit: string;
                      alsoRemoved: string[]; tickets: { change: string; ticket: number }[] };
 ```
 - **Version.** A call's `version` is a SHA-256 over what the person was shown, including a question's full text beyond the cut, and what the action depends on: for a plan, the lane, the lines as read from the goal body and the body's last edit time; for a question, the comment id; for a consequence, run, attempt, commit, risk and the machine that holds the decision; for an Accept, `stagingSeq`, commit, the pending flag, mode, pull request, frozen, published, who holds staging and the tickets at 06. Before any action the server reads the host and computes it again; a difference is refused with "This changed. Look again."
 - **Accept is one action for everything in the holding area**, listing each goal inside it. To leave a goal out, undo its changes first. **(call)** Accept and Cancel send `stagingSeq`, `commit` and the Accept call's `version`. The server builds the current Accept call again from the host and the stores. It refuses with `stale` unless that call has the id `a-<stagingSeq>`, the same `commit` and `version`, and lists the action. The Accept call is built from the pieces ready at 06 only. It offers Accept only when the holding area is published, not frozen, not pending, and held by this machine. While an Accept is pending it offers Cancel, on the machine that holds staging; in developer mode it names a developer and offers nothing.
+- **In the page.** Accept asks once more, "Accept now" or "Back", before it sends. Undo is in the piece drawer. It sends only after the preview is shown, with the preview's own `stagingSeq`, `commit` and list, and asks "Undo now" or "Back". A preview that does not name the offered change is refused by the page. **(call)**
+- **The preview is a read and never waits for running work.** If it cannot answer within its time, for example while a rebuild holds the holding area, it answers 503 `unavailable`. If the latest state is not published it is `stale`. The person looks again.
+- **A step the git host cut short is finished by the factory, not by the person.** If the push after an Undo fails, the removal is recorded and not yet published. If recording an Accept fails after the host merged, the merge is done and not yet recorded. The press answers `host_failed`. Before the next Accept, Cancel or Undo, and on every round of its own work, the factory publishes or records what is missing, once. Until then the holding area offers no Accept. After it, the calls come back for the new state, and a repeat of the same Undo is `stale`, because the change is already out. Nothing is removed or accepted twice.
 - Accept, Cancel and Undo run only on the machine that holds staging; elsewhere they are disabled.
 - A plan call offers Approve only for a quick lane goal whose one to three lines were read.
 - A level above the ceiling, level 3 or an unknown task gets 422 `bad_level`, and nothing changes. The ceiling stays shared in the repository. **(call)**
@@ -370,7 +373,6 @@ Checked against `internal/` on 2026-11-27:
 - `GetLevel` returns autopilot when no level is set.
 - Runs have no phase-change time, held reason or end reason.
 - Risk reasons are free text with paths, not codes, so a phrase cannot be chosen from them yet.
-- `stagingSeq` and the rebuild lock exist only in the staging work, which is not merged; there is no staging entry id route.
 - Not stored anywhere: the sealed gate decision, the accept time, the pause flag, a goal's approval time, and the lane (quick until the standard lane exists). A goal's course needs trajectory rules, added to the backend order; until then the chip reads "Course: not built yet".
 
 ## Stack and dependencies
@@ -480,11 +482,13 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 - Until the list of trusted logins is built, the first build counts a consequence answer, and an answer from the web app, only from the propose token's user. The rule that any trusted person may answer is the design, not the first build.
 - Cancel appears only when a merge started and did not finish. In the demo that happens only when the git host fails.
 - Retrying after a crash relies on what the factory reads from the git host: the search for the same answer text, a standing consequence comment, a label already set, `stagingSeq` and `commit`. It does not rely on a stored record.
-- **Built for the demo only.** Answer, yes or no, and Approve are built against the demo's driver and the fake git host. No action has been run against a real git host.
+- **Built for the demo only.** Answer, yes or no, Approve, Accept, Cancel and Undo are built against the demo's driver and the fake git host. No action has been run against a real git host.
 - **An answer must show something.** An answer with no letter, number, punctuation mark or symbol a person can see is refused with `unprocessable`, in the page and in the server.
-- **The screen can lag behind a press.** While the demo does the work that follows a press, the screen may show the last whole picture for a short time, with the button offered again. A second press is then refused with "This changed. Look again." or carries on the first.
-- **A label removed by hand.** When a person removes `factory:approved` from an approved goal on the host and approves again at the same version, the demo queues the builds a second time and the story stops as "did not go as written".
-- **A factory ticket edited by a person during a failed Approve** is not taken up again. A new ticket is made and the edited one stays waiting.
+- **After a press that was done, the picture is never older than that press.** While other work runs, the screen may still show the last whole picture for a short time.
+- **A factory ticket edited by a person during a failed Approve** is refused with `stale`. The person looks again; the demo does not merge the edit into the plan.
+- **A preview that ran out of time keeps waiting inside the server** until the holding area is free, one small task per request. They end by themselves. A fault inside such a task would stop `oxf`; none is known.
+- **The repair after a git host failure is kept in memory.** A restart of the demo loses it, with everything else in the demo. On a real repository it must be read back from the host and the store; that is not built.
+- **Accept, Cancel and Undo have run only against the fake git host**, where a merge is one call. Cancel has been reached only by making the fake host fail.
 - **A press at the moment of stopping** may be refused with `unavailable` or end as `internal`. It is never reported done with nothing written.
 - **A plan edit can slip through.** An edit between the server's re-read and the label reaching the host is caught only by the factory's comment that repeats the recorded lines.
 
@@ -500,3 +504,4 @@ Beyond the screens above: listening on another address, with encryption; Plant a
 - 2026-11-27: the status and the demo's rules were aligned with the built demo line (`internal/floor/collect`, `internal/demo`, `oxf run --demo`) after three review rounds.
 - 2026-11-27: action replies, refusal codes, the idempotency key, the undo preview and the answer text rules were added before the actions are built.
 - 2026-11-28: answer, yes or no, and Approve were built for the demo after two review rounds. The limits found are listed above.
+- 2026-11-28: Accept, Cancel, Undo, the undo preview and the piece detail were built for the demo after two review rounds. Three limits from the first actions were fixed and removed from the list. The limits found are listed above.

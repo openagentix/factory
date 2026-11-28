@@ -103,6 +103,7 @@ func (d *Demo) Drain(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(errs, err)...)
 		}
+		d.repair(ctx) // what an action left half done is finished before more work
 		// The step lock is taken before a task is taken from the queue, so a
 		// moment with the queue empty and the lock free means no task is in flight.
 		d.stepMu.Lock()
@@ -112,6 +113,9 @@ func (d *Demo) Drain(ctx context.Context) error {
 			return errors.Join(errs...)
 		}
 		err := d.runFollowup(ctx, f)
+		if err != nil {
+			d.unqueue(f) // a task that did not finish may be asked for again
+		}
 		d.stepMu.Unlock()
 		if err != nil {
 			// A stop the person asked for ends the task, and is not a failure.
@@ -135,28 +139,30 @@ func (d *Demo) runFollowup(ctx context.Context, f followup) error {
 	if d.taskHook != nil {
 		d.taskHook()
 	}
+	// Every task that builds a change says the result it expects from the real
+	// code: the change passes every stage and is in the holding area. When the
+	// real result differs, the task did not go as written, and the screen keeps
+	// showing what really happened.
+	expect := func(res *result, err error, j job) error {
+		if err != nil {
+			return err
+		}
+		got, err := d.finish(ctx, j, res)
+		if err != nil {
+			return err
+		}
+		if got != OutcomeAdmitted {
+			return &DivergedError{Want: OutcomeAdmitted, Got: got}
+		}
+		return nil
+	}
 	switch f.kind {
 	case fuResume:
 		res, err := d.runJob(ctx, f.j, f.runID, f.attempt)
-		if err != nil {
-			return err
-		}
-		_, err = d.finish(ctx, f.j, res)
-		return err
-	case fuRework:
+		return expect(res, err, f.j)
+	case fuRework, fuTicket:
 		res, err := d.work(ctx, f.j)
-		if err != nil {
-			return err
-		}
-		_, err = d.finish(ctx, f.j, res)
-		return err
-	case fuTicket:
-		res, err := d.work(ctx, f.j)
-		if err != nil {
-			return err
-		}
-		_, err = d.finish(ctx, f.j, res)
-		return err
+		return expect(res, err, f.j)
 	case fuChecks:
 		return d.writeChecks(ctx, f.j.goal)
 	case fuAdd:
@@ -174,7 +180,13 @@ func (d *Demo) addAnswered(ctx context.Context, f followup) error {
 		err = d.addHook()
 	}
 	if err == nil {
-		_, err = d.admit(ctx, f.j, f.res, f.dec)
+		var got Outcome
+		got, err = d.admit(ctx, f.j, f.res, f.dec)
+		if err == nil && got != OutcomeAdmitted {
+			// The holding area did not take the change the person said yes to. What
+			// really happened is already recorded, so nothing is marked on top of it.
+			return &DivergedError{Want: OutcomeAdmitted, Got: got}
+		}
 	}
 	if err == nil {
 		return nil
@@ -190,6 +202,17 @@ func (d *Demo) addAnswered(ctx context.Context, f followup) error {
 		return nil
 	})
 	return err
+}
+
+// unqueue forgets that a build was queued, so that a later approval may queue it
+// again. The caller holds the step lock.
+func (d *Demo) unqueue(f followup) {
+	switch f.kind {
+	case fuChecks:
+		delete(d.queued, checksKey(f.j.goal))
+	case fuTicket:
+		delete(d.queued, ticketKey(f.j.key))
+	}
 }
 
 // followupJob builds the job of the next try of a ticket.

@@ -110,7 +110,7 @@ func RunInFrom(r *api.Run, f RunFacts, machine string, deadline time.Duration) f
 func HoldingFrom(st staging.State, mine bool, pending *staging.Pending, lf LedgerFacts) floor.HoldingIn {
 	h := floor.HoldingIn{Exists: true, StagingSeq: st.Seq, Commit: st.Commit, Published: st.Published, Mine: mine}
 	for _, a := range st.Applied {
-		h.Applied = append(h.Applied, floor.EntryIn{Ticket: a.Ticket, Goal: a.Goal, At: opt(lf.Applied[a.EntryID])})
+		h.Applied = append(h.Applied, floor.EntryIn{Ticket: a.Ticket, Goal: a.Goal, At: opt(lf.Applied[a.EntryID]), EntryID: a.EntryID})
 	}
 	seen := map[string]bool{}
 	add := func(id string, ticket int) {

@@ -6,7 +6,9 @@
     import Pending from './Pending.svelte';
     import ActionButton from './ActionButton.svelte';
     import AnswerBox from './AnswerBox.svelte';
+    import { tick } from 'svelte';
     import { actMessage, busy } from './act';
+    import { enter } from './focus';
     import { COULD_NOT_READ, ageText, callText } from './text';
     import { CALL_KIND_LOOK, UNREAD, WHO_WORD, acceptGoals, callTitle, pick } from './view';
 
@@ -17,6 +19,18 @@
     const goals = $derived(acceptGoals(f));
     const has = (c: Call, a: string) => (c.actions as string[]).includes(a);
     const actOf = (c: Call) => app.acts[`${c.id}|${c.version}`];
+    // Accept asks once. The question is for one call at one version: a new version closes it.
+    let confirming = $state<string | null>(null);
+    const ckey = (c: Call) => `${c.id}|${c.version}`;
+    $effect(() => {
+        if (confirming !== null && !f.calls.some((c) => ckey(c) === confirming)) confirming = null;
+    });
+    async function back(c: Call): Promise<void> {
+        confirming = null;
+        await tick();
+        root?.querySelector<HTMLElement>(`[data-call="${CSS.escape(c.id)}"] [data-act="accept"]`)?.focus();
+    }
+    const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
     // Focus. When a later snapshot removes the call that held focus, focus goes to the next call's sentence, or to the list.
     let root: HTMLElement | undefined = $state();
     let focusId: string | null = null;
@@ -92,11 +106,22 @@
             {/if}
             {#if c.kind === 'accept'}
                 <Pending label="Try it" />
-                {#if has(c, 'accept')}<Pending label="Accept" kind="pri" />{/if}
-                {#if has(c, 'cancel')}<Pending label="Cancel the Accept" />{/if}
-                <Pending label="Undo a change" />
+                {#if has(c, 'accept')}<ActionButton label="Accept" kind="pri" tag="accept" busy={busy(actOf(c))} onpress={() => (confirming = ckey(c))} />{/if}
+                {#if has(c, 'cancel')}<ActionButton label="Cancel the Accept" tag="cancel" busy={busy(actOf(c))} onpress={() => app.act(c, 'cancel')} />{/if}
             {/if}
         </div>
+        {#if c.kind === 'accept' && confirming === ckey(c) && has(c, 'accept')}
+            <!-- Escape goes back from the question. The keys are only for people who use a keyboard; the Back button does the same. -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div class="confirm" role="group" aria-labelledby="cf-{c.id}" onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); void back(c); } }}>
+                <p class="q" id="cf-{c.id}" tabindex="-1" use:enter>Accept everything in the holding area: {plural(goals.reduce((n, g) => n + g.count, 0), 'change', 'changes')} in {plural(goals.length, 'goal', 'goals')}. This puts it into the product.</p>
+                <div class="acts">
+                    <ActionButton label="Accept now" kind="pri" busy={busy(actOf(c))} onpress={() => { confirming = null; void app.act(c, 'accept'); }} />
+                    <button type="button" class="btn" onclick={() => back(c)}>Back</button>
+                </div>
+            </div>
+        {/if}
+        {#if c.kind === 'accept'}<p class="small muted">To take a change back, open it on the line.</p>{/if}
         <p class="small act-msg" aria-live="polite">{actMessage(actOf(c))}</p>
         {#if c.kind === 'accept'}
             <p class="caution"><Icon name="stuck" />Try it runs code the factory wrote. No person has read it.</p>

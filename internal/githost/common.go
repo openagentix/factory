@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -37,8 +36,8 @@ type labelEvent struct {
 // label is on the issue now. It returns false (unknown) unless the label is
 // present, the events are in strict ascending ID order and in time order, the
 // latest event for the label is an add, and that event names an actor with a
-// valid login. A label name that differs only by letter case is the same
-// label, as on the host.
+// valid login. A label name that differs only by ASCII letter case is the
+// same label, as on the host. Unicode folding is not used.
 func latestAdd(events []labelEvent, label string, present bool) (labelEvent, bool) {
 	if !present {
 		return labelEvent{}, false
@@ -51,7 +50,7 @@ func latestAdd(events []labelEvent, label string, present bool) (labelEvent, boo
 			return labelEvent{}, false // out of order: ambiguous
 		}
 		prev = e
-		if strings.EqualFold(e.Label, label) {
+		if asciiEqualFold(e.Label, label) {
 			last, found = e, true
 		}
 	}

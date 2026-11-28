@@ -117,7 +117,7 @@ func NewFake(fx Fixture, clock func() time.Time) *Fake {
 	}
 	s.permissions = map[string]string{}
 	for k, v := range fx.Permissions {
-		s.permissions[strings.ToLower(k)] = v
+		s.permissions[asciiLower(k)] = v
 	}
 	f := &Fake{fakeState: s, hasAccept: true}
 	for _, fi := range fx.Issues {
@@ -178,7 +178,7 @@ func (s *fakeState) addRawComment(it *fakeItem, author, assoc, body string) {
 }
 
 func (s *fakeState) writer(login string) bool {
-	return isFactoryLogin(login, s.factoryLogin) || permissionWrites(s.permissions[strings.ToLower(login)])
+	return isFactoryLogin(login, s.factoryLogin) || permissionWrites(s.permissions[asciiLower(login)])
 }
 
 func (s *fakeState) get(n int) (*fakeItem, error) {
@@ -199,7 +199,7 @@ func (s *fakeState) snapshot(it *fakeItem) Issue {
 // SetPermission sets the repository permission of a user.
 func (f *Fake) SetPermission(login, perm string) {
 	f.mu.Lock()
-	f.permissions[strings.ToLower(login)] = perm
+	f.permissions[asciiLower(login)] = perm
 	f.mu.Unlock()
 }
 

@@ -708,3 +708,108 @@ func TestFakePlaysAMovedRepository(t *testing.T) {
 		t.Errorf("ListAgentPullRequests: %v", err)
 	}
 }
+
+// --- letter case: ASCII only ---
+
+// U+017F (long s) and U+212A (Kelvin sign) are equal to "s" and "k" under
+// Unicode case folding. Names from the host are untrusted, so no comparison
+// that grants anything may use Unicode folding.
+const (
+	needsHumanLookalike = "factory:needſ-human"
+	kelvinKim           = "Kim"
+)
+
+func TestLookalikeLabelIsNotTheLabel_GitHub(t *testing.T) {
+	ctx := context.Background()
+	const t1, t2 = "2026-11-26T09:00:01Z", "2026-11-26T09:00:02Z"
+	// (a) The issue carries only the look-alike, added by a writer.
+	g, _ := testGH(t, eventsHost([]string{needsHumanLookalike},
+		[]string{evJSON(1, "labeled", "ann", needsHumanLookalike, t1)}, "write"))
+	if got, err := g.LabelActor(ctx, 7, LabelNeedsHuman); err != nil || got.Known || got.Trusted {
+		t.Errorf("(a) look-alike only: %+v %v, want unknown", got, err)
+	}
+	// (b) The factory added the real label, a triage user then added the look-alike.
+	g, _ = testGH(t, eventsHost([]string{LabelNeedsHuman, needsHumanLookalike},
+		[]string{evJSON(1, "labeled", "factory-bot", LabelNeedsHuman, t1), evJSON(2, "labeled", "tri", needsHumanLookalike, t2)}, "write"))
+	got, err := g.LabelActor(ctx, 7, LabelNeedsHuman)
+	if err != nil || !got.Known || got.Login != "factory-bot" {
+		t.Errorf("(b) look-alike after the real label: %+v %v, want factory-bot", got, err)
+	}
+}
+
+func TestLookalikeLabelIsNotTheLabel_Fake(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	f.SetPermission("ann", "write")
+	f.SimulateLabel(2, needsHumanLookalike, "ann")
+	if got, err := f.LabelActor(ctx, 2, LabelNeedsHuman); err != nil || got.Known || got.Trusted {
+		t.Errorf("(a) look-alike only: %+v %v, want unknown", got, err)
+	}
+	must(t, f.AddLabel(ctx, 3, LabelNeedsHuman))
+	f.SimulateLabel(3, needsHumanLookalike, "tri")
+	got, err := f.LabelActor(ctx, 3, LabelNeedsHuman)
+	if err != nil || !got.Known || got.Login != "factory-bot" {
+		t.Errorf("(b) look-alike after the real label: %+v %v, want factory-bot", got, err)
+	}
+}
+
+func TestNoGrantingComparisonFoldsUnicode(t *testing.T) {
+	if hasLabelFold([]string{needsHumanLookalike}, LabelNeedsHuman) {
+		t.Error("hasLabelFold equates the long s with s")
+	}
+	if !hasLabelFold([]string{"Factory:Needs-Human"}, LabelNeedsHuman) {
+		t.Error("hasLabelFold must still equate ASCII letter case")
+	}
+	if isFactoryLogin(kelvinKim, "kim") || isFactoryLogin("kim", kelvinKim) {
+		t.Error("isFactoryLogin equates the Kelvin sign with k")
+	}
+	if !isFactoryLogin("KIM", "kim") {
+		t.Error("isFactoryLogin must still equate ASCII letter case")
+	}
+	g := &GitHub{repo: Repo{"kim", "kit"}}
+	if g.sameRepo(kelvinKim + "/kit") {
+		t.Error("sameRepo equates the Kelvin sign with k")
+	}
+	if !g.sameRepo("KIM/Kit") {
+		t.Error("sameRepo must still equate ASCII letter case")
+	}
+	if permissionWrites("WRITE") != true || permissionWrites("wrıte") {
+		t.Error("permissionWrites folds wrongly")
+	}
+}
+
+// The permission cache and the lookup of writers are keyed by login. The
+// Kelvin sign lower-cases to "k", so a login with it must never share a key
+// with a real one.
+func TestALoginWithTheKelvinSignIsNotAWriter_GitHub(t *testing.T) {
+	ctx := context.Background()
+	issue := func(n int, login string) string {
+		return fmt.Sprintf(`{"number":%d,"id":%d,"title":"t","state":"open","labels":[{"name":"factory:ready"}],"user":{"login":%q},"author_association":"NONE"}`, n, 100+n, login)
+	}
+	for name, order := range map[string][]string{"real login first": {"kim", kelvinKim}, "look-alike first": {kelvinKim, "kim"}} {
+		t.Run(name, func(t *testing.T) {
+			g, _ := testGH(t, func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/repos/demo/demo/issues":
+					fmt.Fprint(w, "["+issue(1, order[0])+","+issue(2, order[1])+"]")
+				case r.URL.Path == "/repos/demo/demo/collaborators/kim/permission":
+					fmt.Fprint(w, `{"permission":"write","role_name":"write"}`)
+				default:
+					fmt.Fprint(w, `{"permission":"none","role_name":"none"}`)
+				}
+			})
+			got, err := g.ListIssues(ctx, LabelReady)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Author != "kim" {
+				t.Fatalf("trusted issues = %+v, want only the one by kim", got)
+			}
+		})
+	}
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	f.SetPermission("kim", "write")
+	if f.writer(kelvinKim) {
+		t.Error("the fake treats the Kelvin sign login as a writer")
+	}
+}

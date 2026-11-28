@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/openagentix/factory/internal/api"
@@ -444,7 +443,7 @@ func refuse(format string, a ...any) error {
 // permissionWrites says whether a repository permission or role counts as
 // write access: admin, maintain and write do; triage, read and none do not.
 func permissionWrites(perm string) bool {
-	switch strings.ToLower(perm) {
+	switch asciiLower(perm) {
 	case "admin", "maintain", "write":
 		return true
 	}

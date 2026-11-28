@@ -404,7 +404,7 @@ func (g *GitHub) isWriter(ctx context.Context, login string) (bool, error) {
 	if !loginRE.MatchString(login) {
 		return false, nil
 	}
-	key := strings.ToLower(login)
+	key := asciiLower(login)
 	g.mu.Lock()
 	e, ok := g.perms[key]
 	g.mu.Unlock()
@@ -422,7 +422,7 @@ func (g *GitHub) isWriter(ctx context.Context, login string) (bool, error) {
 	case err != nil:
 		return false, err
 	default:
-		switch strings.ToLower(r.RoleName) {
+		switch asciiLower(r.RoleName) {
 		case "admin", "maintain", "write":
 			write = true
 		case "triage", "read", "none":
@@ -440,7 +440,7 @@ func (g *GitHub) isWriter(ctx context.Context, login string) (bool, error) {
 func (g *GitHub) writerSet(ctx context.Context, logins []string) (func(string) bool, error) {
 	set := map[string]bool{}
 	for _, l := range logins {
-		k := strings.ToLower(l)
+		k := asciiLower(l)
 		if _, done := set[k]; done {
 			continue
 		}
@@ -450,7 +450,7 @@ func (g *GitHub) writerSet(ctx context.Context, logins []string) (func(string) b
 		}
 		set[k] = w
 	}
-	return func(l string) bool { return set[strings.ToLower(l)] }, nil
+	return func(l string) bool { return set[asciiLower(l)] }, nil
 }
 
 func (g *GitHub) issueFrom(i ghIssue, writer func(string) bool) Issue {

@@ -49,6 +49,19 @@ func asciiEqualFold(a, b string) bool {
 	return true
 }
 
+// asciiLower lower-cases ASCII letters only. strings.ToLower also maps, for
+// example, the Kelvin sign U+212A to "k", so two different logins could share
+// one key. Names from the host are untrusted, so keys use this.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
 // isStagingName reports whether a branch name, as a host or a person might
 // write it, names the staging branch or could be taken for it: the exact name,
 // with refs/heads/, in any letter case, with white space or a trailing slash.
@@ -125,7 +138,7 @@ func checkLabel(l string) error {
 
 // isFactoryLogin reports whether the author is the factory's own user.
 func isFactoryLogin(author, factoryLogin string) bool {
-	return author != "" && factoryLogin != "" && strings.EqualFold(author, factoryLogin)
+	return author != "" && factoryLogin != "" && asciiEqualFold(author, factoryLogin)
 }
 
 var loginRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,38}|[A-Za-z0-9-]*\[bot\])$`)
@@ -152,10 +165,12 @@ func isAgentBranch(name string) bool {
 }
 
 // hasLabelFold reports whether the labels hold the label. The host treats
-// label names that differ only by letter case as one label.
+// label names that differ only by ASCII letter case as one label. Unicode
+// folding is never used: it would equate "factory:need\u017f-human" with
+// "factory:needs-human".
 func hasLabelFold(labels []string, label string) bool {
 	for _, l := range labels {
-		if strings.EqualFold(l, label) {
+		if asciiEqualFold(l, label) {
 			return true
 		}
 	}

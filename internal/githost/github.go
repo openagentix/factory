@@ -711,7 +711,7 @@ func (p ghPR) view() PullRequest {
 }
 
 // checkHead makes sure a pull request is the one the caller expects: open,
-// from this repository and not a fork, from the expected branch at the
+// with this repository as its head (decided by name, not by the fork flag), from the expected branch at the
 // expected commit, into the default branch.
 func (g *GitHub) checkHead(p ghPR, headRef, commit, def string) error {
 	switch {

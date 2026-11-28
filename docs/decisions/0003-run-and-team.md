@@ -298,6 +298,10 @@ A commit a teammate's machine makes is signed off in that teammate's own name, f
 - A dead loser that never released blocks the ticket until its claim expires. When `claimExpiry` is lowered, machines may disagree for one old expiry period and double work is possible; the check before each publish step still stops a double publish.
 - A lost store can post a second acceptance-list comment.
 - A machine's sign-off says its person takes responsibility. Whether that meets a project's own sign-off rules is for that project.
+- **Reads of the git host built so far (`internal/githost`), not yet used.** Who last put a label on an issue is read from the issue's events, in a second request after the issue itself, not in the one response this record asks for. The answer is "unknown" when the label is not on the issue, when the latest event is a removal, when events are out of order or cut short, and when the actor is `ghost` or a `[bot]` login. Label names are compared in ASCII lowercase only. The read also says whether the actor can write to the repository or is the factory's own user. That is not the list of trusted logins: the caller must check the list.
+- **The factory's own pull requests are found by author, branch prefix, base and the head repository's name**, not by a label and not by the host's fork flag. A list that is cut short means the count is unknown, and the caller must hold. A pull request closed while the list is read can be missed or seen twice.
+- **A repository that was renamed or moved** is noticed from the names in the host's answers and stops these reads. One case is not noticed: between the two requests that read the default branch, the repository is renamed and a new one is made at the old name.
+- None of these reads has run against a real host. What the host sends for a label put on when an issue is made, for a forked repository and for a bot's permission is not confirmed.
 
 ## Not settled
 
@@ -311,3 +315,5 @@ A commit a teammate's machine makes is signed off in that teammate's own name, f
 ## History
 
 On 2026-11-27 record 0004 changed these rules: an `oxf:answer` comment from a trusted person, unedited, is an answer; `paused` is a held reason; `person_said_no` is a rework reason; machine settings have an optional `webPort` field.
+
+On 2026-11-28 the Limits gained the git host reads built for the orchestrator: label actor, the factory's own pull requests, the default branch.

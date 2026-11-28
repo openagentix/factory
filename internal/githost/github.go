@@ -340,16 +340,35 @@ func (g *GitHub) factoryLogin(ctx context.Context) (string, error) {
 }
 
 func (g *GitHub) defaultBranch(ctx context.Context) (string, error) {
+	def, _, err := g.repoInfo(ctx)
+	return def, err
+}
+
+// repoInfo reads the repository: the default branch and the full name the
+// host gives it. The full name is empty when the host did not say.
+func (g *GitHub) repoInfo(ctx context.Context) (def, fullName string, err error) {
 	var r struct {
 		DefaultBranch string `json:"default_branch"`
+		FullName      string `json:"full_name"`
 	}
 	if _, err := g.call(ctx, g.propose, http.MethodGet, g.base.String()+g.path(""), nil, &r); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if r.DefaultBranch == "" {
-		return "", errors.New("githost: the host did not name the default branch")
+		return "", "", errors.New("githost: the host did not name the default branch")
 	}
-	return r.DefaultBranch, nil
+	return r.DefaultBranch, r.FullName, nil
+}
+
+// sameRepo reports whether a full name from the host is the configured
+// repository. Repository names are ASCII, so only ASCII letter case is folded.
+func (g *GitHub) sameRepo(fullName string) bool {
+	return asciiEqualFold(fullName, g.repo.String())
+}
+
+// movedError is the error for an answer from another repository.
+func movedError(what, got string) error {
+	return fmt.Errorf("%w (%s names %q)", ErrRepositoryMoved, what, clip(redactLine(got), 80))
 }
 
 type ghIssue struct {
@@ -366,6 +385,8 @@ type ghIssue struct {
 	} `json:"user"`
 	Association string          `json:"author_association"`
 	PullRequest json.RawMessage `json:"pull_request"`
+	// RepositoryURL is the API address of the repository the issue is in.
+	RepositoryURL string `json:"repository_url"`
 }
 
 // isWriter says whether a user may write to the repository, by the user's
@@ -696,7 +717,7 @@ func (g *GitHub) checkHead(p ghPR, headRef, commit, def string) error {
 	switch {
 	case p.Head.Ref != headRef || p.Base.Ref != def:
 		return refuse("pull request %d is not the expected pull request from %q into %q", p.Number, headRef, def)
-	case p.Head.Repo == nil || p.Head.Repo.Fork || !strings.EqualFold(p.Head.Repo.FullName, g.repo.String()):
+	case p.Head.Repo == nil || p.Head.Repo.Fork || !g.sameRepo(p.Head.Repo.FullName):
 		return refuse("pull request %d does not come from this repository", p.Number)
 	case p.State != "open":
 		return refuse("pull request %d is not open", p.Number)
@@ -889,9 +910,18 @@ func (g *GitHub) OpenRevert(ctx context.Context, spec RevertSpec) (PullRequest, 
 }
 
 func (g *GitHub) DefaultBranch(ctx context.Context) (DefaultBranchInfo, error) {
-	def, err := g.defaultBranch(ctx)
+	def, full, err := g.repoInfo(ctx)
 	if err != nil {
 		return DefaultBranchInfo{}, err
+	}
+	// A rename or transfer is answered with a redirect that the client
+	// follows. The answer then names the new repository. With no name there is
+	// no way to tell, and that is not an answer either.
+	if full == "" {
+		return DefaultBranchInfo{}, errors.New("githost: the host did not name the repository, so the default branch is not taken")
+	}
+	if !g.sameRepo(full) {
+		return DefaultBranchInfo{}, movedError("the repository answer", full)
 	}
 	if err := checkStagingPush(def); err != nil {
 		return DefaultBranchInfo{}, err
@@ -937,6 +967,11 @@ func (g *GitHub) LabelActor(ctx context.Context, n int, label string) (LabelActo
 	var i ghIssue
 	if _, err := g.call(ctx, g.propose, http.MethodGet, g.base.String()+g.path("/issues/"+strconv.Itoa(n)), nil, &i); err != nil {
 		return LabelActorInfo{}, err
+	}
+	if p, err := url.Parse(i.RepositoryURL); i.RepositoryURL == "" || err != nil {
+		return LabelActorInfo{}, errors.New("githost: the host did not say which repository the issue is in, so its events are not taken")
+	} else if !asciiEqualFold(strings.TrimRight(p.Path, "/"), g.path("")) {
+		return LabelActorInfo{}, movedError("the issue", p.Path)
 	}
 	var names []string
 	for _, l := range i.Labels {
@@ -1003,8 +1038,15 @@ func (g *GitHub) ListAgentPullRequests(ctx context.Context, state PRState) ([]Pu
 			}
 			// The filters above are a request, not a promise. Check every item.
 			if p.Number <= 0 || seen[p.Number] || !isFactoryLogin(p.User.Login, factory) || !isAgentBranch(p.Head.Ref) ||
-				p.Base.Ref != StagingBranch || p.Head.Repo == nil || p.Head.Repo.Fork || !strings.EqualFold(p.Head.Repo.FullName, g.repo.String()) {
+				p.Base.Ref != StagingBranch || p.Head.Repo == nil || p.Head.Repo.Fork {
 				return nil
+			}
+			// The factory's own pull request from a branch that is not in a
+			// fork, and not in this repository by name: the repository moved
+			// (the host answered the old path with a redirect, or the name
+			// changed). Skipping it would count zero. Fail the whole call.
+			if !g.sameRepo(p.Head.Repo.FullName) {
+				return movedError("pull request "+strconv.Itoa(p.Number), p.Head.Repo.FullName)
 			}
 			v := p.view()
 			if v.State != state {

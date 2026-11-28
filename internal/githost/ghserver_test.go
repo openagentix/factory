@@ -375,6 +375,7 @@ func (s *ghServer) issueJSON(it *srvItem) map[string]any {
 	m := map[string]any{
 		"number": it.number, "id": it.id, "title": it.title, "state": it.state, "labels": labels,
 		"user": map[string]any{"login": it.login}, "author_association": it.assoc,
+		"repository_url": "https://api.github.com/repos/demo/demo",
 	}
 	if it.body != "" {
 		m["body"] = it.body // GitHub sends null for an empty body

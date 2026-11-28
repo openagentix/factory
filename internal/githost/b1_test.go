@@ -59,7 +59,11 @@ func TestDefaultBranchRefusesBadAnswers_GitHub(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			routes := map[string]string{"/repos/demo/demo": tc.repo}
+			repo := tc.repo
+			if strings.HasPrefix(repo, `{"default_branch"`) {
+				repo = strings.Replace(repo, "{", `{"full_name":"demo/demo",`, 1)
+			}
+			routes := map[string]string{"/repos/demo/demo": repo}
 			if tc.br != "" {
 				routes["/repos/demo/demo/branches/main"] = tc.br
 				routes["/repos/demo/demo/branches/-x"] = tc.br
@@ -81,7 +85,7 @@ func TestDefaultBranchRefusesBadAnswers_GitHub(t *testing.T) {
 	g, _ := testGH(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/demo/demo":
-			fmt.Fprint(w, `{"default_branch":"release/1.x"}`)
+			fmt.Fprint(w, `{"default_branch":"release/1.x","full_name":"Demo/Demo"}`)
 		case "/repos/demo/demo/branches/release/1.x":
 			fmt.Fprint(w, `{"name":"release/1.x","commit":{"sha":"`+sha1h+`"}}`)
 		default:
@@ -99,7 +103,8 @@ func issueJSON(labels ...string) string {
 	for _, l := range labels {
 		ls = append(ls, fmt.Sprintf(`{"name":%q}`, l))
 	}
-	return `{"number":7,"id":17,"title":"t","state":"open","labels":[` + strings.Join(ls, ",") + `],"user":{"login":"factory-bot"},"author_association":"NONE"}`
+	return `{"number":7,"id":17,"title":"t","state":"open","labels":[` + strings.Join(ls, ",") + `],"user":{"login":"factory-bot"},"author_association":"NONE",` +
+		`"repository_url":"https://api.github.com/repos/demo/demo"}`
 }
 
 func evJSON(id int, kind, actor, label, at string) string {
@@ -265,8 +270,7 @@ func TestListAgentPullRequestsDropsWhatIsNotTheFactorys_GitHub(t *testing.T) {
 		prJSON(5, "factory-bot", "feature/x", StagingBranch, here, false, "open", ""),  // not an agent branch
 		prJSON(6, "factory-bot", "factory/r6", "main", here, false, "open", ""),        // not into staging
 		prJSON(7, "factory-bot", "factory/r7", StagingBranch, "evil/demo", true, "open", ""),
-		prJSON(8, "factory-bot", "factory/r8", StagingBranch, "", false, "open", ""),            // head repository deleted
-		prJSON(10, "factory-bot", "factory/r10", StagingBranch, "evil/demo", false, "open", ""), // claims to be no fork, but is another repository
+		prJSON(8, "factory-bot", "factory/r8", StagingBranch, "", false, "open", ""), // head repository deleted
 		prJSON(11, "factory-bot", "factory/", StagingBranch, here, false, "open", ""),
 		prJSON(12, "factory-bot", "factory/../x", StagingBranch, here, false, "open", ""),
 		prJSON(13, "factory-bot", "FACTORY/r13", StagingBranch, here, false, "open", ""),
@@ -582,5 +586,125 @@ func TestFakeLabelEventsAreKept(t *testing.T) {
 	is, _ := f.GetIssue(ctx, 2)
 	if !is.HasLabel(LabelReady) || !is.HasLabel("somebody-elses-label") {
 		t.Fatalf("labels = %v", is.Labels)
+	}
+}
+
+// --- a repository that moved ---
+
+// movedHost plays a repository that was renamed: the old path answers with a
+// same-host 301 to /repositories/42, and everything there says newName.
+func movedHost(newName string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		move := func(to string) {
+			http.Redirect(w, r, to, http.StatusMovedPermanently)
+		}
+		pr := func(n int) string {
+			return prJSON(n, "factory-bot", fmt.Sprintf("factory/r%d", n), StagingBranch, newName, false, "open", "")
+		}
+		switch r.URL.Path {
+		case "/repos/demo/demo":
+			move("/repositories/42")
+		case "/repos/demo/demo/pulls":
+			move("/repositories/42/pulls?" + r.URL.RawQuery)
+		case "/repos/demo/demo/issues/7":
+			move("/repositories/42/issues/7")
+		case "/repos/demo/demo/issues/7/events":
+			move("/repositories/42/issues/7/events")
+		case "/repositories/42":
+			fmt.Fprintf(w, `{"default_branch":"main","full_name":%q}`, newName)
+		case "/repositories/42/pulls":
+			fmt.Fprint(w, "["+pr(1)+","+pr(2)+"]")
+		case "/repositories/42/issues/7":
+			fmt.Fprint(w, strings.Replace(issueJSON(LabelReady), "/repos/demo/demo", "/repos/"+newName, 1))
+		case "/repositories/42/issues/7/events":
+			fmt.Fprint(w, "["+evJSON(1, "labeled", "ann", LabelReady, "2026-11-26T09:00:01Z")+"]")
+		default:
+			w.WriteHeader(404)
+		}
+	}
+}
+
+func TestAnAnswerFromAnotherRepositoryIsNeverTaken_GitHub(t *testing.T) {
+	ctx := context.Background()
+	g, _ := testGH(t, movedHost("demo/renamed"))
+	if got, err := g.ListAgentPullRequests(ctx, PROpen); !errors.Is(err, ErrRepositoryMoved) || len(got) != 0 {
+		t.Errorf("ListAgentPullRequests after a rename: %d items, err = %v; want ErrRepositoryMoved", len(got), err)
+	}
+	if got, err := g.DefaultBranch(ctx); !errors.Is(err, ErrRepositoryMoved) || got != (DefaultBranchInfo{}) {
+		t.Errorf("DefaultBranch after a rename: %+v %v; want ErrRepositoryMoved", got, err)
+	}
+	if got, err := g.LabelActor(ctx, 7, LabelReady); !errors.Is(err, ErrRepositoryMoved) || got.Known || got.Trusted {
+		t.Errorf("LabelActor after a rename: %+v %v; want ErrRepositoryMoved", got, err)
+	}
+	// The same names in another letter case are the same repository.
+	g, _ = testGH(t, movedHost("DEMO/Demo"))
+	if got, err := g.ListAgentPullRequests(ctx, PROpen); err != nil || len(got) != 2 {
+		t.Errorf("same name in other case: %d %v", len(got), err)
+	}
+	if got, err := g.DefaultBranch(ctx); err == nil || errors.Is(err, ErrRepositoryMoved) {
+		t.Errorf("only the branch read is missing here, got %+v %v", got, err)
+	}
+}
+
+// The host gives no repository name: there is no way to tell, so no answer.
+func TestAnAnswerWithNoRepositoryNameIsNotTaken_GitHub(t *testing.T) {
+	ctx := context.Background()
+	g, _ := testGH(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/demo/demo":
+			fmt.Fprint(w, `{"default_branch":"main"}`)
+		case "/repos/demo/demo/branches/main":
+			fmt.Fprint(w, `{"name":"main","commit":{"sha":"`+sha1h+`"}}`)
+		case "/repos/demo/demo/issues/7":
+			fmt.Fprint(w, strings.Replace(issueJSON(LabelReady), `,"repository_url":"https://api.github.com/repos/demo/demo"`, "", 1))
+		case "/repos/demo/demo/issues/7/events":
+			fmt.Fprint(w, "["+evJSON(1, "labeled", "ann", LabelReady, "2026-11-26T09:00:01Z")+"]")
+		case "/repos/demo/demo/pulls":
+			fmt.Fprint(w, "["+strings.Replace(prJSON(1, "factory-bot", "factory/r1", StagingBranch, "demo/demo", false, "open", ""), `"full_name":"demo/demo"`, `"full_name":""`, 1)+"]")
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	if got, err := g.DefaultBranch(ctx); err == nil {
+		t.Errorf("DefaultBranch with no full_name: %+v", got)
+	}
+	if got, err := g.LabelActor(ctx, 7, LabelReady); err == nil || got.Known {
+		t.Errorf("LabelActor with no repository_url: %+v %v", got, err)
+	}
+	if got, err := g.ListAgentPullRequests(ctx, PROpen); err == nil {
+		t.Errorf("a pull request whose head repository has no name was skipped: %+v", got)
+	}
+}
+
+func TestFakePlaysAMovedRepository(t *testing.T) {
+	ctx := context.Background()
+	c1, _ := fakeCommits()
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	must(t, f.PushBranch(ctx, "", c1, "factory/r1"))
+	must(t, f.PushStaging(ctx, "", c1))
+	own, err := f.OpenPullRequest(ctx, PRSpec{Head: "factory/r1", Base: StagingBranch, Title: "t"})
+	must(t, err)
+	// One pull request from a real fork with another name is skipped.
+	forked, _ := f.SeedPullRequest("factory-bot", "factory/r1", StagingBranch)
+	f.SimulateFork(forked)
+	if got, err := f.ListAgentPullRequests(ctx, PROpen); err != nil || len(got) != 1 || got[0].Number != own.Number {
+		t.Fatalf("fork: %+v %v", got, err)
+	}
+	// One whose head repository is not a fork and has another name.
+	f.SimulateMovedHeadRepository(own.Number)
+	if got, err := f.ListAgentPullRequests(ctx, PROpen); !errors.Is(err, ErrRepositoryMoved) || len(got) != 0 {
+		t.Fatalf("moved head repository: %+v %v", got, err)
+	}
+	// The whole repository moved: the three reads fail.
+	g := NewFake(DemoFixture(), newTestClock().Now)
+	g.SimulateRepositoryMoved()
+	if _, err := g.DefaultBranch(ctx); !errors.Is(err, ErrRepositoryMoved) {
+		t.Errorf("DefaultBranch: %v", err)
+	}
+	if _, err := g.LabelActor(ctx, 3, LabelReady); !errors.Is(err, ErrRepositoryMoved) {
+		t.Errorf("LabelActor: %v", err)
+	}
+	if _, err := g.ListAgentPullRequests(ctx, PROpen); !errors.Is(err, ErrRepositoryMoved) {
+		t.Errorf("ListAgentPullRequests: %v", err)
 	}
 }

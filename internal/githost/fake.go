@@ -67,6 +67,7 @@ type fakeItem struct {
 type fakePR struct {
 	head, base, headSHA string
 	headRepo            string
+	fork                bool
 	draft               bool
 	state               PRState
 	mergedBy            string
@@ -85,6 +86,7 @@ type fakeState struct {
 	next          int
 	nextComment   int64
 	nextEvent     int64
+	moved         bool
 	statuses      map[string]CommitStatus
 	protected     bool
 	parents       map[int]int
@@ -218,6 +220,7 @@ func (f *Fake) SimulateFork(number int) {
 	defer f.mu.Unlock()
 	if it, err := f.get(number); err == nil && it.pr != nil {
 		it.pr.headRepo = "someone-else/demo"
+		it.pr.fork = true
 	}
 }
 
@@ -782,6 +785,12 @@ func (f *Fake) ManualPullRequestURL(_ context.Context, branch string) (string, e
 	return "https://example.invalid/" + f.repo.String() + "/compare/" + f.defaultBranch + "..." + branch + "?expand=1", nil
 }
 
+func (f *Fake) isMoved() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.moved
+}
+
 // readFailure is the failure hook of a call that writes nothing.
 func (f *Fake) readFailure(op string) error {
 	f.mu.Lock()
@@ -797,6 +806,9 @@ func (f *Fake) DefaultBranch(context.Context) (DefaultBranchInfo, error) {
 		return DefaultBranchInfo{}, err
 	}
 	name := f.defaultBranch
+	if f.isMoved() {
+		return DefaultBranchInfo{}, ErrRepositoryMoved
+	}
 	if err := checkStagingPush(name); err != nil {
 		return DefaultBranchInfo{}, err
 	}
@@ -821,6 +833,9 @@ func (f *Fake) LabelActor(_ context.Context, n int, label string) (LabelActorInf
 	if fail, _ := f.takeFailure("LabelActor"); fail {
 		return LabelActorInfo{}, errFakeFailure
 	}
+	if f.moved {
+		return LabelActorInfo{}, ErrRepositoryMoved
+	}
 	it, err := f.get(n)
 	if err != nil {
 		return LabelActorInfo{}, err
@@ -841,12 +856,18 @@ func (f *Fake) ListAgentPullRequests(_ context.Context, state PRState) ([]PullRe
 	if fail, _ := f.takeFailure("ListAgentPullRequests"); fail {
 		return nil, errFakeFailure
 	}
+	if f.moved {
+		return nil, ErrRepositoryMoved
+	}
 	var out []PullRequest
 	for _, it := range f.items {
 		p := it.pr
 		if p == nil || p.state != state || !isFactoryLogin(it.Author, f.factoryLogin) || p.base != StagingBranch ||
-			p.headRepo != "demo/demo" || !isAgentBranch(p.head) {
+			p.fork || !isAgentBranch(p.head) {
 			continue
+		}
+		if p.headRepo != "demo/demo" { // not a fork, another name: see the real client
+			return nil, ErrRepositoryMoved
 		}
 		v := f.prView(it)
 		v.Title, v.Body = clip(v.Title, maxListTitle), clip(v.Body, maxListBody)
@@ -854,4 +875,24 @@ func (f *Fake) ListAgentPullRequests(_ context.Context, state PRState) ([]PullRe
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
 	return out, nil
+}
+
+// SimulateMovedHeadRepository makes a pull request look as if its head
+// repository, not a fork, has another full name.
+func (f *Fake) SimulateMovedHeadRepository(number int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if it, err := f.get(number); err == nil && it.pr != nil {
+		it.pr.headRepo = "demo/renamed"
+		it.pr.fork = false
+	}
+}
+
+// SimulateRepositoryMoved makes the repository look renamed: DefaultBranch,
+// LabelActor and ListAgentPullRequests fail with ErrRepositoryMoved, as the
+// real client does when the host answers from the new repository.
+func (f *Fake) SimulateRepositoryMoved() {
+	f.mu.Lock()
+	f.moved = true
+	f.mu.Unlock()
 }

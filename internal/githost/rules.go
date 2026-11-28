@@ -161,3 +161,14 @@ func hasLabelFold(labels []string, label string) bool {
 	}
 	return false
 }
+
+// redactLine makes untrusted host text safe to put in an error: one line, no
+// control characters.
+func redactLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+}

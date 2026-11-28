@@ -55,6 +55,10 @@ var (
 	ErrNoAcceptToken = errors.New("githost: this action needs the accept token and none was given")
 	// ErrRefused is returned when a rule of this package forbids the action.
 	ErrRefused = errors.New("githost: refused by a factory rule")
+	// ErrRepositoryMoved is returned when an answer comes from, or names, a
+	// repository other than the configured one: the repository was probably
+	// renamed or transferred. Nothing from such an answer is taken.
+	ErrRepositoryMoved = errors.New("githost: the answer is from another repository than the configured one; the repository seems to have moved")
 	// ErrNotFound is returned when the host has no such item.
 	ErrNotFound = errors.New("githost: not found")
 )
@@ -397,9 +401,16 @@ type Proposer interface {
 	// user opened from a branch under BranchPrefix of this repository into
 	// the staging branch, in the given state, oldest number first. The state
 	// is PROpen, PRClosed (closed and not merged) or PRMerged; any other value
-	// is refused. A label is not needed and not trusted. If a size cap is hit,
-	// the pull requests read so far come back with a *TruncatedError, and a
-	// caller that counts them must treat the count as unknown.
+	// is refused. A label is not needed and not trusted.
+	//
+	// A *TruncatedError means the count is unknown: the pull requests read so
+	// far come back with it, and a caller that counts them (for a cap) must
+	// hold and not read the count as a lower bound it can act on. A pull
+	// request that is closed or merged while the pages are being read can move
+	// between the lists and be missed or seen twice; a count is a snapshot at
+	// best. A pull request by the factory user from a non-fork head repository
+	// with another name fails the whole call with ErrRepositoryMoved, so a
+	// renamed repository is never counted as zero. A real fork is skipped.
 	ListAgentPullRequests(ctx context.Context, state PRState) ([]PullRequest, error)
 }
 

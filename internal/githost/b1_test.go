@@ -1039,3 +1039,51 @@ func TestFakeRepositoryThatIsAForkKeepsItsOwnPullRequests(t *testing.T) {
 		t.Fatalf("SimulateFork: %+v", p)
 	}
 }
+
+// prefixed mounts h under /api/v3, as a GitHub Enterprise server does.
+func prefixed(h http.Handler) http.Handler {
+	return http.StripPrefix("/api/v3", h)
+}
+
+func TestBaseURLWithAPathPrefix_GitHub(t *testing.T) {
+	ctx := context.Background()
+	var srvURL string
+	srv := httptest.NewServer(prefixed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/demo/demo":
+			fmt.Fprint(w, `{"default_branch":"main","full_name":"demo/demo"}`)
+		case "/repos/demo/demo/branches/main":
+			fmt.Fprint(w, `{"name":"main","commit":{"sha":"`+sha1h+`"}}`)
+		case "/repos/demo/demo/pulls":
+			fmt.Fprint(w, "["+prJSON(1, "factory-bot", "factory/r1", StagingBranch, "demo/demo", false, "open", "")+"]")
+		case "/repos/demo/demo/issues/7":
+			fmt.Fprint(w, strings.Replace(issueJSON(LabelReady), "https://api.github.com/repos/demo/demo", srvURL+"/api/v3/repos/demo/demo", 1))
+		case "/repos/demo/demo/issues/7/events":
+			fmt.Fprint(w, "["+evJSON(1, "labeled", "factory-bot", LabelReady, "2026-11-26T09:00:01Z")+"]")
+		default:
+			w.WriteHeader(404)
+		}
+	})))
+	defer srv.Close()
+	srvURL = srv.URL
+	g := newGitHubClient(t, srv.URL+"/api/v3", "github.com", newTestClock().Now, false)
+	if got, err := g.DefaultBranch(ctx); err != nil || got.Name != "main" || got.Commit != sha1h {
+		t.Errorf("DefaultBranch: %+v %v", got, err)
+	}
+	if got, err := g.ListAgentPullRequests(ctx, PROpen); err != nil || len(got) != 1 {
+		t.Errorf("ListAgentPullRequests: %+v %v", got, err)
+	}
+	if got, err := g.LabelActor(ctx, 7, LabelReady); err != nil || !got.Known || got.Login != "factory-bot" {
+		t.Errorf("LabelActor: %+v %v", got, err)
+	}
+	// A repository_url that leaves out the prefix is not this repository.
+	srvURL = "http://unused.invalid"
+	srv2 := httptest.NewServer(prefixed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, issueJSON(LabelReady)) // names /repos/demo/demo, no prefix
+	})))
+	defer srv2.Close()
+	g2 := newGitHubClient(t, srv2.URL+"/api/v3", "github.com", newTestClock().Now, false)
+	if got, err := g2.LabelActor(ctx, 7, LabelReady); !errors.Is(err, ErrRepositoryMoved) || got.Known {
+		t.Errorf("no prefix in repository_url: %+v %v", got, err)
+	}
+}

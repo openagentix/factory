@@ -973,7 +973,7 @@ func (g *GitHub) LabelActor(ctx context.Context, n int, label string) (LabelActo
 	}
 	if p, err := url.Parse(i.RepositoryURL); i.RepositoryURL == "" || err != nil {
 		return LabelActorInfo{}, errors.New("githost: the host did not say which repository the issue is in, so its events are not taken")
-	} else if !asciiEqualFold(strings.TrimRight(p.Path, "/"), g.path("")) {
+	} else if !asciiEqualFold(strings.TrimRight(p.Path, "/"), strings.TrimRight(g.base.Path, "/")+g.path("")) {
 		return LabelActorInfo{}, movedError("the issue", p.Path)
 	}
 	var names []string

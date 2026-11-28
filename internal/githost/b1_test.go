@@ -952,3 +952,40 @@ func TestALoginWithTheKelvinSignIsNotAWriter_GitHub(t *testing.T) {
 // DefaultBranch which has its own test.
 var hookedOps = []string{"PostComment", "PostAnswer", "PostConsequenceAnswer", "AddLabel", "RemoveLabel", "Claim", "MergeStaging",
 	"CreateSubIssues", "OpenPullRequest", "PushBranch", "PushStaging", "LabelActor", "ListAgentPullRequests", "GetPullRequest"}
+
+// --- ghost and bots ---
+
+var refusedActors = []string{"ghost", "Ghost", "GHOST", "dependabot[bot]", "app[BOT]", "[bot]", "x[Bot]"}
+
+func TestGhostAndBotActorsAreUnknown_GitHub(t *testing.T) {
+	ctx := context.Background()
+	for _, actor := range refusedActors {
+		t.Run(actor, func(t *testing.T) {
+			// Even with write permission, and even for the factory's own add.
+			g, _ := testGH(t, eventsHost([]string{LabelReady},
+				[]string{evJSON(1, "labeled", actor, LabelReady, "2026-11-26T09:00:01Z")}, "write"))
+			if got, err := g.LabelActor(ctx, 7, LabelReady); err != nil || got.Known || got.Trusted || got.Login != "" {
+				t.Fatalf("%+v %v, want unknown", got, err)
+			}
+		})
+	}
+	// A name that only contains the word is a person.
+	g, _ := testGH(t, eventsHost([]string{LabelReady},
+		[]string{evJSON(1, "labeled", "ghosty", LabelReady, "2026-11-26T09:00:01Z")}, "write"))
+	if got, err := g.LabelActor(ctx, 7, LabelReady); err != nil || !got.Known || got.Login != "ghosty" {
+		t.Fatalf("ghosty: %+v %v", got, err)
+	}
+}
+
+func TestGhostAndBotActorsAreUnknown_Fake(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake(DemoFixture(), newTestClock().Now)
+	for _, actor := range refusedActors {
+		f.SetPermission(actor, "admin")
+		f.SimulateUnlabel(2, LabelReady, "x")
+		f.SimulateLabel(2, LabelReady, actor)
+		if got, err := f.LabelActor(ctx, 2, LabelReady); err != nil || got.Known || got.Trusted || got.Login != "" {
+			t.Errorf("%q: %+v %v, want unknown", actor, got, err)
+		}
+	}
+}

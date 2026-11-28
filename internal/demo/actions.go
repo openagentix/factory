@@ -640,6 +640,11 @@ func (d *Demo) settleAccepted(ctx context.Context, st staging.State, journal fun
 	for _, g := range order {
 		journal("accepted", g, 0)
 	}
+	// The facts of this state are written. Whatever path wrote them, it is not
+	// unsettled any more, so no later round settles it again.
+	if u := d.unsettled.Load(); u != nil && u.Seq == st.Seq {
+		d.unsettled.Store(nil)
+	}
 	return nil
 }
 
@@ -882,9 +887,7 @@ func (d *Demo) needsRepair(ctx context.Context) bool {
 // holds the step lock and the write lock.
 func (d *Demo) repairLocked(ctx context.Context) {
 	if u := d.unsettled.Load(); u != nil {
-		if err := d.settleAccepted(ctx, *u, d.journalNow); err == nil {
-			d.unsettled.Store(nil)
-		}
+		_ = d.settleAccepted(ctx, *u, d.journalNow) // clears d.unsettled itself when it works
 	}
 	if ok, err := d.stg.Republish(ctx); err == nil && ok {
 		if st, found, lerr := d.stgSt.Latest(ctx); lerr == nil && found {

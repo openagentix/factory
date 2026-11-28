@@ -963,3 +963,39 @@ func TestUndoPreviewWithARepairNeededAndTheStepLockBusy(t *testing.T) {
 		t.Fatalf("preview after the repair: %v", err)
 	}
 }
+
+// Whatever path writes the facts of a merged Accept, d.unsettled is cleared
+// where the facts are written, so a later round does not settle it again.
+func TestASettleThroughAnotherPathClearsWhatWasUnsettled(t *testing.T) {
+	d := beatsOnly(t, "write_checks", "build_move")
+	ctx := context.Background()
+	req := acceptReq(t, d)
+	fails := 1
+	d.settleHook = func() error {
+		if fails > 0 {
+			fails--
+			return errors.New("the mirror could not be updated")
+		}
+		return nil
+	}
+	if _, err := d.Accept(ctx, req); !errors.Is(err, server.ErrHostFailed) {
+		t.Fatalf("Accept: %v", err)
+	}
+	u := d.unsettled.Load()
+	if u == nil {
+		t.Fatal("setup: nothing is unsettled")
+	}
+	// The other path (the one in CancelAccept) settles the same state.
+	if err := d.mutate(ctx, func() error { return d.settleAccepted(ctx, *u, d.journalNow) }); err != nil {
+		t.Fatal(err)
+	}
+	if d.unsettled.Load() != nil {
+		t.Fatal("the state is settled and still marked unsettled")
+	}
+	if err := d.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := countKind(t, d, "accepted"); n != 1 {
+		t.Fatalf("accepted entries = %d", n)
+	}
+}

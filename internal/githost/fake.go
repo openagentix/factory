@@ -394,8 +394,9 @@ type failure struct {
 // RemoveLabel, MergeStaging, CreateSubIssues, OpenPullRequest, PushBranch,
 // PushStaging, and the reads DefaultBranch, LabelActor, ListAgentPullRequests
 // and GetPullRequest (a read writes nothing, so afterWrite changes nothing for
-// it). A call that breaks a rule is refused first and does not use up the
-// planned failure. The error holds no text from the caller.
+// it). A call that breaks a rule, or that the host would answer with
+// a 404 or a 422, gets that answer first and does not use up the planned
+// failure. The error holds no text from the caller.
 func (f *Fake) FailNext(op string, afterWrite bool) { f.FailAfter(op, 0, afterWrite) }
 
 // FailAfter is FailNext for the call after the next `calls` calls of op.
@@ -448,13 +449,13 @@ func (f *Fake) CloseIssue(number int) {
 func (f *Fake) postRaw(op string, n int, body string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fail, after := f.takeFailure(op)
-	if fail && !after {
-		return 0, errFakeFailure
-	}
 	it, err := f.get(n)
 	if err != nil {
 		return 0, err
+	}
+	fail, after := f.takeFailure(op)
+	if fail && !after {
+		return 0, errFakeFailure
 	}
 	f.addRawComment(it, f.factoryLogin, "NONE", body)
 	if fail {
@@ -494,13 +495,13 @@ func (f *Fake) AddLabel(_ context.Context, n int, label string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fail, after := f.takeFailure("AddLabel")
-	if fail && !after {
-		return errFakeFailure
-	}
 	it, err := f.get(n)
 	if err != nil {
 		return err
+	}
+	fail, after := f.takeFailure("AddLabel")
+	if fail && !after {
+		return errFakeFailure
 	}
 	f.setLabel(it, label, f.factoryLogin, true)
 	if fail {
@@ -515,13 +516,13 @@ func (f *Fake) RemoveLabel(_ context.Context, n int, label string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fail, after := f.takeFailure("RemoveLabel")
-	if fail && !after {
-		return errFakeFailure
-	}
 	it, err := f.get(n)
 	if err != nil {
 		return err
+	}
+	fail, after := f.takeFailure("RemoveLabel")
+	if fail && !after {
+		return errFakeFailure
 	}
 	f.setLabel(it, label, f.factoryLogin, false)
 	if fail {
@@ -564,6 +565,16 @@ func (f *Fake) linkSubIssue(_ context.Context, goal, child Issue) error {
 }
 
 func (f *Fake) CreateSubIssues(ctx context.Context, goal int, p []api.IssueProposal) ([]Issue, error) {
+	// What the host or a rule would refuse comes first, so a refused call does
+	// not use up the planned failure.
+	if _, err := planSubIssues(p); err != nil {
+		return nil, err
+	}
+	if g, err := f.GetIssue(ctx, goal); err != nil {
+		return nil, err
+	} else if !g.HasLabel(LabelGoal) || !g.Trusted {
+		return nil, refuse("issue %d is not a trusted goal", goal)
+	}
 	f.mu.Lock()
 	fail, after := f.takeFailure("CreateSubIssues")
 	f.mu.Unlock()
@@ -583,24 +594,32 @@ func (f *Fake) OpenPullRequest(_ context.Context, spec PRSpec) (PullRequest, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	draft := spec.Head != StagingBranch
+	var existing *fakeItem
+	for _, it := range f.items {
+		if p := it.pr; p != nil && p.state == PROpen && p.head == spec.Head && p.base == spec.Base {
+			existing = it
+		}
+	}
+	// The host refuses a new pull request when either branch is missing. That
+	// comes before the planned failure.
+	if existing == nil {
+		if err := f.branchesExist(spec.Head, spec.Base); err != nil {
+			return PullRequest{}, err
+		}
+	}
 	fail, after := f.takeFailure("OpenPullRequest")
 	if fail && !after {
 		return PullRequest{}, errFakeFailure
 	}
-	draft := spec.Head != StagingBranch
-	for _, it := range f.items {
-		if p := it.pr; p != nil && p.state == PROpen && p.head == spec.Head && p.base == spec.Base {
-			p.title, p.body, p.headSHA = safeTitle(spec.Title), safeBody(spec.Body), f.branches[spec.Head]
-			it.Title, it.Body = p.title, p.body
-			if fail {
-				return PullRequest{}, errFakeFailure
-			}
-			return f.prView(it), nil
+	if existing != nil {
+		p := existing.pr
+		p.title, p.body, p.headSHA = safeTitle(spec.Title), safeBody(spec.Body), f.branches[spec.Head]
+		existing.Title, existing.Body = p.title, p.body
+		if fail {
+			return PullRequest{}, errFakeFailure
 		}
-	}
-	// The host refuses a new pull request when either branch is missing.
-	if err := f.branchesExist(spec.Head, spec.Base); err != nil {
-		return PullRequest{}, err
+		return f.prView(existing), nil
 	}
 	title, body := safeTitle(spec.Title), safeBody(spec.Body)
 	it := f.newItem(title, body, f.factoryLogin, "NONE")
@@ -620,15 +639,15 @@ func (f *Fake) prView(it *fakeItem) PullRequest {
 func (f *Fake) GetPullRequest(_ context.Context, n int) (PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if fail, _ := f.takeFailure("GetPullRequest"); fail {
-		return PullRequest{}, errFakeFailure
-	}
 	it, err := f.get(n)
 	if err != nil {
 		return PullRequest{}, err
 	}
 	if it.pr == nil {
 		return PullRequest{}, &APIError{Status: 404, Message: fmt.Sprintf("pull request %d not found", n)}
+	}
+	if fail, _ := f.takeFailure("GetPullRequest"); fail {
+		return PullRequest{}, errFakeFailure
 	}
 	return f.prView(it), nil
 }
@@ -726,13 +745,16 @@ func (f *Fake) MergeStaging(_ context.Context, spec MergeSpec) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fail, after := f.takeFailure("MergeStaging")
-	if fail && !after {
-		return errFakeFailure
-	}
 	it, err := f.get(spec.PullRequest)
 	if err != nil {
 		return err
+	}
+	if err := f.checkHead(it, StagingBranch, spec.Commit); err != nil {
+		return err
+	}
+	fail, after := f.takeFailure("MergeStaging")
+	if fail && !after {
+		return errFakeFailure
 	}
 	if err := f.mergeLocked(it, StagingBranch, spec.Commit); err != nil {
 		return err
@@ -785,30 +807,8 @@ func (f *Fake) ManualPullRequestURL(_ context.Context, branch string) (string, e
 	return "https://example.invalid/" + f.repo.String() + "/compare/" + f.defaultBranch + "..." + branch + "?expand=1", nil
 }
 
-func (f *Fake) isMoved() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.moved
-}
-
-// readFailure is the failure hook of a call that writes nothing.
-func (f *Fake) readFailure(op string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if fail, _ := f.takeFailure(op); fail {
-		return errFakeFailure
-	}
-	return nil
-}
-
 func (f *Fake) DefaultBranch(context.Context) (DefaultBranchInfo, error) {
-	if err := f.readFailure("DefaultBranch"); err != nil {
-		return DefaultBranchInfo{}, err
-	}
 	name := f.defaultBranch
-	if f.isMoved() {
-		return DefaultBranchInfo{}, ErrRepositoryMoved
-	}
 	if err := checkStagingPush(name); err != nil {
 		return DefaultBranchInfo{}, err
 	}
@@ -817,9 +817,15 @@ func (f *Fake) DefaultBranch(context.Context) (DefaultBranchInfo, error) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.moved {
+		return DefaultBranchInfo{}, ErrRepositoryMoved
+	}
 	commit := f.branches[name]
 	if err := checkCommit(commit); err != nil {
 		return DefaultBranchInfo{}, errors.New("githost: the host gave no valid commit for the default branch")
+	}
+	if fail, _ := f.takeFailure("DefaultBranch"); fail {
+		return DefaultBranchInfo{}, errFakeFailure
 	}
 	return DefaultBranchInfo{Name: name, Commit: commit}, nil
 }
@@ -830,15 +836,15 @@ func (f *Fake) LabelActor(_ context.Context, n int, label string) (LabelActorInf
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if fail, _ := f.takeFailure("LabelActor"); fail {
-		return LabelActorInfo{}, errFakeFailure
+	it, err := f.get(n)
+	if err != nil {
+		return LabelActorInfo{}, err
 	}
 	if f.moved {
 		return LabelActorInfo{}, ErrRepositoryMoved
 	}
-	it, err := f.get(n)
-	if err != nil {
-		return LabelActorInfo{}, err
+	if fail, _ := f.takeFailure("LabelActor"); fail {
+		return LabelActorInfo{}, errFakeFailure
 	}
 	e, ok := latestAdd(it.events, label, hasLabelFold(it.Labels, label))
 	if !ok {
@@ -853,9 +859,6 @@ func (f *Fake) ListAgentPullRequests(_ context.Context, state PRState) ([]PullRe
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if fail, _ := f.takeFailure("ListAgentPullRequests"); fail {
-		return nil, errFakeFailure
-	}
 	if f.moved {
 		return nil, ErrRepositoryMoved
 	}
@@ -872,6 +875,9 @@ func (f *Fake) ListAgentPullRequests(_ context.Context, state PRState) ([]PullRe
 		v := f.prView(it)
 		v.Title, v.Body = clip(v.Title, maxListTitle), clip(v.Body, maxListBody)
 		out = append(out, v)
+	}
+	if fail, _ := f.takeFailure("ListAgentPullRequests"); fail {
+		return nil, errFakeFailure
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
 	return out, nil

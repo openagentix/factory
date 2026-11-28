@@ -9,6 +9,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/openagentix/factory/internal/api"
 )
 
 // These tests attack the three new reads (DefaultBranch, LabelActor,
@@ -550,13 +553,144 @@ func TestFakeFailureHooksOfTheNewCalls(t *testing.T) {
 			t.Fatalf("after the write: %v %q", err, f.BranchHead(StagingBranch))
 		}
 	})
-	t.Run("a rule refusal comes before the planned failure is used", func(t *testing.T) {
-		f := setup()
-		f.FailNext("PushStaging", false)
-		if err := f.PushStaging(ctx, "", "HEAD"); !errors.Is(err, ErrRefused) {
-			t.Fatalf("err = %v", err)
+}
+
+// A call the host or a rule refuses is refused before anything else, so it
+// does not use up a planned failure. This is checked for every hooked call.
+func TestFakeRefusalComesBeforeThePlannedFailure(t *testing.T) {
+	ctx := context.Background()
+	c1, c2 := fakeCommits()
+	setup := func() *Fake {
+		f := NewFake(DemoFixture(), newTestClock().Now)
+		must(t, f.PushBranch(ctx, "", c1, "factory/r1"))
+		must(t, f.PushBranch(ctx, "", c2, "factory/r2"))
+		must(t, f.PushStaging(ctx, "", c1))
+		_, err := f.OpenPullRequest(ctx, PRSpec{Head: "factory/r1", Base: StagingBranch, Title: "t"}) // number 4
+		must(t, err)
+		return f
+	}
+	proposal := []api.IssueProposal{{Title: "a"}}
+	cases := []struct {
+		op      string
+		refused []func(f *Fake) error // each must fail, and not with the planned failure
+		valid   func(f *Fake) error   // nil when the case has no valid call to make
+	}{
+		{"PostComment", []func(*Fake) error{
+			func(f *Fake) error { return f.PostComment(ctx, 999, "r", "x") },
+			func(f *Fake) error { return f.PostComment(ctx, 2, "bad id with spaces", "x") }},
+			func(f *Fake) error { return f.PostComment(ctx, 2, "r", "x") }},
+		{"PostAnswer", []func(*Fake) error{
+			func(f *Fake) error { _, err := f.PostAnswer(ctx, 999, "x"); return err }},
+			func(f *Fake) error { _, err := f.PostAnswer(ctx, 2, "x"); return err }},
+		{"PostConsequenceAnswer", []func(*Fake) error{
+			func(f *Fake) error { _, err := f.PostConsequenceAnswer(ctx, 2, ConsequenceMarker{}); return err },
+			func(f *Fake) error {
+				_, err := f.PostConsequenceAnswer(ctx, 999, ConsequenceMarker{Run: "r", Attempt: 1, Commit: c1, Yes: true})
+				return err
+			}},
+			func(f *Fake) error {
+				_, err := f.PostConsequenceAnswer(ctx, 2, ConsequenceMarker{Run: "r", Attempt: 1, Commit: c1, Yes: true})
+				return err
+			}},
+		{"AddLabel", []func(*Fake) error{
+			func(f *Fake) error { return f.AddLabel(ctx, 2, "bug") },
+			func(f *Fake) error { return f.AddLabel(ctx, 999, LabelReady) }},
+			func(f *Fake) error { return f.AddLabel(ctx, 2, LabelReady) }},
+		{"RemoveLabel", []func(*Fake) error{
+			func(f *Fake) error { return f.RemoveLabel(ctx, 2, "bug") },
+			func(f *Fake) error { return f.RemoveLabel(ctx, 999, LabelReady) }},
+			func(f *Fake) error { return f.RemoveLabel(ctx, 2, LabelPlanned) }},
+		{"Claim", []func(*Fake) error{
+			func(f *Fake) error { _, err := f.Claim(ctx, 2, "", "r", time.Hour); return err },
+			func(f *Fake) error { _, err := f.Claim(ctx, 999, "m", "r", time.Hour); return err }},
+			func(f *Fake) error { _, err := f.Claim(ctx, 2, "m", "r", time.Hour); return err }},
+		{"MergeStaging", []func(*Fake) error{
+			func(f *Fake) error { return f.ProposeOnly().MergeStaging(ctx, MergeSpec{PullRequest: 4, Commit: c1}) },
+			func(f *Fake) error { return f.MergeStaging(ctx, MergeSpec{PullRequest: 4, Commit: "HEAD"}) },
+			func(f *Fake) error { return f.MergeStaging(ctx, MergeSpec{PullRequest: 999, Commit: c1}) },
+			func(f *Fake) error { return f.MergeStaging(ctx, MergeSpec{PullRequest: 4, Commit: c1}) }}, // 4 is not the staging pull request
+			func(f *Fake) error {
+				sp, err := f.OpenPullRequest(ctx, PRSpec{Head: StagingBranch, Base: "main", Title: "s"})
+				must(t, err)
+				return f.MergeStaging(ctx, MergeSpec{PullRequest: sp.Number, Commit: c1})
+			}},
+		{"CreateSubIssues", []func(*Fake) error{
+			func(f *Fake) error { _, err := f.CreateSubIssues(ctx, 2, proposal); return err },
+			func(f *Fake) error { _, err := f.CreateSubIssues(ctx, 1, nil); return err },
+			func(f *Fake) error { _, err := f.CreateSubIssues(ctx, 999, proposal); return err }},
+			func(f *Fake) error { _, err := f.CreateSubIssues(ctx, 1, proposal); return err }},
+		{"OpenPullRequest", []func(*Fake) error{
+			func(f *Fake) error {
+				_, err := f.OpenPullRequest(ctx, PRSpec{Head: "factory/nope", Base: StagingBranch, Title: "t"})
+				return err
+			},
+			func(f *Fake) error {
+				_, err := f.OpenPullRequest(ctx, PRSpec{Head: "feature/x", Base: StagingBranch, Title: "t"})
+				return err
+			}},
+			func(f *Fake) error {
+				_, err := f.OpenPullRequest(ctx, PRSpec{Head: "factory/r2", Base: StagingBranch, Title: "t"})
+				return err
+			}},
+		{"PushBranch", []func(*Fake) error{
+			func(f *Fake) error { return f.PushBranch(ctx, "", c2, "feature/x") },
+			func(f *Fake) error { return f.PushBranch(ctx, "", "HEAD", "factory/r3") }},
+			func(f *Fake) error { return f.PushBranch(ctx, "", c2, "factory/r3") }},
+		{"PushStaging", []func(*Fake) error{
+			func(f *Fake) error { return f.PushStaging(ctx, "", "HEAD") }},
+			func(f *Fake) error { return f.PushStaging(ctx, "", c2) }},
+		{"LabelActor", []func(*Fake) error{
+			func(f *Fake) error { _, err := f.LabelActor(ctx, 3, "bug"); return err },
+			func(f *Fake) error { _, err := f.LabelActor(ctx, 999, LabelReady); return err }},
+			func(f *Fake) error { _, err := f.LabelActor(ctx, 3, LabelReady); return err }},
+		{"ListAgentPullRequests", []func(*Fake) error{
+			func(f *Fake) error { _, err := f.ListAgentPullRequests(ctx, "all"); return err }},
+			func(f *Fake) error { _, err := f.ListAgentPullRequests(ctx, PROpen); return err }},
+		{"GetPullRequest", []func(*Fake) error{
+			func(f *Fake) error { _, err := f.GetPullRequest(ctx, 999); return err },
+			func(f *Fake) error { _, err := f.GetPullRequest(ctx, 2); return err }}, // an issue, not a pull request
+			func(f *Fake) error { _, err := f.GetPullRequest(ctx, 4); return err }},
+	}
+	covered := map[string]bool{}
+	for _, tc := range cases {
+		covered[tc.op] = true
+		t.Run(tc.op, func(t *testing.T) {
+			f := setup()
+			f.FailNext(tc.op, false)
+			for i, refused := range tc.refused {
+				if err := refused(f); err == nil || errors.Is(err, errFakeFailure) {
+					t.Fatalf("refused call %d = %v, want a refusal that is not the planned failure", i, err)
+				}
+				if _, pending := f.failures[tc.op]; !pending {
+					t.Fatalf("refused call %d used up the planned failure", i)
+				}
+			}
+			if err := tc.valid(f); !errors.Is(err, errFakeFailure) {
+				t.Fatalf("the valid call = %v, want the planned failure", err)
+			}
+		})
+	}
+	// Every operation name the hooks know is in the table.
+	for _, op := range hookedOps {
+		if !covered[op] {
+			t.Errorf("hooked call %s is not in the table", op)
 		}
-	})
+	}
+}
+
+// DefaultBranch has no valid call on a fake whose default branch is refused,
+// so only the pending failure is checked.
+func TestFakeDefaultBranchRefusalKeepsThePlannedFailure(t *testing.T) {
+	fx := DemoFixture()
+	fx.DefaultBranch = StagingBranch
+	f := NewFake(fx, newTestClock().Now)
+	f.FailNext("DefaultBranch", false)
+	if _, err := f.DefaultBranch(context.Background()); !errors.Is(err, ErrRefused) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, pending := f.failures["DefaultBranch"]; !pending {
+		t.Fatal("the refusal used up the planned failure")
+	}
 }
 
 func TestFakeLabelEventsAreKept(t *testing.T) {
@@ -813,3 +947,8 @@ func TestALoginWithTheKelvinSignIsNotAWriter_GitHub(t *testing.T) {
 		t.Error("the fake treats the Kelvin sign login as a writer")
 	}
 }
+
+// hookedOps lists every operation FailNext and FailAfter accept, apart from
+// DefaultBranch which has its own test.
+var hookedOps = []string{"PostComment", "PostAnswer", "PostConsequenceAnswer", "AddLabel", "RemoveLabel", "Claim", "MergeStaging",
+	"CreateSubIssues", "OpenPullRequest", "PushBranch", "PushStaging", "LabelActor", "ListAgentPullRequests", "GetPullRequest"}

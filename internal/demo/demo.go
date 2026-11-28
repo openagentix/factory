@@ -141,8 +141,9 @@ type Demo struct {
 	// area. Tests only.
 	addHook func() error
 	// unsettled is an Accept the host merged and whose facts are not written yet.
-	// Under the step lock.
-	unsettled *staging.State
+	// Read without a lock by a reader that asks whether a repair is needed;
+	// written under the step lock.
+	unsettled atomic.Pointer[staging.State]
 	// settleHook may fail the step that records an Accept the host merged. Tests only.
 	settleHook func() error
 	// taskHook is called when a follow-up task starts. Tests only.

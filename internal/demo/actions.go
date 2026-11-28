@@ -681,7 +681,7 @@ func (d *Demo) Accept(ctx context.Context, r server.HoldingRequest) (server.Acti
 			if err := d.settleAccepted(ctx, st, journal); err != nil {
 				// The host merged. What is true is written by the next round (repairLocked),
 				// once. The press says that part of it is done.
-				d.unsettled = &st
+				d.unsettled.Store(&st)
 				d.report("the default branch could not be updated after an Accept")
 				return server.ErrHostFailed
 			}
@@ -720,7 +720,7 @@ func (d *Demo) CancelAccept(ctx context.Context, r server.HoldingRequest) (serve
 			// accepted, and the facts must say so.
 			if lastAcc, ok, lerr := d.stgSt.LastAccepted(ctx); lerr == nil && ok && lastAcc.Seq == r.StagingSeq {
 				if serr := d.settleAccepted(ctx, lastAcc, journal); serr != nil {
-					d.unsettled = &lastAcc
+					d.unsettled.Store(&lastAcc)
 					d.report("the default branch could not be updated after an Accept")
 				}
 				return server.ErrStale
@@ -754,7 +754,26 @@ func (d *Demo) UndoPreview(ctx context.Context, change string) (server.UndoPrevi
 	if d.closing.Load() {
 		return server.UndoPreviewView{}, server.ErrUnavailable
 	}
-	d.repair(ctx)
+	// A read never waits for the step lock or for a rebuild past its context.
+	type out struct {
+		v   server.UndoPreviewView
+		err error
+	}
+	ch := make(chan out, 1)
+	go func() {
+		d.repairForRead(ctx)
+		v, err := d.undoPreview(ctx, change)
+		ch <- out{v, err}
+	}()
+	select {
+	case o := <-ch:
+		return o.v, o.err
+	case <-ctx.Done():
+		return server.UndoPreviewView{}, server.ErrUnavailable
+	}
+}
+
+func (d *Demo) undoPreview(ctx context.Context, change string) (server.UndoPreviewView, error) {
 	p, err := d.stg.UndoPreview(ctx, change)
 	if err != nil {
 		return server.UndoPreviewView{}, stagingErr(err)
@@ -849,7 +868,7 @@ func (d *Demo) journalNow(k floor.JournalKind, goal, ticket int) int64 {
 // merged and whose facts are not written, or a state that was recorded and never
 // pushed. The caller holds the step lock.
 func (d *Demo) needsRepair(ctx context.Context) bool {
-	if d.unsettled != nil {
+	if d.unsettled.Load() != nil {
 		return true
 	}
 	st, ok, err := d.stgSt.Latest(ctx)
@@ -862,9 +881,9 @@ func (d *Demo) needsRepair(ctx context.Context) bool {
 // removal is journalled once. A failure is left for the next round. The caller
 // holds the step lock and the write lock.
 func (d *Demo) repairLocked(ctx context.Context) {
-	if d.unsettled != nil {
-		if err := d.settleAccepted(ctx, *d.unsettled, d.journalNow); err == nil {
-			d.unsettled = nil
+	if u := d.unsettled.Load(); u != nil {
+		if err := d.settleAccepted(ctx, *u, d.journalNow); err == nil {
+			d.unsettled.Store(nil)
 		}
 	}
 	if ok, err := d.stg.Republish(ctx); err == nil && ok {
@@ -881,6 +900,27 @@ func (d *Demo) repair(ctx context.Context) {
 		return
 	}
 	d.stepMu.Lock()
+	defer d.stepMu.Unlock()
+	if d.closing.Load() || !d.needsRepair(ctx) {
+		return
+	}
+	_ = d.mutateFresh(ctx, func() error {
+		d.repairLocked(ctx)
+		return nil
+	})
+}
+
+// repairForRead is repair for a reader. It never waits: with nothing to repair
+// it does nothing, and with the step lock busy it gives up. The reader then
+// meets the state as it is, and says so with the refusal it gives for a state
+// that is not published. The round of the follow-up loop repairs it later.
+func (d *Demo) repairForRead(ctx context.Context) {
+	if d.closing.Load() || ctx.Err() != nil || !d.needsRepair(ctx) {
+		return
+	}
+	if !d.stepMu.TryLock() {
+		return
+	}
 	defer d.stepMu.Unlock()
 	if d.closing.Load() || !d.needsRepair(ctx) {
 		return

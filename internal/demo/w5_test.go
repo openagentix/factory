@@ -886,3 +886,80 @@ func TestAnAcceptThatMergedButCouldNotBeSettledIsSettledOnce(t *testing.T) {
 		t.Fatal("Accepted today is not 1")
 	}
 }
+
+// A read never waits for the step lock. The preview is a read: with nothing to
+// repair it answers while a follow-up task holds the step lock.
+func TestUndoPreviewDoesNotWaitForTheStepLock(t *testing.T) {
+	d := beatsOnly(t, "write_checks", "build_move")
+	t3 := runOf(t, d, "t3")
+	d.stepMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			d.stepMu.Unlock()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	type out struct {
+		v   server.UndoPreviewView
+		err error
+	}
+	ch := make(chan out, 1)
+	go func() { v, err := d.UndoPreview(ctx, t3); ch <- out{v, err} }()
+	select {
+	case o := <-ch:
+		if o.err != nil || o.v.Change != t3 || len(o.v.Tickets) != 1 {
+			t.Fatalf("preview = %+v, %v", o.v, o.err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("the preview waits for the step lock")
+	}
+	d.stepMu.Unlock()
+	locked = false
+}
+
+// With a repair needed and the step lock busy, the preview answers in time with
+// the refusal it gives for a state that is not published, and works once the
+// step lock is free and the repair has run.
+func TestUndoPreviewWithARepairNeededAndTheStepLockBusy(t *testing.T) {
+	d, fail := newDemoFailingPush(t)
+	playBeats(t, d, "write_checks", "build_move")
+	ctx := context.Background()
+	t3 := runOf(t, d, "t3")
+	fail.Store(true)
+	if _, err := d.stg.Rebuild(ctx); err == nil {
+		t.Fatal("the push should have failed")
+	}
+	fail.Store(false)
+	if st, _, _ := d.stgSt.Latest(ctx); st.Published {
+		t.Fatalf("setup: published: %+v", st)
+	}
+	d.stepMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			d.stepMu.Unlock()
+		}
+	}()
+	pctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	ch := make(chan error, 1)
+	go func() { _, err := d.UndoPreview(pctx, t3); ch <- err }()
+	select {
+	case err := <-ch:
+		if !errors.Is(err, server.ErrStale) {
+			t.Fatalf("preview with a repair pending: %v", err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("the preview waits for the step lock")
+	}
+	d.stepMu.Unlock()
+	locked = false
+	if err := d.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UndoPreview(ctx, t3); err != nil {
+		t.Fatalf("preview after the repair: %v", err)
+	}
+}

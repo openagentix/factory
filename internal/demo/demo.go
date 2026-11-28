@@ -140,6 +140,11 @@ type Demo struct {
 	// addHook may fail the step that adds an answered change to the holding
 	// area. Tests only.
 	addHook func() error
+	// unsettled is an Accept the host merged and whose facts are not written yet.
+	// Under the step lock.
+	unsettled *staging.State
+	// settleHook may fail the step that records an Accept the host merged. Tests only.
+	settleHook func() error
 	// taskHook is called when a follow-up task starts. Tests only.
 	taskHook func()
 	// taskErr sees the error of a follow-up task that failed. Tests only.

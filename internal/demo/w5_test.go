@@ -418,6 +418,21 @@ func TestCancelWhenAMergeStartedAndDidNotFinish(t *testing.T) {
 	ctx := context.Background()
 	req := acceptReq(t, d)
 	seq0 := journalSeq(t, d)
+	// A merge the host refused, with the pull request readable: staging ends the
+	// Accept at once. Nothing stays pending, and no pending time is kept.
+	d.host.FailNext("MergeStaging", false)
+	if _, err := d.Accept(ctx, req); !errors.Is(err, server.ErrHostFailed) {
+		t.Fatalf("refused merge: %v", err)
+	}
+	if _, pend, _ := d.stgSt.GetPending(ctx); pend {
+		t.Fatal("a refused merge left an Accept pending")
+	}
+	if lf, _ := d.led.Facts(ctx); !lf.PendingSince.IsZero() {
+		t.Fatalf("a pending time was kept for an Accept that is not pending: %v", lf.PendingSince)
+	}
+	if c := mustCall(t, d, "a-"); len(c.Actions) != 1 || c.Actions[0] != floor.ActionAccept {
+		t.Fatalf("after a refused merge: %v", c.Actions)
+	}
 	down.Store(true)
 	d.host.FailNext("MergeStaging", false)
 	if _, err := d.Accept(ctx, req); !errors.Is(err, server.ErrHostFailed) {
@@ -753,5 +768,121 @@ func TestAcceptOfAStateThatWasNotPublishedIsStale(t *testing.T) {
 	}
 	if mainHead(d) != head {
 		t.Fatal("a merge happened")
+	}
+	// The host works again. The holding area comes back with no outside help: the
+	// next round of the follow-up loop pushes the state again, and the Accept is
+	// offered again, for the state it was built on.
+	fail.Store(false)
+	if err := d.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st, ok, _ := d.stgSt.Latest(ctx); !ok || !st.Published {
+		t.Fatalf("not repaired: %+v", st)
+	}
+	if res, err := d.Accept(ctx, acceptReq(t, d)); err != nil || res.Result != server.ResultDone {
+		t.Fatalf("Accept after the repair: %+v %v", res, err)
+	}
+	if p := piece(snap(t, d), "t3"); p == nil || p.Station != 7 {
+		t.Fatalf("t3: %+v", p)
+	}
+}
+
+// A push that fails inside an Undo records the removal and leaves the state
+// unpublished. It is pushed again by the next press, with no outside help. The
+// change is taken out once, the journal says so once, and the Accept is offered
+// again for the new state.
+func TestAFailedPushInAnUndoIsRepairedAndDoneOnce(t *testing.T) {
+	d, fail := newDemoFailingPush(t)
+	playBeats(t, d, "write_checks", "build_move", "second_try")
+	ctx := context.Background()
+	t3, t4 := runOf(t, d, "t3"), runOf(t, d, "t4")
+	undo := undoReq(t, d, t4)
+	oldAccept := acceptReq(t, d)
+	fail.Store(true)
+	if _, err := d.Undo(ctx, undo); !errors.Is(err, server.ErrHostFailed) {
+		t.Fatalf("Undo with a failing push: %v", err)
+	}
+	if st, _, _ := d.stgSt.Latest(ctx); st.Published {
+		t.Fatalf("setup: the latest state is published: %+v", st)
+	}
+	if countKind(t, d, "undone") != 0 {
+		t.Fatal("an undone entry before the removal reached the host")
+	}
+	if _, err := d.Accept(ctx, oldAccept); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("Accept while the push fails: %v", err)
+	}
+	// The host works again. The next press repairs: here a preview of another change.
+	fail.Store(false)
+	pv, err := d.UndoPreview(ctx, t3)
+	if err != nil || len(pv.AlsoRemoved) != 0 {
+		t.Fatalf("preview after the repair: %+v %v", pv, err)
+	}
+	if st, _, _ := d.stgSt.Latest(ctx); !st.Published {
+		t.Fatal("still not published")
+	}
+	if n := countKind(t, d, "undone"); n != 1 {
+		t.Fatalf("undone entries = %d", n)
+	}
+	if p := piece(snap(t, d), "t4"); p == nil || p.Station == 6 || code(p) != floor.TakenOut {
+		t.Fatalf("t4: %+v", p)
+	}
+	// The same press again: the change is gone, and nothing is removed twice.
+	undo.Steps = &memSteps{}
+	if _, err := d.Undo(ctx, undo); !errors.Is(err, server.ErrStale) {
+		t.Fatalf("the same Undo again: %v", err)
+	}
+	if n := countKind(t, d, "undone"); n != 1 {
+		t.Fatalf("undone entries after a retry = %d", n)
+	}
+	if c := mustCall(t, d, "a-"); len(c.Actions) != 1 || c.Actions[0] != floor.ActionAccept {
+		t.Fatalf("the Accept is not offered again: %v", c.Actions)
+	}
+	if res, err := d.Accept(ctx, acceptReq(t, d)); err != nil || res.Result != server.ResultDone {
+		t.Fatalf("Accept: %+v %v", res, err)
+	}
+	if err := invariants(snap(t, d)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An Accept that the host merged, and whose facts could not be written, is
+// written by the next round, once.
+func TestAnAcceptThatMergedButCouldNotBeSettledIsSettledOnce(t *testing.T) {
+	d := beatsOnly(t, "write_checks", "build_move")
+	ctx := context.Background()
+	req := acceptReq(t, d)
+	fails := 1
+	d.settleHook = func() error {
+		if fails > 0 {
+			fails--
+			return errors.New("the mirror could not be updated")
+		}
+		return nil
+	}
+	if _, err := d.Accept(ctx, req); !errors.Is(err, server.ErrHostFailed) {
+		t.Fatalf("Accept: %v", err)
+	}
+	if mainHead(d) != req.Commit {
+		t.Fatal("the host did not merge")
+	}
+	if countKind(t, d, "accepted") != 0 {
+		t.Fatal("setup: the accepted entry was written")
+	}
+	for i := 0; i < 2; i++ {
+		if err := d.Drain(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := countKind(t, d, "accepted"); n != 1 {
+		t.Fatalf("accepted entries = %d", n)
+	}
+	if p := piece(snap(t, d), "t3"); p == nil || p.Station != 7 {
+		t.Fatalf("t3: %+v", p)
+	}
+	if got, err := d.repo.Resolve(ctx, repo.MirrorRef); err != nil || got != req.Commit {
+		t.Fatalf("mirror = %s %v", got, err)
+	}
+	if gaugeValue(t, d, floor.GaugeAcceptedToday) != 1 {
+		t.Fatal("Accepted today is not 1")
 	}
 }

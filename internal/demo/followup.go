@@ -103,6 +103,7 @@ func (d *Demo) Drain(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(errs, err)...)
 		}
+		d.repair(ctx) // what an action left half done is finished before more work
 		// The step lock is taken before a task is taken from the queue, so a
 		// moment with the queue empty and the lock free means no task is in flight.
 		d.stepMu.Lock()

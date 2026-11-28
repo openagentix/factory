@@ -614,6 +614,11 @@ func acceptCallID(seq int64) string { return "a-" + strconv.FormatInt(seq, 10) }
 // of the default branch moves to it, each change is accepted now, and the
 // journal says so, once for each goal inside. The caller holds the write lock.
 func (d *Demo) settleAccepted(ctx context.Context, st staging.State, journal func(floor.JournalKind, int, int) int64) error {
+	if d.settleHook != nil {
+		if err := d.settleHook(); err != nil {
+			return err
+		}
+	}
 	// The mirror first: the holding area takes no change until it is fetched.
 	if err := d.repo.SetDefaultMirror(ctx, st.Commit, st.Default); err != nil {
 		return err
@@ -649,6 +654,7 @@ func (d *Demo) Accept(ctx context.Context, r server.HoldingRequest) (server.Acti
 	pending := false
 	var last int64
 	res, err := d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
+		d.repairLocked(ctx)
 		f := d.project(ctx)
 		if _, err := floor.CheckCall(f, acceptCallID(r.StagingSeq), floor.ActionAccept, r.Version); err != nil {
 			return server.ErrStale
@@ -661,9 +667,10 @@ func (d *Demo) Accept(ctx context.Context, r server.HoldingRequest) (server.Acti
 			return server.ErrStale
 		}
 		ar, err := d.stg.Accept(ctx, r.StagingSeq, r.Commit)
-		if ar.Pending.PR != 0 && ar.Outcome != staging.OutcomeAccepted {
-			// The Accept was recorded. Whatever happened to the merge, the line is
-			// frozen and says since when.
+		if _, still, _ := d.stgSt.GetPending(ctx); still && ar.Pending.PR != 0 {
+			// The Accept was recorded and is still pending, whatever happened to the
+			// merge: the line is frozen and says since when. A merge the host refused
+			// ends the Accept, and then there is no pending time.
 			d.led.with(func(f *collect.LedgerFacts) { f.PendingSince = ar.Pending.Started })
 		}
 		if err != nil {
@@ -672,8 +679,11 @@ func (d *Demo) Accept(ctx context.Context, r server.HoldingRequest) (server.Acti
 		switch ar.Outcome {
 		case staging.OutcomeAccepted:
 			if err := d.settleAccepted(ctx, st, journal); err != nil {
+				// The host merged. What is true is written by the next round (repairLocked),
+				// once. The press says that part of it is done.
+				d.unsettled = &st
 				d.report("the default branch could not be updated after an Accept")
-				return err
+				return server.ErrHostFailed
 			}
 		case "":
 			pending = true // a developer finishes it
@@ -700,6 +710,7 @@ func (d *Demo) CancelAccept(ctx context.Context, r server.HoldingRequest) (serve
 	}
 	var last int64
 	res, err := d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
+		d.repairLocked(ctx)
 		f := d.project(ctx)
 		if _, err := floor.CheckCall(f, acceptCallID(r.StagingSeq), floor.ActionCancel, r.Version); err != nil {
 			return server.ErrStale
@@ -709,6 +720,7 @@ func (d *Demo) CancelAccept(ctx context.Context, r server.HoldingRequest) (serve
 			// accepted, and the facts must say so.
 			if lastAcc, ok, lerr := d.stgSt.LastAccepted(ctx); lerr == nil && ok && lastAcc.Seq == r.StagingSeq {
 				if serr := d.settleAccepted(ctx, lastAcc, journal); serr != nil {
+					d.unsettled = &lastAcc
 					d.report("the default branch could not be updated after an Accept")
 				}
 				return server.ErrStale
@@ -742,6 +754,7 @@ func (d *Demo) UndoPreview(ctx context.Context, change string) (server.UndoPrevi
 	if d.closing.Load() {
 		return server.UndoPreviewView{}, server.ErrUnavailable
 	}
+	d.repair(ctx)
 	p, err := d.stg.UndoPreview(ctx, change)
 	if err != nil {
 		return server.UndoPreviewView{}, stagingErr(err)
@@ -769,13 +782,26 @@ func (d *Demo) Undo(ctx context.Context, r server.UndoRequest) (server.ActionRes
 	}
 	var last int64
 	res, err := d.act(ctx, func(journal func(floor.JournalKind, int, int) int64) error {
+		d.repairLocked(ctx)
 		in := collect.Collect(ctx, d.sources())
 		if !d.offersUndo(in, floor.UndoRef{Change: r.Change, StagingSeq: r.StagingSeq, Commit: r.Commit}) {
 			return server.ErrStale
 		}
 		st, _, err := d.stg.UndoAt(ctx, r.StagingSeq, r.Commit, r.Change, r.AlsoRemoved)
 		if err != nil {
-			return stagingErr(err)
+			if st.Seq == 0 {
+				return stagingErr(err)
+			}
+			// The removal is recorded and the push failed. Push it again now. If the
+			// host still fails, the next round does it, and writes the facts then.
+			if ok, rerr := d.stg.Republish(ctx); rerr != nil || !ok {
+				return server.ErrHostFailed
+			}
+			latest, found, lerr := d.stgSt.Latest(ctx)
+			if lerr != nil || !found {
+				return server.ErrHostFailed
+			}
+			st = latest
 		}
 		d.observe(st, job{})
 		last = d.led.lastSeq()
@@ -811,4 +837,56 @@ func (d *Demo) Piece(ctx context.Context, id string) ([]byte, bool, error) {
 	}
 	b, err := json.Marshal(pieceReply{SchemaVersion: s.f.SchemaVersion, Mode: s.f.Mode, GeneratedAt: s.f.GeneratedAt, PieceDetail: det})
 	return b, err == nil, err
+}
+
+// ---- Repair ----
+
+func (d *Demo) journalNow(k floor.JournalKind, goal, ticket int) int64 {
+	return d.led.journal(k, goal, ticket, d.now())
+}
+
+// needsRepair says whether something is left half done: an Accept the host
+// merged and whose facts are not written, or a state that was recorded and never
+// pushed. The caller holds the step lock.
+func (d *Demo) needsRepair(ctx context.Context) bool {
+	if d.unsettled != nil {
+		return true
+	}
+	st, ok, err := d.stgSt.Latest(ctx)
+	return err == nil && ok && !st.Published
+}
+
+// repairLocked finishes what is half done, without help from outside. First the
+// facts of an Accept that was merged are written, once. Then a state that was
+// recorded and not pushed is pushed again, and what it holds is observed, so a
+// removal is journalled once. A failure is left for the next round. The caller
+// holds the step lock and the write lock.
+func (d *Demo) repairLocked(ctx context.Context) {
+	if d.unsettled != nil {
+		if err := d.settleAccepted(ctx, *d.unsettled, d.journalNow); err == nil {
+			d.unsettled = nil
+		}
+	}
+	if ok, err := d.stg.Republish(ctx); err == nil && ok {
+		if st, found, lerr := d.stgSt.Latest(ctx); lerr == nil && found {
+			d.observe(st, job{})
+		}
+	}
+}
+
+// repair is repairLocked for a caller that holds nothing. It does nothing when
+// nothing is half done.
+func (d *Demo) repair(ctx context.Context) {
+	if d.closing.Load() || ctx.Err() != nil {
+		return
+	}
+	d.stepMu.Lock()
+	defer d.stepMu.Unlock()
+	if d.closing.Load() || !d.needsRepair(ctx) {
+		return
+	}
+	_ = d.mutateFresh(ctx, func() error {
+		d.repairLocked(ctx)
+		return nil
+	})
 }
